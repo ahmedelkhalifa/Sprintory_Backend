@@ -38,6 +38,15 @@ Two traps that cost real time:
 
 `./mvnw.cmd verify` **fails**. `SprintoryBackendApplicationTests.contextLoads()` is a bare `@SpringBootTest` with no database and no secrets, so it dies with `'url' must start with "jdbc"`. Fixing it needs Testcontainers (`spring-boot-testcontainers`, `testcontainers:postgresql`, `junit-jupiter`), a shared `AbstractIntegrationTest` base with `@ServiceConnection`, and a test profile. Do not open a PR to `main` until that lands — CI runs only on PRs to `main` and pushes to `main`.
 
+## R01 authentication endpoints handoff (21 Oct 2026)
+
+- Auth HTTP contracts, request/response DTOs, Jakarta validation, controller tests, and a temporary `AuthService` scaffold have been added under `security/auth/`. See **`docs/auth-endpoints.md`** for the endpoint table, response/cookie behavior, and unresolved decisions.
+- `AuthController` covers registration, email/password login, refresh, logout, `/me`, forgot/reset password, and email verification. `/me` returns the current authenticated user's public DTO. Google OAuth2 continues to use the separate Spring Security flow.
+- **The story is not functional end-to-end.** Unimplemented `AuthService` methods deliberately return **501 NOT_IMPLEMENTED**; they are not successful mock logins. Ahmed owns the service implementations and final security integration. Do not close R01 based on the scaffold alone.
+- Validated locally with `bash ./mvnw clean compile` and `bash ./mvnw -B -Dtest=AuthControllerTest,AuthRequestValidationTest test`: **14 tests passed (4 DTO, 10 controller)**. These are focused tests, not an integration-test pass.
+- `pom.xml` now configures Lombok explicitly as an annotation processor (needed to compile generated getters/builders with newer JDKs). The full Spring context test still needs database-backed test infrastructure as noted above.
+- Resolve the signup default role, `rememberMe` semantics, refresh/logout revocation policy, email verification/reset token lifecycle, and CSRF/security review before completing the services. Avoid changing those behaviors silently.
+
 ## Authentication architecture
 
 This is the part that needs several files to understand.
