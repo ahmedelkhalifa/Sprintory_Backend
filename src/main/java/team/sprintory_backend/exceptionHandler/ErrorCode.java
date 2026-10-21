@@ -11,4 +11,5 @@ public enum ErrorCode {
     PROVIDER_MISMATCH,
     INVALID_TOKEN,
     INTERNAL_ERROR,
+    NOT_IMPLEMENTED,
 }

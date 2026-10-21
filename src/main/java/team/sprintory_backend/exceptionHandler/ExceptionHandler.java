@@ -87,7 +87,8 @@ public class ExceptionHandler {
             HttpStatus resolved = HttpStatus.resolve(status);
             ErrorCode code = (status == HttpStatus.NOT_FOUND.value())
                     ? ErrorCode.RESOURCE_NOT_FOUND
-                    : ErrorCode.BAD_REQUEST;
+                    : (status == HttpStatus.NOT_IMPLEMENTED.value()
+                        ? ErrorCode.NOT_IMPLEMENTED : ErrorCode.BAD_REQUEST);
             return body(status, code,
                     (resolved != null) ? resolved.getReasonPhrase() : "Request failed.", request);
         }
