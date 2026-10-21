@@ -1,23 +1,28 @@
 package team.sprintory_backend.exceptionHandler;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.springframework.http.HttpStatus;
 
 import java.time.Instant;
-import java.util.HashMap;
+import java.util.Map;
 
+/**
+ * The single error body for every API error. Shape is fixed by docs/api-conventions.md.
+ */
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
 @Builder
 public class ErrorResponse {
     private Instant timestamp;
-    private HttpStatus status;
-    private ErrorCode errorCode;
+    private int status;
+    private ErrorCode code;
     private String message;
     private String path;
-    private HashMap<String, String> fieldErrors;
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Map<String, String> fieldErrors;
 }

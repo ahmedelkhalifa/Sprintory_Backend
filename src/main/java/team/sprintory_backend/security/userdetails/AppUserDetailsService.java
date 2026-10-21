@@ -1,4 +1,4 @@
-package team.sprintory_backend.security.config;
+package team.sprintory_backend.security.userdetails;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.userdetails.UserDetails;

@@ -1,7 +1,7 @@
 package team.sprintory_backend.security.config;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.boot.CommandLineRunner;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -16,10 +16,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
-import team.sprintory_backend.user.models.Role;
-import team.sprintory_backend.user.models.User;
-import team.sprintory_backend.user.repositories.UserRepository;
+import team.sprintory_backend.security.jwt.JwtAuthenticationFilter;
+import team.sprintory_backend.security.userdetails.AppUserDetailsService;
 
 import java.util.List;
 
@@ -28,16 +28,17 @@ import java.util.List;
 @EnableMethodSecurity
 public class SecurityConfig {
 
-    private final String frontendUrl = "url";
+    @Value("${app.frontend-url}")
+    private String frontendUrl;
     private final AuthenticationEntryPoint authenticationEntryPoint;
     private final AccessDeniedHandler accessDeniedHandler;
     private final AppUserDetailsService userDetailsService;
-    private final UserRepository userRepository;
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(auth -> auth
-                .requestMatchers("api/v1/auth/**").permitAll()
+                .requestMatchers("/api/v1/auth/**").permitAll()
                 .anyRequest().authenticated())
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(c -> {
@@ -53,8 +54,8 @@ public class SecurityConfig {
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
-                .authenticationProvider(authenticationProvider());
-
+                .authenticationProvider(authenticationProvider())
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
@@ -76,20 +77,4 @@ public class SecurityConfig {
         return provider;
     }
 
-    @Bean
-    CommandLineRunner createAdmin() {
-        return args -> {
-            if (!userRepository.existsByRole(Role.WORKSPACE_ADMIN)) {
-                User admin = User.builder()
-                        .email("admin@gmail.com")
-                        .password(passwordEncoder().encode("password123"))
-                        .role(Role.WORKSPACE_ADMIN)
-                        .firstName("admin")
-                        .lastName("admin")
-                        .enabled(true)
-                        .build();
-                userRepository.save(admin);
-            }
-        };
-    }
 }

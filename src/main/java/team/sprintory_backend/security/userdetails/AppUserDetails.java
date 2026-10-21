@@ -1,4 +1,4 @@
-package team.sprintory_backend.security.config;
+package team.sprintory_backend.security.userdetails;
 
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
@@ -17,7 +17,7 @@ public class AppUserDetails implements UserDetails {
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority("Role_" + user.getRole()));
+        return List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole()));
     }
 
     @Override

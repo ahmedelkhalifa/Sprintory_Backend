@@ -28,12 +28,17 @@ public class User extends BaseEntity {
     private String password;
     @Builder.Default
     @Column(nullable = false)
-    private boolean enabled = true;
+    private boolean enabled = false;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
-    private Provider provider;
+    @Column(nullable = false)
+    private Provider provider = Provider.LOCAL;
+
+    @Builder.Default
     @Enumerated(EnumType.STRING)
-    private Role role;
+    @Column(nullable = false)
+    private Role role = Role.WORKSPACE_ADMIN;
 
     @Override
     public boolean equals(Object o) {

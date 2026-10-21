@@ -1,6 +1,5 @@
-package team.sprintory_backend.security.config;
+package team.sprintory_backend.security.handlers;
 
-import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -29,10 +28,10 @@ public class AppAuthenticationEntryPoint implements AuthenticationEntryPoint {
         response.setCharacterEncoding("UTF-8");
         objectMapper.writeValue(response.getWriter(), ErrorResponse.builder()
                 .message("Authentication required. Please log in.")
-                .status(HttpStatus.UNAUTHORIZED)
+                .status(HttpStatus.UNAUTHORIZED.value())
                 .timestamp(Instant.now())
                 .path(request.getRequestURI())
-                .errorCode(ErrorCode.AUTHENTICATION_ERROR)
+                .code(ErrorCode.AUTHENTICATION_ERROR)
                 .build());
     }
 }

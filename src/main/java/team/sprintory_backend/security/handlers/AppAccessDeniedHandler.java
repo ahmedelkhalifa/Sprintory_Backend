@@ -1,4 +1,4 @@
-package team.sprintory_backend.security.config;
+package team.sprintory_backend.security.handlers;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -31,6 +31,7 @@ public class AppAccessDeniedHandler implements AccessDeniedHandler {
                 auth == null || auth instanceof AnonymousAuthenticationToken || !auth.isAuthenticated();
 
         HttpStatus status = unauthenticated ? HttpStatus.UNAUTHORIZED : HttpStatus.FORBIDDEN;
+        ErrorCode code = unauthenticated ? ErrorCode.AUTHENTICATION_ERROR : ErrorCode.ACCESS_DENIED;
         String message = unauthenticated
                 ? "Authentication required. Please log in."
                 : "Forbidden, You don't have access to this resource";
@@ -40,10 +41,10 @@ public class AppAccessDeniedHandler implements AccessDeniedHandler {
         response.setCharacterEncoding("UTF-8");
         objectMapper.writeValue(response.getWriter(), ErrorResponse.builder()
                 .message(message)
-                .status(status)
+                .status(status.value())
                 .path(request.getRequestURI())
                 .timestamp(Instant.now())
-                .errorCode(ErrorCode.AUTHENTICATION_ERROR)
+                .code(code)
                 .build());
     }
 }
