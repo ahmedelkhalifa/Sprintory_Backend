@@ -18,7 +18,11 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
+import team.sprintory_backend.security.handlers.OAuth2FailureHandler;
+import team.sprintory_backend.security.handlers.OAuth2SuccessHandler;
 import team.sprintory_backend.security.jwt.JwtAuthenticationFilter;
+import team.sprintory_backend.security.oauth2.AppOidcUserService;
+import team.sprintory_backend.security.oauth2.CookieAuthorizationRequestRepository;
 import team.sprintory_backend.security.userdetails.AppUserDetailsService;
 
 import java.util.List;
@@ -34,11 +38,17 @@ public class SecurityConfig {
     private final AccessDeniedHandler accessDeniedHandler;
     private final AppUserDetailsService userDetailsService;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final CookieAuthorizationRequestRepository authorizationRequestRepository;
+    private final AppOidcUserService oidcUserService;
+    private final OAuth2SuccessHandler oAuth2SuccessHandler;
+    private final OAuth2FailureHandler oAuth2FailureHandler;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/v1/auth/**").permitAll()
+                // Google sign-in: the start of the flow and Google's callback
+                .requestMatchers("/oauth2/authorization/**", "/login/oauth2/code/**").permitAll()
                 .anyRequest().authenticated())
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(c -> {
@@ -55,6 +65,15 @@ public class SecurityConfig {
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
                 .authenticationProvider(authenticationProvider())
+                .oauth2Login(oauth2 -> oauth2
+                        // Replaces session storage for the in-flight authorization request
+                        .authorizationEndpoint(endpoint -> endpoint
+                                .authorizationRequestRepository(authorizationRequestRepository))
+                        // oidcUserService, not userService: the registration requests "openid"
+                        .userInfoEndpoint(userInfo -> userInfo
+                                .oidcUserService(oidcUserService))
+                        .successHandler(oAuth2SuccessHandler)
+                        .failureHandler(oAuth2FailureHandler))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
