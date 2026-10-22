@@ -18,6 +18,7 @@ import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Decides what a Google sign-in means for our own user table: provision a new account,
@@ -45,7 +46,7 @@ public class AppOidcUserService extends OidcUserService {
             throw failure("EMAIL_NOT_VERIFIED", "This Google account has no verified email address.");
         }
 
-        String normalisedEmail = email.trim().toLowerCase();
+        String normalisedEmail = email.trim().toLowerCase(Locale.ROOT);
         User user = userRepository.findByEmail(normalisedEmail)
                 .map(AppOidcUserService::requireGoogleAccount)
                 .orElseGet(() -> provision(normalisedEmail, googleUser));

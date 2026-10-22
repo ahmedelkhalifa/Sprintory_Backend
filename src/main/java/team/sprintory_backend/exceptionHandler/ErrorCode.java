@@ -12,4 +12,5 @@ public enum ErrorCode {
     INVALID_TOKEN,
     INTERNAL_ERROR,
     NOT_IMPLEMENTED,
+    SERVICE_UNAVAILABLE,
 }

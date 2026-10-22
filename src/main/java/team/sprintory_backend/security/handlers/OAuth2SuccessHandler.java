@@ -17,6 +17,7 @@ import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
 import java.io.IOException;
+import java.util.Locale;
 
 /**
  * Google sign-in succeeded. Issue our own cookies and hand the browser back to the frontend,
@@ -50,17 +51,18 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
     public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
                                         Authentication authentication) throws IOException {
         OidcUser principal = (OidcUser) authentication.getPrincipal();
-        String email = principal.getEmail().trim().toLowerCase();
+        String email = principal.getEmail().trim().toLowerCase(Locale.ROOT);
 
         // AppOidcUserService has already created or verified this row.
         User user = userRepository.findByEmail(email).orElseThrow(
                 () -> new IllegalStateException("Google sign-in produced no local user for " + email));
 
         String accessToken = jwtService.generateAccessToken(email);
-        String refreshToken = refreshTokenService.issue(user);
+        // Google sign-in has no "remember me" choice, so it gets the persistent cookie.
+        String refreshToken = refreshTokenService.issue(user, true);
 
-        response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.access(accessToken).toString());
-        response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.refresh(refreshToken).toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.access(accessToken, true).toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, cookieFactory.refresh(refreshToken, true).toString());
 
         // Tokens travel in the cookies above, never in the redirect URL: query strings end up in
         // browser history, referrer headers and access logs.

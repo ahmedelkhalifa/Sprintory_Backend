@@ -105,8 +105,8 @@ public class AuthController {
     private ResponseEntity<AuthUserResponse> authenticated(AuthSession result) {
         // Raw tokens appear in HttpOnly cookies only, never in JSON.
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, cookies.access(result.accessToken()).toString())
-                .header(HttpHeaders.SET_COOKIE, cookies.refresh(result.refreshToken()).toString())
+                .header(HttpHeaders.SET_COOKIE, cookies.access(result.accessToken(), result.rememberMe()).toString())
+                .header(HttpHeaders.SET_COOKIE, cookies.refresh(result.refreshToken(), result.rememberMe()).toString())
                 .body(result.user());
     }
 }

@@ -17,6 +17,8 @@ public class AuthCookieFactory {
     private static final String ROOT_PATH = "/";
     private static final String REFRESH_PATH = "/api/v1/auth";
     private static final String SAME_SITE = "Lax";
+    /** A negative Max-Age leaves the attribute out, making a session cookie. */
+    private static final long SESSION_COOKIE = -1;
 
     private final boolean secure;
     private final long accessMaxAge;
@@ -31,12 +33,17 @@ public class AuthCookieFactory {
         this.refreshMaxAge = refreshTtlMs / 1000;
     }
 
-    public ResponseCookie access(String token) {
-        return build(ACCESS_COOKIE, token, ROOT_PATH, accessMaxAge);
+    /**
+     * @param persistent {@code true} for "remember me" (cookie survives a browser restart),
+     *                   {@code false} for a session cookie the browser drops when it closes
+     */
+    public ResponseCookie access(String token, boolean persistent) {
+        return build(ACCESS_COOKIE, token, ROOT_PATH, persistent ? accessMaxAge : SESSION_COOKIE);
     }
 
-    public ResponseCookie refresh(String token) {
-        return build(REFRESH_COOKIE, token, REFRESH_PATH, refreshMaxAge);
+    /** @param persistent same meaning as in {@link #access(String, boolean)} */
+    public ResponseCookie refresh(String token, boolean persistent) {
+        return build(REFRESH_COOKIE, token, REFRESH_PATH, persistent ? refreshMaxAge : SESSION_COOKIE);
     }
 
     public ResponseCookie clearAccess() {

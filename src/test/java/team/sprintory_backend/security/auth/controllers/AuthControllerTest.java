@@ -41,7 +41,7 @@ class AuthControllerTest {
     void loginSetsTwoHttpOnlyCookiesAndNeverExposesTokensInJson() {
         AuthUserResponse user = new AuthUserResponse(7L, "Ada", "Lovelace", "ada@example.com");
         LoginRequest request = new LoginRequest("ada@example.com", "a-safe-password", true);
-        when(service.login(request)).thenReturn(new AuthSession("access-secret", "refresh-secret", user));
+        when(service.login(request)).thenReturn(new AuthSession("access-secret", "refresh-secret", true, user));
 
         var response = controller.login(request);
 
@@ -60,6 +60,21 @@ class AuthControllerTest {
     }
 
     @Test
+    void loginWithoutRememberMeSetsSessionCookies() {
+        AuthUserResponse user = new AuthUserResponse(7L, "Ada", "Lovelace", "ada@example.com");
+        LoginRequest request = new LoginRequest("ada@example.com", "a-safe-password", false);
+        when(service.login(request)).thenReturn(new AuthSession("access-secret", "refresh-secret", false, user));
+
+        var response = controller.login(request);
+
+        List<String> setCookies = response.getHeaders().get(HttpHeaders.SET_COOKIE);
+        assertNotNull(setCookies);
+        assertEquals(2, setCookies.size());
+        // No Max-Age: the browser drops both cookies when it closes.
+        assertTrue(setCookies.stream().noneMatch(c -> c.contains("Max-Age")));
+    }
+
+    @Test
     void registrationReturnsCreatedWithPublicUserFields() {
         RegisterRequest request = new RegisterRequest("Ada", "Lovelace", "ada@example.com", "password123");
         AuthUserResponse user = new AuthUserResponse(7L, "Ada", "Lovelace", "ada@example.com");
@@ -73,7 +88,7 @@ class AuthControllerTest {
     @Test
     void refreshRotatesBothCookies() {
         AuthUserResponse user = new AuthUserResponse(7L, "Ada", "Lovelace", "ada@example.com");
-        when(service.refresh("old-refresh")).thenReturn(new AuthSession("new-access", "new-refresh", user));
+        when(service.refresh("old-refresh")).thenReturn(new AuthSession("new-access", "new-refresh", true, user));
 
         var response = controller.refresh("old-refresh");
         assertEquals(HttpStatus.OK, response.getStatusCode());

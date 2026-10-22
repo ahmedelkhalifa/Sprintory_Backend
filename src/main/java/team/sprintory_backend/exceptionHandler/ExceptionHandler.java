@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
@@ -13,7 +14,10 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import team.sprintory_backend.notification.email.EmailDeliveryException;
+import team.sprintory_backend.security.exceptions.EmailAlreadyRegisteredException;
 import team.sprintory_backend.security.exceptions.InvalidTokenException;
+import team.sprintory_backend.security.exceptions.ProviderMismatchException;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -51,6 +55,37 @@ public class ExceptionHandler {
     public ResponseEntity<ErrorResponse> handleInvalidToken(HttpServletRequest request) {
         return body(HttpStatus.UNAUTHORIZED.value(), ErrorCode.INVALID_TOKEN,
                 "This token is no longer valid. Please sign in again.", request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(ProviderMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleProviderMismatch(HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.PROVIDER_MISMATCH,
+                "This account uses Google sign-in. Continue with Google.", request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(EmailAlreadyRegisteredException.class)
+    public ResponseEntity<ErrorResponse> handleEmailAlreadyRegistered(HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.CONFLICT,
+                "An account with this email already exists.", request);
+    }
+
+    /** SMTP details go to the log only; the client gets a generic retry message. */
+    @org.springframework.web.bind.annotation.ExceptionHandler(EmailDeliveryException.class)
+    public ResponseEntity<ErrorResponse> handleEmailDelivery(EmailDeliveryException e,
+                                                             HttpServletRequest request) {
+        log.error("Email delivery failed on {} {}", request.getMethod(), request.getRequestURI(), e);
+        return body(HttpStatus.SERVICE_UNAVAILABLE.value(), ErrorCode.SERVICE_UNAVAILABLE,
+                "We couldn't send the email. Please try again later.", request);
+    }
+
+    /**
+     * Broken JSON or a value of the wrong type. This exception is not a Spring ErrorResponse,
+     * so without this handler it would be reported as a 500.
+     */
+    @org.springframework.web.bind.annotation.ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleUnreadableBody(HttpServletRequest request) {
+        return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.BAD_REQUEST,
+                "Malformed request body.", request);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(DataIntegrityViolationException.class)

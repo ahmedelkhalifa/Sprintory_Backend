@@ -49,6 +49,14 @@ public class RefreshToken extends BaseEntity {
     @Column(nullable = false)
     private Instant expiresAt;
 
+    /**
+     * Whether the cookie for this token is persistent ("remember me") or a browser-session cookie.
+     * Stored so a rotated token keeps the same kind. The database default lets ddl-auto add the
+     * column to rows that existed before it.
+     */
+    @Column(nullable = false, columnDefinition = "boolean not null default true")
+    private boolean rememberMe;
+
     public boolean isExpired() {
         return expiresAt.isBefore(Instant.now());
     }

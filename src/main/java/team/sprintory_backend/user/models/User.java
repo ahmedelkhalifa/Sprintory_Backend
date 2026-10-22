@@ -38,7 +38,7 @@ public class User extends BaseEntity {
     @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private Role role = Role.WORKSPACE_ADMIN;
+    private Role role = Role.WORKSPACE_MEMBER;
 
     @Override
     public boolean equals(Object o) {

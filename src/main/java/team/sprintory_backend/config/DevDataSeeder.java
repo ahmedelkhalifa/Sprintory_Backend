@@ -13,6 +13,8 @@ import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
+import java.util.Locale;
+
 /**
  * Creates the first workspace admin so a fresh dev database is usable.
  * Dev only — never seed a known account into a deployed environment.
@@ -38,7 +40,7 @@ public class DevDataSeeder implements CommandLineRunner {
         if (userRepository.existsByRole(Role.WORKSPACE_ADMIN)) {
             return;
         }
-        String email = adminEmail.trim().toLowerCase();
+        String email = adminEmail.trim().toLowerCase(Locale.ROOT);
         userRepository.save(User.builder()
                 .email(email)
                 .password(passwordEncoder.encode(adminPassword))
