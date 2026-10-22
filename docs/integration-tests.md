@@ -17,7 +17,7 @@ bash ./mvnw -B clean verify
 
 On the first run, Testcontainers downloads the PostgreSQL 16 Alpine image. The context test
 verifies that the JDBC database is PostgreSQL and that the `UserRepository` works with the
-schema created by Hibernate. Tests must **fail**, not silently skip, if Docker is unavailable.
+schema built by the Flyway migrations and validated by Hibernate. Tests must **fail**, not silently skip, if Docker is unavailable.
 Mock-based unit tests do not start containers.
 
 ## Test isolation
@@ -26,7 +26,8 @@ Mock-based unit tests do not start containers.
 - `application-test.properties` supplies a deliberately unreachable JDBC placeholder; the
   actual temporary connection is injected by `@ServiceConnection`, which takes precedence.
 - The test-only JWT signing secret is not a real credential and must not be used outside tests.
-- `spring.jpa.hibernate.ddl-auto=create-drop` applies only to the disposable database.
+- Flyway applies `db/migration` to the disposable database and Hibernate validates it
+  (`ddl-auto=validate`), as in production.
 - No production or developer database is touched.
 
 ## CI
