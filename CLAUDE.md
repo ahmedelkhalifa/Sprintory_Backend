@@ -36,9 +36,22 @@ Two traps that cost real time:
 
 Mail defaults point to a local Mailpit (`localhost:1025`, inbox at http://localhost:8025): `docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`. Without it the app still starts, but registration answers 503 because the verification email cannot be sent.
 
-## Known broken
+## Full-context integration tests (Testcontainers)
 
-`./mvnw.cmd verify` **fails**. `SprintoryBackendApplicationTests.contextLoads()` is a bare `@SpringBootTest` with no database and no secrets, so it dies with `'url' must start with "jdbc"`. Fixing it needs Testcontainers (`spring-boot-testcontainers`, `testcontainers:postgresql`, `junit-jupiter`), a shared `AbstractIntegrationTest` base with `@ServiceConnection`, and a test profile. Do not open a PR to `main` until that lands — CI runs only on PRs to `main` and pushes to `main`.
+`SprintoryBackendApplicationTests` extends `AbstractIntegrationTest`, which activates the
+`test` profile and imports `PostgresTestConfiguration`. The latter declares a PostgreSQL 16
+Testcontainers bean with `@ServiceConnection`, managed for the Spring test-context lifetime.
+`src/test/resources/application-test.properties` provides a **test-only** HS256 secret, an
+unusable dummy JDBC URL as a guard, and `ddl-auto=create-drop`. The `@ServiceConnection`
+replaces that dummy URL with the temporary container connection. `DevDataSeeder` is excluded
+because it only runs with the `dev` profile. No real DB or auth secrets are needed.
+
+Run `bash ./mvnw -B clean verify` (or `mvnw.cmd -B clean verify` on Windows) with Docker
+running. The context test checks both PostgreSQL JDBC connectivity and repository/schema
+wiring. Other mocked unit tests do **not** require Docker.
+
+**Before merging to `main`, verify the full build both locally and in CI.** GitHub's hosted
+Ubuntu runners provide Docker; Docker must be running locally. See `docs/integration-tests.md`.
 
 ## R01 status
 
