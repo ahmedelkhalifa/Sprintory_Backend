@@ -42,7 +42,7 @@ Mail defaults point to a local Mailpit (`localhost:1025`, inbox at http://localh
 `test` profile and imports `PostgresTestConfiguration`. The latter declares a PostgreSQL 16
 Testcontainers bean with `@ServiceConnection`, managed for the Spring test-context lifetime.
 `src/test/resources/application-test.properties` provides a **test-only** HS256 secret, an
-unusable dummy JDBC URL as a guard, and `ddl-auto=create-drop`. The `@ServiceConnection`
+unusable dummy JDBC URL as a guard, and Flyway enabled with `ddl-auto=validate`. The `@ServiceConnection`
 replaces that dummy URL with the temporary container connection. `DevDataSeeder` is excluded
 because it only runs with the `dev` profile. No real DB or auth secrets are needed.
 
@@ -52,6 +52,17 @@ wiring. Other mocked unit tests do **not** require Docker.
 
 **Before merging to `main`, verify the full build both locally and in CI.** GitHub's hosted
 Ubuntu runners provide Docker; Docker must be running locally. See `docs/integration-tests.md`.
+
+## Database migrations (Flyway)
+
+- **Dev** keeps `ddl-auto=update` and has Flyway off (`spring.flyway.enabled=false` in
+  `application.properties`). **Prod** (`application-prod.properties`) and the context test run
+  Flyway from `src/main/resources/db/migration` and then `ddl-auto=validate`.
+- Because dev auto-updates, a changed entity works locally even without a migration, and
+  production would then refuse to start. **Every entity change needs a new
+  `V{n}__description.sql` in the same PR**; the context test fails in CI if one is missing.
+- Never edit a migration that is merged — Flyway checksums it. Add a new version instead.
+- Enum columns have check constraints, so adding an enum value also needs a migration.
 
 ## R01 status
 
