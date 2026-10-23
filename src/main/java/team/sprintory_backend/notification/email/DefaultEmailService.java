@@ -27,6 +27,13 @@ public class DefaultEmailService implements EmailService {
     }
 
     @Override
+    public void sendWorkspaceInvitation(String recipientEmail, String inviterName, String workspaceName,
+                                        String invitationUrl) {
+        sender.send(recipientEmail, renderer.render(
+                templateFactory.workspaceInvitation(inviterName, workspaceName, invitationUrl)));
+    }
+
+    @Override
     public void sendNotification(String recipientEmail, String recipientName, String subject, String message) {
         sender.send(recipientEmail, renderer.render(templateFactory.notification(recipientName, subject, message)));
     }

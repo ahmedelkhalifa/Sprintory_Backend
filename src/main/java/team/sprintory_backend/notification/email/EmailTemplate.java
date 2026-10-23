@@ -4,5 +4,6 @@ package team.sprintory_backend.notification.email;
 public enum EmailTemplate {
     EMAIL_VERIFICATION,
     PASSWORD_RESET,
+    WORKSPACE_INVITATION,
     NOTIFICATION
 }

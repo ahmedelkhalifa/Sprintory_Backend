@@ -33,6 +33,21 @@ public class EmailTemplateFactory {
         );
     }
 
+    public EmailTemplateModel workspaceInvitation(String inviterName, String workspaceName, String invitationUrl) {
+        String inviter = requiredText(inviterName, "inviter name");
+        String workspace = requiredText(workspaceName, "workspace name");
+        return new EmailTemplateModel(
+                EmailTemplate.WORKSPACE_INVITATION,
+                requiredSubject("You're invited to join " + workspace + " on Sprintory"),
+                greetingName(null),
+                "Join " + workspace,
+                inviter + " invited you to join the " + workspace + " workspace on Sprintory.",
+                "Join workspace",
+                requiredHttpUrl(invitationUrl),
+                "This invitation expires in 7 days. If you were not expecting it, you can ignore this email."
+        );
+    }
+
     public EmailTemplateModel notification(String recipientName, String subject, String message) {
         return new EmailTemplateModel(
                 EmailTemplate.NOTIFICATION,

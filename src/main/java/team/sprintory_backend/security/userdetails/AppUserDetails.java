@@ -3,7 +3,6 @@ package team.sprintory_backend.security.userdetails;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.Nullable;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import team.sprintory_backend.user.models.User;
 
@@ -15,9 +14,10 @@ public class AppUserDetails implements UserDetails {
 
     private final User user;
 
+    /** None: roles are per workspace (WorkspaceMember), so they are checked in the services. */
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole()));
+        return List.of();
     }
 
     @Override

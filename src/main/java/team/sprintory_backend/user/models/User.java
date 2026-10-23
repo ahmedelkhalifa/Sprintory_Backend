@@ -35,11 +35,6 @@ public class User extends BaseEntity {
     @Column(nullable = false)
     private Provider provider = Provider.LOCAL;
 
-    @Builder.Default
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private Role role = Role.WORKSPACE_MEMBER;
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
