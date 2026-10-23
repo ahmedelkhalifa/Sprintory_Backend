@@ -9,14 +9,14 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import team.sprintory_backend.user.models.Provider;
-import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
 import java.util.Locale;
 
 /**
- * Creates the first workspace admin so a fresh dev database is usable.
+ * Creates a verified dev account so a fresh dev database is usable. It becomes a workspace
+ * admin by creating a workspace, like any other user.
  * Dev only — never seed a known account into a deployed environment.
  */
 @Component
@@ -37,19 +37,18 @@ public class DevDataSeeder implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        if (userRepository.existsByRole(Role.WORKSPACE_ADMIN)) {
+        String email = adminEmail.trim().toLowerCase(Locale.ROOT);
+        if (userRepository.existsByEmail(email)) {
             return;
         }
-        String email = adminEmail.trim().toLowerCase(Locale.ROOT);
         userRepository.save(User.builder()
                 .email(email)
                 .password(passwordEncoder.encode(adminPassword))
-                .role(Role.WORKSPACE_ADMIN)
                 .provider(Provider.LOCAL)
                 .firstName("admin")
                 .lastName("admin")
                 .enabled(true)
                 .build());
-        log.info("Seeded workspace admin {}", email);
+        log.info("Seeded dev account {}", email);
     }
 }

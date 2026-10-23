@@ -23,7 +23,6 @@ import team.sprintory_backend.security.exceptions.ProviderMismatchException;
 import team.sprintory_backend.security.jwt.JwtService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 import team.sprintory_backend.user.models.Provider;
-import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
@@ -68,7 +67,6 @@ public class AuthService {
                 .orElseGet(() -> User.builder()
                         .email(email)
                         .provider(Provider.LOCAL)
-                        .role(Role.WORKSPACE_MEMBER)
                         .enabled(false)
                         .build());
         user.setFirstName(request.firstName().trim());

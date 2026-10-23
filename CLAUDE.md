@@ -90,6 +90,14 @@ Random generation and hashing live in one place, `OpaqueTokens`, shared by `Refr
 - An email already registered with a password gets `USE_PASSWORD_LOGIN`; it never silently links accounts. Both handlers redirect to the separate frontend and never put tokens in the URL.
 - Enabling `oauth2Login` also switches on Spring's generated `/login` page. Harmless, suppressible with `.loginPage(...)`.
 
+## Workspaces (R02)
+
+**`docs/workspaces-docs.md` is the workspaces contract**: endpoints, invitation flow, slugs, archive/delete, error codes, status table. Change the code and that file in the same PR.
+
+- **Every access check goes through `workspace/services/WorkspaceAccess`.** `requireMember` / `requireAdmin` for reads and for archive/restore/delete; `requireActiveMember` / `requireActiveAdmin` for anything that changes data — they also refuse an archived workspace with 409 `WORKSPACE_ARCHIVED`. A non-member gets the same 404 as a missing workspace; a member without the role gets 403.
+- **Permanent workspace delete relies on the database's `ON DELETE CASCADE`.** Every table that hangs off a workspace (or a user) must put `@OnDelete(action = OnDeleteAction.CASCADE)` on that `@ManyToOne`, or the delete fails on the foreign key.
+- Invitations are addressed to an email, not a user, so they have their own table (`WorkspaceInvitation`) instead of `one_time_tokens`, but use the same `OpaqueTokens`. Replacing an invitation uses a bulk `@Modifying` delete on purpose: Hibernate flushes inserts before derived deletes, which would hit the (workspace, email) unique constraint.
+
 ## Error response contract
 
 One JSON shape (`docs/api-conventions.md` §4), produced from three places that must stay in sync: `exceptionHandler/ExceptionHandler` for anything thrown inside MVC, `AppAuthenticationEntryPoint` for 401, `AppAccessDeniedHandler` for 403. `ErrorCode` is the stable machine-readable vocabulary — add to the enum rather than inventing strings.
@@ -102,12 +110,12 @@ Services should let their exceptions propagate; the advice maps them.
 
 ## Conventions in this codebase
 
-- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
+- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
 - **Edit the existing class rather than adding a parallel one.** Do not create `GlobalExceptionHandler` next to `ExceptionHandler`, or a `*V2`.
 - Entities extend `audit/BaseEntity` for the four audit columns. `AuditorProvider` stamps `system` for anonymous and unauthenticated writes.
 - `@Value` on a **`final`** field combined with `@RequiredArgsConstructor` silently produces a constructor with no parameter annotation and fails at startup. Use a non-final field or write the constructor explicitly.
 - **Jackson 3**: `tools.jackson.databind.ObjectMapper`, not `com.fasterxml.jackson.databind`. Annotations are still `com.fasterxml.jackson.annotation`. `JacksonException` is unchecked, so no `throws` clause is needed. `jjwt-jackson` drags in Jackson 2 as well; the two coexist in different packages.
-- Both sign-up paths create `WORKSPACE_MEMBER` (decided 21 Oct 2026), and `User.role` defaults to it. Only `DevDataSeeder` creates a `WORKSPACE_ADMIN`.
+- **Users have no role** (decided 23 Oct 2026). Roles are per workspace, on `WorkspaceMember`: the creator of a workspace is its `WORKSPACE_ADMIN`, invitees join as `WORKSPACE_MEMBER`. Logins carry no authorities, so `hasRole(...)` / `@PreAuthorize` role checks never match — check roles in the service through `WorkspaceAccess`.
 - Emails are stored trimmed and lower-cased with **`toLowerCase(Locale.ROOT)`** — a Turkish default locale turns `I` into a dotless `ı`. Every place that normalizes an email does it this way; keep it so.
-- `Role` is `{WORKSPACE_MEMBER, WORKSPACE_ADMIN}`, `Provider` is `{LOCAL, GOOGLE}`. Authorities are `ROLE_` + the enum name.
+- `Role` is `{WORKSPACE_MEMBER, WORKSPACE_ADMIN}` and is used only by `WorkspaceMember`. `Provider` is `{LOCAL, GOOGLE}`.
 - The 8-character password minimum has **no backstop in the service layer** — it belongs on the request DTOs as `@Size(min = 8)`.

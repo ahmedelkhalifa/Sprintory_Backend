@@ -20,7 +20,6 @@ import team.sprintory_backend.security.exceptions.ProviderMismatchException;
 import team.sprintory_backend.security.jwt.JwtService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 import team.sprintory_backend.user.models.Provider;
-import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
@@ -113,7 +112,6 @@ class AuthServiceTest {
         assertEquals("ada@example.com", user.getEmail());
         assertEquals("Ada", user.getFirstName());
         assertEquals(Provider.LOCAL, user.getProvider());
-        assertEquals(Role.WORKSPACE_MEMBER, user.getRole());
         assertFalse(user.isEnabled());
         assertEquals("hashed:password123", user.getPassword());
         verify(emailService).sendEmailVerification("ada@example.com", "Ada", "http://front/verify-email?token=tok");
@@ -259,13 +257,12 @@ class AuthServiceTest {
 
     private static User localUser(boolean enabled) {
         return User.builder().id(7L).firstName("Ada").lastName("Lovelace").email("ada@example.com")
-                .password("old-hash").provider(Provider.LOCAL).role(Role.WORKSPACE_MEMBER)
-                .enabled(enabled).build();
+                .password("old-hash").provider(Provider.LOCAL).enabled(enabled).build();
     }
 
     private static User googleUser() {
         return User.builder().id(8L).firstName("Ada").lastName("Lovelace").email("ada@example.com")
-                .provider(Provider.GOOGLE).role(Role.WORKSPACE_MEMBER).enabled(true).build();
+                .provider(Provider.GOOGLE).enabled(true).build();
     }
 
     private static RefreshToken refreshToken(User user, boolean rememberMe) {

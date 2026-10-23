@@ -1,7 +1,6 @@
 package team.sprintory_backend.security.oauth2;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
@@ -13,7 +12,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import team.sprintory_backend.user.models.Provider;
-import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
@@ -51,8 +49,9 @@ public class AppOidcUserService extends OidcUserService {
                 .map(AppOidcUserService::requireGoogleAccount)
                 .orElseGet(() -> provision(normalisedEmail, googleUser));
 
+        // No authorities: roles are per workspace and checked in the services.
         return new DefaultOidcUser(
-                List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole())),
+                List.of(),
                 googleUser.getIdToken(),
                 googleUser.getUserInfo(),
                 StandardClaimNames.EMAIL);
@@ -72,7 +71,6 @@ public class AppOidcUserService extends OidcUserService {
                 .firstName(firstName(googleUser, email))
                 .lastName(lastName(googleUser))
                 .provider(Provider.GOOGLE)
-                .role(Role.WORKSPACE_MEMBER)
                 // Google has already verified the address, so there is nothing to activate.
                 .enabled(true)
                 .build());

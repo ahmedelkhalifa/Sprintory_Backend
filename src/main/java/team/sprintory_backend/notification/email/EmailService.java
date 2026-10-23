@@ -6,5 +6,8 @@ public interface EmailService {
 
     void sendPasswordReset(String recipientEmail, String recipientName, String resetUrl);
 
+    void sendWorkspaceInvitation(String recipientEmail, String inviterName, String workspaceName,
+                                 String invitationUrl);
+
     void sendNotification(String recipientEmail, String recipientName, String subject, String message);
 }

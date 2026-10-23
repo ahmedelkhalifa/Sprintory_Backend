@@ -2,7 +2,7 @@
 
 **Status:** contract agreed, implementation in progress. See [§10 Implementation status](#10-implementation-status) for which parts are live.
 **Applies to:** backend `/api/v1/auth/**`, Google sign-in, and every frontend call that depends on being logged in.
-**Related:** [API and Git Conventions](./api-conventions.md) (error shape §4), [Email service](./email-service.md), [Requirements](./requirements.md) R01.
+**Related:** [API and Git Conventions](./api-conventions.md) (error shape §4), [Email service](./email-service.md), [Workspaces](./workspaces-docs.md) (roles), [Requirements](./requirements.md) R01.
 
 This document is the single reference for how authentication works end to end. If the code and this file disagree, fix one of them in the same PR.
 
@@ -187,7 +187,7 @@ Google sign-in is a browser redirect, so errors cannot be JSON. On failure the b
    2. if the email belongs to a **Google** account → `409 PROVIDER_MISMATCH`
    3. if the email belongs to a **verified** password account → `409 CONFLICT`
    4. if the email belongs to an **unverified** password account → updates that account's name and password and sends a fresh link. This is how a user whose link expired starts over: they register again.
-   5. otherwise creates the user: provider `LOCAL`, role `WORKSPACE_MEMBER`, `enabled = false`, password hashed with BCrypt
+   5. otherwise creates the user: provider `LOCAL`, `enabled = false`, password hashed with BCrypt. The account has no role; roles come from workspace membership (see §5).
    6. issues a `VERIFY_EMAIL` link token. Older verification links for this user stop working.
    7. emails `FRONTEND_URL + VERIFY_EMAIL_PATH + "?token=" + token`, which is `/verify-email?token=...` by default
 3. If the email cannot be sent, the whole registration is rolled back and the response is `503 SERVICE_UNAVAILABLE`. No half-created account is left behind.
@@ -254,7 +254,7 @@ On **other** devices, the access token keeps working for up to 15 minutes. Their
 3. Google redirects back to `/login/oauth2/code/google`. The backend then:
    1. requires a **verified** email from Google
    2. if the email belongs to a password account → failure `USE_PASSWORD_LOGIN`. Accounts are never linked silently.
-   3. if the email is new → creates the user: provider `GOOGLE`, role `WORKSPACE_MEMBER`, already enabled, no password
+   3. if the email is new → creates the user: provider `GOOGLE`, already enabled, no password, no role
    4. issues an access token and a refresh token as persistent cookies. Google sign-in has no remember-me choice.
 4. Success: redirect to `FRONTEND_URL + OAUTH2_SUCCESS_PATH` (default `/`). The frontend calls `GET /me`. Tokens are never put in the redirect URL.
 5. Failure: redirect to `FRONTEND_URL + OAUTH2_FAILURE_PATH?error=<code>` (see §3).
@@ -281,14 +281,14 @@ On **other** devices, the access token keeps working for up to 15 minutes. Their
 | | Password sign-up | Google sign-up |
 | --- | --- | --- |
 | `provider` | `LOCAL` | `GOOGLE` |
-| `role` | `WORKSPACE_MEMBER` | `WORKSPACE_MEMBER` |
 | `enabled` at creation | `false` until the email is verified | `true` (Google already verified the email) |
 | `password` | BCrypt hash | none |
 | Can use the other sign-in method | no → `PROVIDER_MISMATCH` | no → `USE_PASSWORD_LOGIN` |
 
 - Emails are unique and stored trimmed and lower-cased.
-- Only the dev seeder (`DevDataSeeder`, `dev` profile only) creates a `WORKSPACE_ADMIN`.
-- Authorities are `ROLE_` plus the role name, for example `ROLE_WORKSPACE_MEMBER`.
+- **Accounts have no role.** Roles are per workspace and live on the workspace membership: whoever creates a workspace is its `WORKSPACE_ADMIN`, and people who join by invitation are `WORKSPACE_MEMBER`. See [workspaces-docs.md](./workspaces-docs.md).
+- Logging in grants no authorities. Role checks happen in the services, per workspace.
+- The dev seeder (`DevDataSeeder`, `dev` profile only) creates an ordinary verified account. It becomes an admin by creating a workspace.
 
 ---
 
@@ -380,7 +380,8 @@ As of 22 Oct 2026, on branch `features/auth_config`:
 | 20 Oct 2026 | Stateless JWT in HttpOnly cookies; no server-side sessions. |
 | 21 Oct 2026 | Opaque, hashed, rotating refresh tokens (not JWTs). |
 | 21 Oct 2026 | CSRF disabled; `SameSite=Lax` is the CSRF protection. Never move a cookie to `SameSite=None` without re-enabling CSRF. |
-| 21 Oct 2026 | Password sign-up gets `WORKSPACE_MEMBER`, the same as Google. |
+| 21 Oct 2026 | Password sign-up gets `WORKSPACE_MEMBER`, the same as Google. Superseded on 23 Oct 2026, see below. |
 | 21 Oct 2026 | Logout revokes the user's refresh tokens on all devices. |
 | 21 Oct 2026 | Verification and reset links use hashed, single-use DB tokens, valid for 24 h. |
 | 21 Oct 2026 | `rememberMe = false` gives session cookies; `true` gives persistent cookies. |
+| 23 Oct 2026 | `User.role` removed. Roles are per workspace (`workspace_members`), so sign-up assigns none and logins carry no authorities. See [workspaces-docs.md](./workspaces-docs.md). |

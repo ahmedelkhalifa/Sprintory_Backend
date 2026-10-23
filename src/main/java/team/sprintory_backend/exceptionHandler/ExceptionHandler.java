@@ -14,10 +14,13 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import team.sprintory_backend.notification.email.EmailDeliveryException;
 import team.sprintory_backend.security.exceptions.EmailAlreadyRegisteredException;
 import team.sprintory_backend.security.exceptions.InvalidTokenException;
 import team.sprintory_backend.security.exceptions.ProviderMismatchException;
+import team.sprintory_backend.workspace.exceptions.WorkspaceArchivedException;
+import team.sprintory_backend.workspace.exceptions.WorkspaceNotArchivedException;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -49,6 +52,26 @@ public class ExceptionHandler {
     public ResponseEntity<ErrorResponse> handleAccessDenied(HttpServletRequest request) {
         return body(HttpStatus.FORBIDDEN.value(), ErrorCode.ACCESS_DENIED,
                 "You do not have access to this resource.", request);
+    }
+
+    /** Missing and not-visible resources get the same 404, see docs/api-conventions.md §5. */
+    @org.springframework.web.bind.annotation.ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNotFound(ResourceNotFoundException e,
+                                                        HttpServletRequest request) {
+        return body(HttpStatus.NOT_FOUND.value(), ErrorCode.RESOURCE_NOT_FOUND,
+                e.getMessage(), request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(WorkspaceArchivedException.class)
+    public ResponseEntity<ErrorResponse> handleWorkspaceArchived(HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.WORKSPACE_ARCHIVED,
+                "This workspace is archived. Restore it to make changes.", request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(WorkspaceNotArchivedException.class)
+    public ResponseEntity<ErrorResponse> handleWorkspaceNotArchived(HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.WORKSPACE_NOT_ARCHIVED,
+                "Archive the workspace before deleting it.", request);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(InvalidTokenException.class)
@@ -86,6 +109,17 @@ public class ExceptionHandler {
     public ResponseEntity<ErrorResponse> handleUnreadableBody(HttpServletRequest request) {
         return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.BAD_REQUEST,
                 "Malformed request body.", request);
+    }
+
+    /**
+     * A path or query value of the wrong type, e.g. {@code /workspaces/abc} for a numeric id.
+     * Like the unreadable-body case, this is not a Spring ErrorResponse and would otherwise be a 500.
+     */
+    @org.springframework.web.bind.annotation.ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException e,
+                                                            HttpServletRequest request) {
+        return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.BAD_REQUEST,
+                "Invalid value for '" + e.getName() + "'.", request);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(DataIntegrityViolationException.class)

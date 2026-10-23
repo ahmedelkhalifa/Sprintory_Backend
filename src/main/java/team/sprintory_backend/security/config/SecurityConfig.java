@@ -48,6 +48,8 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/v1/auth/**").permitAll()
+                // The invitation page shows the workspace before the invitee logs in or registers
+                .requestMatchers("/api/v1/invitations/lookup").permitAll()
                 // Google sign-in: the start of the flow and Google's callback
                 .requestMatchers("/oauth2/authorization/**", "/login/oauth2/code/**").permitAll()
                 .anyRequest().authenticated())

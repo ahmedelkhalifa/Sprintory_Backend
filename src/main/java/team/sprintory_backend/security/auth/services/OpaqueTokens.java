@@ -8,10 +8,10 @@ import java.util.Base64;
 import java.util.HexFormat;
 
 /**
- * Random tokens that are stored only as a SHA-256 hash: refresh tokens and the one-time
- * links for email verification and password reset.
+ * Random tokens that are stored only as a SHA-256 hash: refresh tokens, the one-time links for
+ * email verification and password reset, and workspace invitation links.
  */
-final class OpaqueTokens {
+public final class OpaqueTokens {
 
     private static final int TOKEN_BYTES = 32;
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -20,14 +20,14 @@ final class OpaqueTokens {
     }
 
     /** A new URL-safe random token. This raw value goes to the client and is never stored. */
-    static String generate() {
+    public static String generate() {
         byte[] bytes = new byte[TOKEN_BYTES];
         RANDOM.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     /** The value kept in the database, so a database leak does not hand over working tokens. */
-    static String hash(String rawToken) {
+    public static String hash(String rawToken) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             return HexFormat.of().formatHex(digest.digest(rawToken.getBytes(StandardCharsets.UTF_8)));
