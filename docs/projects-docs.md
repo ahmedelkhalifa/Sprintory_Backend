@@ -431,8 +431,8 @@ As of 23 Oct 2026, on branch `features/workspaces-teams-projects`:
 | `ProjectService`: create, list, get, list/add/remove members, add a team, visibility rules | Implemented |
 | `ProjectController`: the seven endpoints in §2 | Implemented |
 | Pagination and search on both lists | Implemented |
-| Unit tests (`ProjectServiceTest`, `ProjectControllerTest`) | Pending (piece 8) |
-| Check against a real database (context test with Docker) | Pending |
+| Unit tests: `ProjectServiceTest` (25), `ProjectControllerTest` (5) | Implemented, all passing |
+| Database test against PostgreSQL (`WorkspaceDataIntegrationTest`): "my projects", project member rows removed with the workspace | Implemented, all passing |
 
 ---
 

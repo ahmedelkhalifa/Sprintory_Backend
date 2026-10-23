@@ -379,7 +379,8 @@ As of 23 Oct 2026, on branch `features/workspaces-teams-projects`:
 | Pagination (`PageResponse`) and search on the workspace member list | Implemented |
 | Teams | Implemented, see [teams-docs.md §9](./teams-docs.md#9-implementation-status) |
 | Projects (minimal) | Implemented, see [projects-docs.md §9](./projects-docs.md#9-implementation-status) |
-| Unit tests for slugs, workspaces, invitations, teams, projects | Pending (piece 8) |
+| Unit tests: `SlugGeneratorTest` (12), `WorkspaceServiceTest` (20), `InvitationServiceTest` (17), `WorkspaceControllerTest` (10, includes invitations), `WorkspaceRequestValidationTest` (6), `ExceptionHandlerTest` (5) | Implemented, all passing |
+| Database test against PostgreSQL: `WorkspaceDataIntegrationTest` (9) — searches, paging, visibility queries, invitation replacement, workspace delete cascade | Implemented, all passing |
 | End-to-end check against a running app with Mailpit | Pending |
 
 ### Known limitations

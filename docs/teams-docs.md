@@ -425,8 +425,8 @@ As of 23 Oct 2026, on branch `features/workspaces-teams-projects`:
 | `TeamService`: create, list, get, rename, delete, list/add/remove members, visibility rules | Implemented |
 | `TeamController`: the eight endpoints in §2 | Implemented |
 | Pagination and search on both lists | Implemented |
-| Unit tests (`TeamServiceTest`, `TeamControllerTest`) | Pending (piece 8) |
-| Check against a real database (context test with Docker) | Pending |
+| Unit tests: `TeamServiceTest` (25), `TeamControllerTest` (6) | Implemented, all passing |
+| Database test against PostgreSQL (`WorkspaceDataIntegrationTest`): team searches, "my teams", team delete cascade | Implemented, all passing |
 
 ---
 
