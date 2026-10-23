@@ -92,7 +92,7 @@ Random generation and hashing live in one place, `OpaqueTokens`, shared by `Refr
 
 ## Workspaces (R02)
 
-**`docs/workspaces-docs.md` is the workspaces contract**: endpoints, invitation flow, slugs, archive/delete, error codes, status table. Change the code and that file in the same PR.
+**`docs/workspaces-docs.md` is the workspaces contract** (endpoints, invitation flow, slugs, archive/delete, pagination rules, error codes, status table), **`docs/teams-docs.md` the teams contract** and **`docs/projects-docs.md` the projects contract**. Change the code and the matching file in the same PR.
 
 - **Every access check goes through `workspace/services/WorkspaceAccess`.** `requireMember` / `requireAdmin` for reads and for archive/restore/delete; `requireActiveMember` / `requireActiveAdmin` for anything that changes data — they also refuse an archived workspace with 409 `WORKSPACE_ARCHIVED`. A non-member gets the same 404 as a missing workspace; a member without the role gets 403.
 - **Permanent workspace delete relies on the database's `ON DELETE CASCADE`.** Every table that hangs off a workspace (or a user) must put `@OnDelete(action = OnDeleteAction.CASCADE)` on that `@ManyToOne`, or the delete fails on the foreign key.
@@ -110,7 +110,7 @@ Services should let their exceptions propagate; the advice maps them.
 
 ## Conventions in this codebase
 
-- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
+- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `team/{models,repositories,services,controllers,dto}`, `project/{models,repositories,services,controllers,dto}`, `common/` for cross-feature helpers (`PageResponse`, `Pageables`), `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
 - **Edit the existing class rather than adding a parallel one.** Do not create `GlobalExceptionHandler` next to `ExceptionHandler`, or a `*V2`.
 - Entities extend `audit/BaseEntity` for the four audit columns. `AuditorProvider` stamps `system` for anonymous and unauthenticated writes.
 - `@Value` on a **`final`** field combined with `@RequiredArgsConstructor` silently produces a constructor with no parameter annotation and fails at startup. Use a non-final field or write the constructor explicitly.

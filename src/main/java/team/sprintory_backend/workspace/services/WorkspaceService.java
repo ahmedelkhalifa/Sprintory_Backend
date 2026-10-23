@@ -1,8 +1,11 @@
 package team.sprintory_backend.workspace.services;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.common.Pageables;
+import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.workspace.dto.CreateWorkspaceRequest;
@@ -59,11 +62,13 @@ public class WorkspaceService {
         return WorkspaceResponse.from(workspaceAccess.requireMember(workspaceId, user));
     }
 
-    public List<WorkspaceMemberResponse> listMembers(User user, Long workspaceId) {
+    /** One page of members, optionally filtered by name or email ({@code q}). */
+    public PageResponse<WorkspaceMemberResponse> listMembers(User user, Long workspaceId, String q,
+                                                             Pageable pageable) {
         workspaceAccess.requireMember(workspaceId, user);
-        return workspaceMemberRepository.findAllByWorkspaceId(workspaceId).stream()
-                .map(WorkspaceMemberResponse::from)
-                .toList();
+        return PageResponse.from(workspaceMemberRepository
+                .searchByWorkspaceId(workspaceId, Pageables.containsPattern(q), Pageables.withoutSort(pageable))
+                .map(WorkspaceMemberResponse::from));
     }
 
     /** Renames the workspace. The slug is kept, so existing links keep working. */

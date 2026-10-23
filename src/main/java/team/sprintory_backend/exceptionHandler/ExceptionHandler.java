@@ -62,6 +62,11 @@ public class ExceptionHandler {
                 e.getMessage(), request);
     }
 
+    @org.springframework.web.bind.annotation.ExceptionHandler(BadRequestException.class)
+    public ResponseEntity<ErrorResponse> handleBadRequest(BadRequestException e, HttpServletRequest request) {
+        return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.BAD_REQUEST, e.getMessage(), request);
+    }
+
     @org.springframework.web.bind.annotation.ExceptionHandler(WorkspaceArchivedException.class)
     public ResponseEntity<ErrorResponse> handleWorkspaceArchived(HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), ErrorCode.WORKSPACE_ARCHIVED,

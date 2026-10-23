@@ -9,6 +9,8 @@ import team.sprintory_backend.workspace.exceptions.WorkspaceArchivedException;
 import team.sprintory_backend.workspace.models.WorkspaceMember;
 import team.sprintory_backend.workspace.repositories.WorkspaceMemberRepository;
 
+import java.util.Optional;
+
 /**
  * Workspace-level access checks shared by workspaces, teams and projects. A non-member gets the
  * same 404 as a missing workspace (docs/api-conventions.md §5); a member without the admin role
@@ -24,9 +26,17 @@ public class WorkspaceAccess {
 
     private final WorkspaceMemberRepository workspaceMemberRepository;
 
+    /**
+     * The caller's membership, with its workspace loaded, or empty. For features that must answer
+     * with their own 404 (e.g. "Team not found") instead of "Workspace not found".
+     */
+    public Optional<WorkspaceMember> findMember(Long workspaceId, User user) {
+        return workspaceMemberRepository.findByWorkspaceIdAndUserId(workspaceId, user.getId());
+    }
+
     /** Returns the caller's membership, with its workspace loaded. */
     public WorkspaceMember requireMember(Long workspaceId, User user) {
-        return workspaceMemberRepository.findByWorkspaceIdAndUserId(workspaceId, user.getId())
+        return findMember(workspaceId, user)
                 .orElseThrow(() -> new ResourceNotFoundException("Workspace not found."));
     }
 
@@ -46,7 +56,8 @@ public class WorkspaceAccess {
         return requireNotArchived(requireAdmin(workspaceId, user));
     }
 
-    private static WorkspaceMember requireNotArchived(WorkspaceMember member) {
+    /** For callers that resolved the membership themselves, e.g. through {@link #findMember}. */
+    public static WorkspaceMember requireNotArchived(WorkspaceMember member) {
         if (member.getWorkspace().isArchived()) {
             throw new WorkspaceArchivedException("Workspace is archived.");
         }

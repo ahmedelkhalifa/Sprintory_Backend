@@ -1,8 +1,8 @@
 # Sprintory — Workspaces API contract (R02)
 
-**Status:** workspaces and invitations implemented. Teams and projects are still in progress. See [§10 Implementation status](#10-implementation-status).
-**Applies to:** backend `/api/v1/workspaces/**` and `/api/v1/invitations/**`, plus every later feature that lives inside a workspace (teams, projects, tasks).
-**Related:** [API and Git Conventions](./api-conventions.md) (error shape §4, private resources §5), [Authentication](./auth-endpoints.md), [Email service](./email-service.md), [Requirements](./requirements.md) R02, R04.
+**Status:** workspaces and invitations implemented. See [§10 Implementation status](#10-implementation-status).
+**Applies to:** backend `/api/v1/workspaces/**` and `/api/v1/invitations/**`, plus the rules every feature inside a workspace builds on (roles, archiving, pagination).
+**Related:** [Teams](./teams-docs.md), [Projects](./projects-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private resources §5), [Authentication](./auth-endpoints.md), [Email service](./email-service.md), [Requirements](./requirements.md) R02, R04.
 
 This document is the single reference for how workspaces work end to end. If the code and this file disagree, fix one of them in the same PR.
 
@@ -10,7 +10,7 @@ This document is the single reference for how workspaces work end to end. If the
 
 ## 1. Overview
 
-- **A workspace is the top-level container** for an organization. Teams and projects live inside it.
+- **A workspace is the top-level container** for an organization. Teams ([teams-docs.md](./teams-docs.md)) and projects ([projects-docs.md](./projects-docs.md)) live inside it.
 - **Any logged-in user can create a workspace** and becomes its admin. A user can belong to many workspaces.
 - **Roles are per workspace, not per user.** The same person can be an admin in one workspace and a member in another. The role is stored on the membership row (`workspace_members`), not on the user.
 - **People join only by invitation.** An admin invites an email address. The person clicks the emailed link and joins as a member, registering first if they have no account.
@@ -22,8 +22,8 @@ This document is the single reference for how workspaces work end to end. If the
 
 | Role | Can do |
 | --- | --- |
-| `WORKSPACE_ADMIN` | Everything a member can, plus rename, archive, restore and delete the workspace, invite people, and (coming next) manage teams and project membership |
-| `WORKSPACE_MEMBER` | See the workspace and its member list, accept being added to teams and projects |
+| `WORKSPACE_ADMIN` | Everything a member can, plus rename, archive, restore and delete the workspace, invite people, see and manage every team, see every project and manage its membership |
+| `WORKSPACE_MEMBER` | See the workspace and its member list, see the teams and projects they belong to, create projects |
 
 Story 6 adds role changes (promote a member to admin, "at least one admin" rule) and project roles.
 
@@ -41,6 +41,8 @@ Story 6 adds role changes (promote a member to admin, "at least one admin" rule)
 | Look up an invitation | allowed | allowed | allowed | allowed |
 | Accept an invitation | 401 | allowed if the email matches | allowed if the email matches | allowed if the email matches |
 
+For teams and projects, see [teams-docs.md, Who can do what](./teams-docs.md#who-can-do-what) and [projects-docs.md, Who can do what](./projects-docs.md#who-can-do-what).
+
 ---
 
 ## 2. Endpoints
@@ -52,7 +54,7 @@ All paths are under `/api/v1`. Request and response bodies are JSON in `camelCas
 | POST | `/workspaces` | `CreateWorkspaceRequest` | `201` + `WorkspaceResponse` | any logged-in user |
 | GET | `/workspaces` | none | `200` + `WorkspaceResponse[]` | any logged-in user |
 | GET | `/workspaces/{workspaceId}` | none | `200` + `WorkspaceResponse` | member |
-| GET | `/workspaces/{workspaceId}/members` | none | `200` + `WorkspaceMemberResponse[]` | member |
+| GET | `/workspaces/{workspaceId}/members?q=&page=&size=` | none | `200` + `PageResponse<WorkspaceMemberResponse>` | member |
 | PATCH | `/workspaces/{workspaceId}` | `UpdateWorkspaceRequest` | `200` + `WorkspaceResponse` | admin, active workspace |
 | POST | `/workspaces/{workspaceId}/archive` | none | `200` + `WorkspaceResponse` | admin |
 | POST | `/workspaces/{workspaceId}/restore` | none | `200` + `WorkspaceResponse` | admin |
@@ -62,6 +64,8 @@ All paths are under `/api/v1`. Request and response bodies are JSON in `camelCas
 | POST | `/invitations/accept` | `InvitationTokenRequest` | `200` + `WorkspaceResponse` | logged in, email must match the invitation |
 
 `{workspaceId}` is the numeric id from `WorkspaceResponse.id`, not the slug.
+
+The team endpoints (`/workspaces/{workspaceId}/teams` and `/teams/**`) are documented in [teams-docs.md](./teams-docs.md), and the project endpoints (`/workspaces/{workspaceId}/projects` and `/projects/**`) in [projects-docs.md](./projects-docs.md).
 
 ### Request bodies
 
@@ -110,9 +114,36 @@ All paths are under `/api/v1`. Request and response bodies are JSON in `camelCas
 { "workspaceName": "Acme Engineering", "email": "grace@example.com" }
 ```
 
-- `GET /workspaces` is sorted by workspace name. It **includes archived workspaces**; use `archivedAt` to show them separately.
-- `GET /workspaces/{id}/members` is sorted by first name, then last name.
+- `GET /workspaces` is sorted by workspace name and is **not** paginated, because a person belongs to only a few workspaces. It **includes archived workspaces**; use `archivedAt` to show them separately.
+- `GET /workspaces/{id}/members` is paginated and searchable by first name, last name or email (see below), sorted by first name, then last name.
 - Passwords, password hashes, tokens and provider are never part of a response body.
+
+### Pagination and search
+
+Every list that can grow large is paginated the same way across the API: workspace members here, teams and team members ([teams-docs.md](./teams-docs.md)), and projects and project members ([projects-docs.md](./projects-docs.md)). This section is the shared definition.
+
+| Query parameter | Default | Rules |
+| --- | --- | --- |
+| `page` | `0` | 0-based page number. A negative value is treated as `0`. |
+| `size` | `20` | Items per page, at most `100`. A larger value is capped at `100`. |
+| `q` | none | Optional search, where the list supports it. Case-insensitive "contains". Blank means no search. |
+| `sort` | — | **Ignored.** Each list has a fixed order. |
+
+```jsonc
+// PageResponse<T>
+{
+  "content": [ /* items of type T, for example WorkspaceMemberResponse */ ],
+  "page": 0,            // the page returned, 0-based
+  "size": 20,           // the page size used
+  "totalElements": 37,  // items across all pages (after the search, if any)
+  "totalPages": 2
+}
+```
+
+- `GET /workspaces/{id}/members?q=ada` matches first name, last name or email. Each list documents what its `q` matches.
+- A page past the end returns `200` with an empty `content`; `totalElements` and `totalPages` still describe the whole list.
+- Searches only cover what the caller is allowed to see. A search can never reveal anything a plain list would not.
+- An app-wide search (one box across workspaces, teams, projects and tasks) is planned for after tasks exist. It will combine these per-list searches.
 
 ---
 
@@ -138,12 +169,12 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 | --- | --- | --- | --- |
 | `VALIDATION_ERROR` | 400 | Request validation failed. | A request body breaks the rules in §2. `fieldErrors` names the field, e.g. `{ "name": "must not be blank" }` or `{ "emails[1]": "must be a well-formed email address" }`. |
 | `BAD_REQUEST` | 400 | Malformed request body. | The body is not valid JSON, or a value has the wrong type |
-| `BAD_REQUEST` | 400 | Invalid value for 'workspaceId'. | A path value is not a number, e.g. `GET /workspaces/abc` |
+| `BAD_REQUEST` | 400 | Invalid value for 'workspaceId'. | A path value is not a number, e.g. `GET /workspaces/abc`. The name in quotes is the path variable. |
 | `AUTHENTICATION_ERROR` | 401 | Authentication required. Please log in. | No valid access cookie. Try `POST /auth/refresh` first (see auth §4.4). |
 | `ACCESS_DENIED` | 403 | You do not have access to this resource. | A member tries an admin action, **or** someone accepts an invitation that was sent to a different email |
 | `RESOURCE_NOT_FOUND` | 404 | Workspace not found. | The workspace does not exist **or** the caller is not a member. Identical on purpose. |
 | `RESOURCE_NOT_FOUND` | 404 | Invitation not found or expired. | The invitation link is unknown, already used, replaced by a newer one, expired, or its workspace was deleted |
-| `WORKSPACE_ARCHIVED` | 409 | This workspace is archived. Restore it to make changes. | Any change to an archived workspace: rename, invite, accepting an invitation, and later teams and projects |
+| `WORKSPACE_ARCHIVED` | 409 | This workspace is archived. Restore it to make changes. | Any change to an archived workspace: rename, invite, accepting an invitation, team changes, creating projects and changing their membership |
 | `WORKSPACE_NOT_ARCHIVED` | 409 | Archive the workspace before deleting it. | `DELETE` on an active workspace |
 | `CONFLICT` | 409 | That value is already in use. | Two workspaces with the same name created at the same instant ended up with the same slug. Retrying succeeds. |
 | `SERVICE_UNAVAILABLE` | 503 | We couldn't send the email. Please try again later. | An invitation email could not be sent. **No invitation from that request was kept**, so the admin can retry the whole list. |
@@ -165,7 +196,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 | `POST /invitations/lookup` | 400 `VALIDATION_ERROR`, 404 |
 | `POST /invitations/accept` | 400 `VALIDATION_ERROR`, 401, 403 (email mismatch), 404, 409 `WORKSPACE_ARCHIVED` |
 
-Any endpoint with a JSON body or a `{workspaceId}` can also return 400 `BAD_REQUEST`, and any endpoint can return 500 `INTERNAL_ERROR`.
+Any endpoint with a JSON body or a numeric path variable can also return 400 `BAD_REQUEST`, and any endpoint can return 500 `INTERNAL_ERROR`.
 
 ---
 
@@ -199,14 +230,14 @@ Any endpoint with a JSON body or a `{workspaceId}` can also return 400 `BAD_REQU
 1. **Archive:** `POST /workspaces/{id}/archive`.
    - Sets `archivedAt` to now. Archiving an already archived workspace changes nothing and still returns `200`.
    - Members can still open the workspace and read everything in it.
-   - Every change is refused with `409 WORKSPACE_ARCHIVED`: renaming, inviting, accepting an invitation, and later team and project changes.
+   - Every change is refused with `409 WORKSPACE_ARCHIVED`: renaming, inviting, accepting an invitation, team changes, and project changes.
    - Pending invitation links stay in the database, but accepting them is refused until the workspace is restored.
 2. **Restore:** `POST /workspaces/{id}/restore`.
    - Clears `archivedAt`. Restoring an active workspace changes nothing and still returns `200`.
    - Everything works again. Invitations that have not expired yet can be accepted again.
 3. **Delete permanently:** `DELETE /workspaces/{id}`.
    - Only for an **archived** workspace; otherwise `409 WORKSPACE_NOT_ARCHIVED`.
-   - Removes the workspace and everything inside it: memberships, invitations, and later teams, projects and their tasks. **It cannot be undone.**
+   - Removes the workspace and everything inside it: memberships, invitations, teams, projects, and later their tasks. **It cannot be undone.**
    - The frontend should ask for confirmation, for example by making the admin type the workspace name.
    - Response: `204`.
 
@@ -274,9 +305,11 @@ Slugs are unique across all workspaces. The API addresses workspaces by numeric 
 | `workspace_members` | `id`, `workspace_id`, `user_id`, `role` (`WORKSPACE_ADMIN` / `WORKSPACE_MEMBER`), audit columns | unique on (`workspace_id`, `user_id`) |
 | `workspace_invitations` | `id`, `workspace_id`, `email`, `token_hash` (SHA-256, unique), `expires_at`, audit columns | unique on (`workspace_id`, `email`) |
 
+Team tables are described in [teams-docs.md §6](./teams-docs.md#6-data-model), project tables in [projects-docs.md §6](./projects-docs.md#6-data-model).
+
 - The audit columns are `created_at`, `updated_at`, `created_by`, `updated_by`, from `BaseEntity`.
-- Every foreign key to a workspace or user is `ON DELETE CASCADE`. Deleting a workspace deletes its memberships and invitations in the same statement, and deleting a user deletes their memberships.
-- **Every future table under a workspace (teams, projects, tasks) must also use `@OnDelete(action = OnDeleteAction.CASCADE)`**, or a permanent workspace delete fails on the foreign key.
+- Every foreign key to a workspace or user is `ON DELETE CASCADE`. Deleting a workspace deletes its memberships, invitations, teams and projects (with their member rows) in the same statement; deleting a user deletes their memberships.
+- **Every future table under a workspace (tasks, sprints, comments) must also use `@OnDelete(action = OnDeleteAction.CASCADE)`**, or a permanent workspace delete fails on the foreign key.
 - Invitation tokens follow the same rules as the auth link tokens: 32 random bytes in the link, only the SHA-256 hash in the database, deleted on use.
 - Expired invitations are removed by a nightly job at 03:40, server time.
 
@@ -290,6 +323,7 @@ All workspace rules go through `WorkspaceAccess`, which later features (teams, p
 | `requireAdmin` | archive, restore, delete | 404, 403 |
 | `requireActiveMember` | changes any member may make | 404, 409 `WORKSPACE_ARCHIVED` |
 | `requireActiveAdmin` | changes only an admin may make | 404, 403, 409 `WORKSPACE_ARCHIVED` |
+| `findMember` | features with their own 404 message, e.g. teams answer "Team not found." instead of "Workspace not found." | nothing, returns empty |
 
 ---
 
@@ -342,8 +376,9 @@ As of 23 Oct 2026, on branch `features/workspaces-teams-projects`:
 | Create, list, get, members, rename, archive, restore, delete (`WorkspaceService`, `WorkspaceController`) | Implemented |
 | Invite, lookup, accept, nightly cleanup (`InvitationService`, `InvitationController`) | Implemented |
 | Invitation email template | Implemented |
-| Teams: create, list, get, rename, delete, add and remove members | Pending (piece 6) |
-| Projects: minimal create, list, get, add people, add a team, remove members | Pending (piece 7) |
+| Pagination (`PageResponse`) and search on the workspace member list | Implemented |
+| Teams | Implemented, see [teams-docs.md §9](./teams-docs.md#9-implementation-status) |
+| Projects (minimal) | Implemented, see [projects-docs.md §9](./projects-docs.md#9-implementation-status) |
 | Unit tests for slugs, workspaces, invitations, teams, projects | Pending (piece 8) |
 | End-to-end check against a running app with Mailpit | Pending |
 
@@ -368,3 +403,4 @@ As of 23 Oct 2026, on branch `features/workspaces-teams-projects`:
 | 23 Oct 2026 | Workspaces are archived first (read-only, restorable) and can be deleted permanently only once archived. No waiting period this sprint. |
 | 23 Oct 2026 | Workspace deletion is a hard delete through `ON DELETE CASCADE`. Task soft delete (story 9) and project archiving (R30) are separate. |
 | 23 Oct 2026 | Adding a team to a project copies the team's current members once; later team changes do not affect the project. |
+| 23 Oct 2026 | Every list that can grow large is paginated with one shared `PageResponse` shape (`page`/`size`, max 100, fixed order, client `sort` ignored). Lists get a per-list `?q=` search; an app-wide search is deferred until tasks exist. No JPA Specifications until a list needs several optional filters (tasks, story 9). |

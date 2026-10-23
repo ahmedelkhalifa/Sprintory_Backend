@@ -2,6 +2,7 @@ package team.sprintory_backend.workspace.controllers;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -12,7 +13,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 import team.sprintory_backend.workspace.dto.CreateWorkspaceRequest;
 import team.sprintory_backend.workspace.dto.UpdateWorkspaceRequest;
@@ -48,10 +51,13 @@ public class WorkspaceController {
         return workspaceService.get(principal.getUser(), workspaceId);
     }
 
+    /** {@code ?q=} searches first name, last name and email; {@code ?page=&size=} pages (max 100). */
     @GetMapping("/{workspaceId}/members")
-    public List<WorkspaceMemberResponse> listMembers(@AuthenticationPrincipal AppUserDetails principal,
-                                                     @PathVariable Long workspaceId) {
-        return workspaceService.listMembers(principal.getUser(), workspaceId);
+    public PageResponse<WorkspaceMemberResponse> listMembers(@AuthenticationPrincipal AppUserDetails principal,
+                                                             @PathVariable Long workspaceId,
+                                                             @RequestParam(required = false) String q,
+                                                             Pageable pageable) {
+        return workspaceService.listMembers(principal.getUser(), workspaceId, q, pageable);
     }
 
     @PatchMapping("/{workspaceId}")
