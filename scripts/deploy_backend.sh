@@ -25,10 +25,12 @@ for key in POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD JWT_SECRET FRONTEND_URL; 
 done
 
 # Ubuntu images commonly require sudo for Docker; support either access mode.
+# Supply the SHA image override *inside* sudo's command. Ubuntu sudo normally
+# resets the environment, so setting BACKEND_IMAGE before sudo is insufficient.
 if docker info >/dev/null 2>&1; then
-  compose=(docker compose)
+  compose=(env "BACKEND_IMAGE=$image" docker compose)
 elif sudo -n docker info >/dev/null 2>&1; then
-  compose=(sudo -n docker compose)
+  compose=(sudo -n env "BACKEND_IMAGE=$image" docker compose)
 else
   echo 'Cannot reach Docker (neither direct access nor passwordless sudo).' >&2
   exit 1
@@ -36,8 +38,8 @@ fi
 
 # An explicit SHA tag guarantees this run deploys the image it just published.
 # Override BACKEND_IMAGE only for these commands; NEVER rewrite Ahmed's .env.
-BACKEND_IMAGE="$image" "${compose[@]}" --env-file .env config --quiet
-BACKEND_IMAGE="$image" "${compose[@]}" --env-file .env pull db backend
-BACKEND_IMAGE="$image" "${compose[@]}" --env-file .env up -d --no-build --wait db backend
-BACKEND_IMAGE="$image" "${compose[@]}" --env-file .env ps db backend
+"${compose[@]}" --env-file .env config --quiet
+"${compose[@]}" --env-file .env pull db backend
+"${compose[@]}" --env-file .env up -d --no-build --wait db backend
+"${compose[@]}" --env-file .env ps db backend
 printf '\nDeployed backend image: %s\n' "$image"
