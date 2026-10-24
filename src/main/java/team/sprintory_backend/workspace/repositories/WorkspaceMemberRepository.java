@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.workspace.models.WorkspaceMember;
 
 import java.util.Collection;
@@ -22,6 +23,9 @@ public interface WorkspaceMemberRepository extends JpaRepository<WorkspaceMember
                                                          @Param("userId") Long userId);
 
     boolean existsByWorkspaceIdAndUserId(Long workspaceId, Long userId);
+
+    /** How many members hold the role, e.g. for "at least one admin". */
+    long countByWorkspaceIdAndRole(Long workspaceId, Role role);
 
     /** The memberships of the given users in one workspace; users who are not members are absent. */
     @Query("select m from WorkspaceMember m join fetch m.user "

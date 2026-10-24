@@ -16,9 +16,12 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import team.sprintory_backend.notification.email.EmailDeliveryException;
+import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
+import team.sprintory_backend.project.exceptions.LastProjectManagerException;
 import team.sprintory_backend.security.exceptions.EmailAlreadyRegisteredException;
 import team.sprintory_backend.security.exceptions.InvalidTokenException;
 import team.sprintory_backend.security.exceptions.ProviderMismatchException;
+import team.sprintory_backend.workspace.exceptions.LastWorkspaceAdminException;
 import team.sprintory_backend.workspace.exceptions.WorkspaceArchivedException;
 import team.sprintory_backend.workspace.exceptions.WorkspaceNotArchivedException;
 
@@ -77,6 +80,24 @@ public class ExceptionHandler {
     public ResponseEntity<ErrorResponse> handleWorkspaceNotArchived(HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), ErrorCode.WORKSPACE_NOT_ARCHIVED,
                 "Archive the workspace before deleting it.", request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(LastWorkspaceAdminException.class)
+    public ResponseEntity<ErrorResponse> handleLastWorkspaceAdmin(LastWorkspaceAdminException e,
+                                                                  HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.LAST_WORKSPACE_ADMIN, e.getMessage(), request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(LastProjectManagerException.class)
+    public ResponseEntity<ErrorResponse> handleLastProjectManager(LastProjectManagerException e,
+                                                                  HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.LAST_PROJECT_MANAGER, e.getMessage(), request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(InvalidProjectRolesException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidProjectRoles(InvalidProjectRolesException e,
+                                                                   HttpServletRequest request) {
+        return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.INVALID_PROJECT_ROLES, e.getMessage(), request);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(InvalidTokenException.class)

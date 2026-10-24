@@ -10,6 +10,7 @@ import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.dto.ProjectMemberResponse;
 import team.sprintory_backend.project.dto.ProjectResponse;
+import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.services.ProjectService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 import team.sprintory_backend.user.models.User;
@@ -39,7 +40,7 @@ class ProjectControllerTest {
 
     @Test
     void createAnswersCreatedWithTheProject() {
-        CreateProjectRequest request = new CreateProjectRequest("Mobile App");
+        CreateProjectRequest request = new CreateProjectRequest("Mobile App", ProjectTemplate.SCRUM);
         when(service.create(user, 3L, request)).thenReturn(PROJECT);
 
         var response = controller.create(principal, 3L, request);

@@ -17,8 +17,12 @@ import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.dto.ProjectMemberResponse;
 import team.sprintory_backend.project.dto.ProjectResponse;
+import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
+import team.sprintory_backend.project.exceptions.LastProjectManagerException;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectMember;
+import team.sprintory_backend.project.models.ProjectRole;
+import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.team.models.Team;
@@ -33,6 +37,8 @@ import team.sprintory_backend.workspace.repositories.WorkspaceMemberRepository;
 import team.sprintory_backend.workspace.services.WorkspaceAccess;
 
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -72,11 +78,14 @@ class ProjectServiceTest {
         workspaceMemberRepository = mock(WorkspaceMemberRepository.class);
         teamRepository = mock(TeamRepository.class);
         teamMemberRepository = mock(TeamMemberRepository.class);
+        WorkspaceAccess workspaceAccess = new WorkspaceAccess(workspaceMemberRepository);
         service = new ProjectService(projectRepository, projectMemberRepository, workspaceMemberRepository,
-                teamRepository, teamMemberRepository, new WorkspaceAccess(workspaceMemberRepository));
+                teamRepository, teamMemberRepository, workspaceAccess,
+                new ProjectAccess(projectRepository, projectMemberRepository, workspaceAccess));
 
         workspace = Workspace.builder().id(WORKSPACE_ID).name("Acme").slug("acme").build();
-        project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App").build();
+        project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App")
+                .template(ProjectTemplate.SCRUM).build();
         when(workspaceMemberRepository.findByWorkspaceIdAndUserId(anyLong(), anyLong())).thenReturn(Optional.empty());
         when(projectRepository.findWithWorkspaceById(anyLong())).thenReturn(Optional.empty());
         when(projectRepository.findWithWorkspaceById(PROJECT_ID)).thenReturn(Optional.of(project));
@@ -89,7 +98,7 @@ class ProjectServiceTest {
     @Test
     void createRefusesNonMembersWithWorkspaceNotFound() {
         ResourceNotFoundException e = assertThrows(ResourceNotFoundException.class,
-                () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App")));
+                () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App", ProjectTemplate.SCRUM)));
         assertEquals("Workspace not found.", e.getMessage());
     }
 
@@ -99,12 +108,12 @@ class ProjectServiceTest {
         archiveWorkspace();
 
         assertThrows(WorkspaceArchivedException.class,
-                () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App")));
+                () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App", ProjectTemplate.SCRUM)));
         verify(projectRepository, never()).save(any());
     }
 
     @Test
-    void createLetsAPlainMemberCreateAndMakesThemTheFirstMember() {
+    void createLetsAPlainMemberCreateAndMakesThemItsProjectManager() {
         givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
         when(projectRepository.save(any(Project.class))).thenAnswer(call -> {
             Project saved = call.getArgument(0);
@@ -112,12 +121,17 @@ class ProjectServiceTest {
             return saved;
         });
 
-        ProjectResponse response = service.create(member, WORKSPACE_ID, new CreateProjectRequest("  Mobile App "));
+        ProjectResponse response = service.create(member, WORKSPACE_ID,
+                new CreateProjectRequest("  Mobile App ", ProjectTemplate.KANBAN));
 
+        ArgumentCaptor<Project> saved = ArgumentCaptor.forClass(Project.class);
+        verify(projectRepository).save(saved.capture());
+        assertEquals(ProjectTemplate.KANBAN, saved.getValue().getTemplate());
         ArgumentCaptor<ProjectMember> first = ArgumentCaptor.forClass(ProjectMember.class);
         verify(projectMemberRepository).save(first.capture());
         assertSame(member, first.getValue().getUser());
         assertEquals(PROJECT_ID, first.getValue().getProject().getId());
+        assertEquals(Set.of(ProjectRole.PROJECT_MANAGER), first.getValue().getRoles());
         assertEquals(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App"), response);
     }
 
@@ -238,6 +252,21 @@ class ProjectServiceTest {
     }
 
     @Test
+    void addMembersLetsTheProjectManagerWhoIsNotAnAdminAddPeople() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        User linus = user(12L, "linus@example.com");
+        when(workspaceMemberRepository.findAllByWorkspaceIdAndUserIdIn(WORKSPACE_ID, Set.of(12L)))
+                .thenReturn(List.of(membership(linus, Role.WORKSPACE_MEMBER)));
+
+        service.addMembers(member, PROJECT_ID, new AddProjectMembersRequest(List.of(12L)));
+
+        ArgumentCaptor<ProjectMember> saved = ArgumentCaptor.forClass(ProjectMember.class);
+        verify(projectMemberRepository).save(saved.capture());
+        assertSame(linus, saved.getValue().getUser());
+    }
+
+    @Test
     void addMembersRefusesAMemberWhoCannotSeeTheProjectWithNotFound() {
         givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
 
@@ -280,6 +309,7 @@ class ProjectServiceTest {
         verify(projectMemberRepository, times(1)).save(saved.capture());
         assertSame(linus, saved.getValue().getUser());
         assertSame(project, saved.getValue().getProject());
+        assertEquals(Set.of(ProjectRole.MEMBER), saved.getValue().getRoles(), "the default role");
     }
 
     // --- add a team ---
@@ -297,6 +327,7 @@ class ProjectServiceTest {
         ArgumentCaptor<ProjectMember> saved = ArgumentCaptor.forClass(ProjectMember.class);
         verify(projectMemberRepository, times(1)).save(saved.capture());
         assertSame(linus, saved.getValue().getUser());
+        assertEquals(Set.of(ProjectRole.MEMBER), saved.getValue().getRoles());
     }
 
     @Test
@@ -354,14 +385,215 @@ class ProjectServiceTest {
         verify(projectMemberRepository, never()).deleteByProjectIdAndUserId(anyLong(), anyLong());
     }
 
+    @Test
+    void removeMemberRefusesTheLastProjectManager() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        givenManagerCount(1);
+
+        LastProjectManagerException e = assertThrows(LastProjectManagerException.class,
+                () -> service.removeMember(admin, PROJECT_ID, member.getId()));
+        assertEquals("A project must have at least one Project Manager.", e.getMessage());
+        verify(projectMemberRepository, never()).deleteByProjectIdAndUserId(anyLong(), anyLong());
+    }
+
+    @Test
+    void removeMemberAllowsRemovingAProjectManagerWhenAnotherRemains() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        givenManagerCount(2);
+
+        service.removeMember(admin, PROJECT_ID, member.getId());
+
+        verify(projectMemberRepository).deleteByProjectIdAndUserId(PROJECT_ID, member.getId());
+    }
+
+    @Test
+    void removeMemberLetsTheOnlyScrumMasterGo() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.SCRUM_MASTER);
+
+        service.removeMember(admin, PROJECT_ID, member.getId());
+
+        verify(projectMemberRepository).deleteByProjectIdAndUserId(PROJECT_ID, member.getId());
+        verify(projectMemberRepository, never()).countByProjectIdAndRole(anyLong(), any());
+    }
+
+    @Test
+    void removeMemberLocksTheProjectFirst() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+
+        service.removeMember(admin, PROJECT_ID, 12L);
+
+        var order = inOrder(projectRepository, projectMemberRepository);
+        order.verify(projectRepository).lockById(PROJECT_ID);
+        order.verify(projectMemberRepository).deleteByProjectIdAndUserId(PROJECT_ID, 12L);
+    }
+
+    // --- set roles ---
+
+    @Test
+    void setRolesLetsTheProjectManagerReplaceTheRoles() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        User linus = user(12L, "linus@example.com");
+        givenInProject(linus, ProjectRole.MEMBER);
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenAnswer(call -> call.getArgument(0));
+
+        ProjectMemberResponse response = service.setRoles(member, PROJECT_ID, 12L,
+                Set.of(ProjectRole.PRODUCT_OWNER, ProjectRole.SCRUM_MASTER));
+
+        ArgumentCaptor<ProjectMember> saved = ArgumentCaptor.forClass(ProjectMember.class);
+        verify(projectMemberRepository).save(saved.capture());
+        assertEquals(Set.of(ProjectRole.PRODUCT_OWNER, ProjectRole.SCRUM_MASTER), saved.getValue().getRoles());
+        assertEquals(12L, response.userId());
+    }
+
+    @Test
+    void setRolesLetsAnAdminWhoIsNotInTheProjectChangeRoles() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.MEMBER);
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenAnswer(call -> call.getArgument(0));
+
+        service.setRoles(admin, PROJECT_ID, member.getId(), Set.of(ProjectRole.VIEWER));
+
+        verify(projectMemberRepository).save(any(ProjectMember.class));
+    }
+
+    @Test
+    void setRolesRefusesSomeoneWhoIsNotTheProjectManagerWithForbidden() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PRODUCT_OWNER, ProjectRole.SCRUM_MASTER);
+
+        assertThrows(AccessDeniedException.class,
+                () -> service.setRoles(member, PROJECT_ID, member.getId(), Set.of(ProjectRole.PROJECT_MANAGER)));
+        verify(projectMemberRepository, never()).save(any());
+    }
+
+    @Test
+    void setRolesAnswersNotFoundForSomeoneOutsideTheProject() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+
+        ResourceNotFoundException e = assertThrows(ResourceNotFoundException.class,
+                () -> service.setRoles(admin, PROJECT_ID, 12L, Set.of(ProjectRole.MEMBER)));
+        assertEquals("Project member not found.", e.getMessage());
+    }
+
+    @Test
+    void setRolesRefusesAnEmptySet() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.MEMBER);
+
+        for (Set<ProjectRole> empty : Arrays.asList(Set.<ProjectRole>of(), null)) {
+            assertInvalidRoles("A member must have at least one role.",
+                    () -> service.setRoles(admin, PROJECT_ID, member.getId(), empty));
+        }
+    }
+
+    @Test
+    void setRolesRefusesViewerCombinedWithAnotherRole() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.MEMBER);
+
+        assertInvalidRoles("Viewer cannot be combined with other roles.",
+                () -> service.setRoles(admin, PROJECT_ID, member.getId(),
+                        Set.of(ProjectRole.VIEWER, ProjectRole.MEMBER)));
+    }
+
+    @Test
+    void setRolesRefusesScrumRolesInAKanbanProject() {
+        project.setTemplate(ProjectTemplate.KANBAN);
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.MEMBER);
+
+        assertInvalidRoles("Product Owner is not available in Kanban projects.",
+                () -> service.setRoles(admin, PROJECT_ID, member.getId(), Set.of(ProjectRole.PRODUCT_OWNER)));
+        assertInvalidRoles("Scrum Master is not available in Kanban projects.",
+                () -> service.setRoles(admin, PROJECT_ID, member.getId(), Set.of(ProjectRole.SCRUM_MASTER)));
+    }
+
+    @Test
+    void setRolesRefusesTakingTheRoleFromTheLastProjectManager() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        givenManagerCount(1);
+
+        LastProjectManagerException e = assertThrows(LastProjectManagerException.class,
+                () -> service.setRoles(member, PROJECT_ID, member.getId(), Set.of(ProjectRole.MEMBER)));
+        assertEquals("A project must have at least one Project Manager.", e.getMessage());
+        verify(projectMemberRepository, never()).save(any());
+    }
+
+    @Test
+    void setRolesLetsAProjectManagerStepDownWhenAnotherRemains() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        givenManagerCount(2);
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenAnswer(call -> call.getArgument(0));
+
+        service.setRoles(member, PROJECT_ID, member.getId(), Set.of(ProjectRole.SCRUM_MASTER));
+
+        verify(projectMemberRepository).save(any(ProjectMember.class));
+    }
+
+    @Test
+    void setRolesKeepingTheProjectManagerRoleNeedsNoSecondManager() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenAnswer(call -> call.getArgument(0));
+
+        service.setRoles(member, PROJECT_ID, member.getId(),
+                Set.of(ProjectRole.PROJECT_MANAGER, ProjectRole.PRODUCT_OWNER));
+
+        verify(projectMemberRepository, never()).countByProjectIdAndRole(anyLong(), any());
+    }
+
+    @Test
+    void setRolesRefusesAnArchivedWorkspace() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.MEMBER);
+        archiveWorkspace();
+
+        assertThrows(WorkspaceArchivedException.class,
+                () -> service.setRoles(admin, PROJECT_ID, member.getId(), Set.of(ProjectRole.VIEWER)));
+    }
+
+    @Test
+    void setRolesLocksTheProjectFirst() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.MEMBER);
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenAnswer(call -> call.getArgument(0));
+
+        service.setRoles(admin, PROJECT_ID, member.getId(), Set.of(ProjectRole.VIEWER));
+
+        var order = inOrder(projectRepository, projectMemberRepository);
+        order.verify(projectRepository).lockById(PROJECT_ID);
+        order.verify(projectMemberRepository).save(any(ProjectMember.class));
+    }
+
     // --- fixtures ---
+
+    private void givenManagerCount(long count) {
+        when(projectMemberRepository.countByProjectIdAndRole(PROJECT_ID, ProjectRole.PROJECT_MANAGER))
+                .thenReturn(count);
+    }
+
+    private static void assertInvalidRoles(String message, Executable call) {
+        InvalidProjectRolesException e = assertThrows(InvalidProjectRolesException.class, call);
+        assertEquals(message, e.getMessage());
+    }
 
     private void givenWorkspaceRole(User user, Role role) {
         when(workspaceMemberRepository.findByWorkspaceIdAndUserId(WORKSPACE_ID, user.getId()))
                 .thenReturn(Optional.of(membership(user, role)));
     }
 
-    private void givenInProject(User user) {
+    /** Puts the user in the project; with no roles given, as a plain MEMBER. */
+    private void givenInProject(User user, ProjectRole... roles) {
+        Set<ProjectRole> held = (roles.length == 0) ? Set.of(ProjectRole.MEMBER) : Set.of(roles);
+        ProjectMember row = ProjectMember.builder().project(project).user(user).roles(new HashSet<>(held)).build();
+        when(projectMemberRepository.findWithRolesByProjectIdAndUserId(PROJECT_ID, user.getId()))
+                .thenReturn(Optional.of(row));
         when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, user.getId())).thenReturn(true);
     }
 
