@@ -64,6 +64,21 @@ Ubuntu runners provide Docker; Docker must be running locally. See `docs/integra
 - Never edit a migration that is merged — Flyway checksums it. Add a new version instead.
 - Enum columns have check constraints, so adding an enum value also needs a migration.
 
+## Deployment
+
+**`docs/deployment.md` is the deployment runbook.** Production is one VPS running
+`deploy/docker-compose.yml`: Postgres, the backend image pulled from Docker Hub (built from the root
+`Dockerfile`, tests skipped because CI runs them), and Nginx Proxy Manager, which is configured in its
+web UI — there is no Nginx config in this repo. The CD workflow that builds and pushes the image is
+not written yet.
+
+- Frontend and API must be `app.<domain>` and `api.<domain>` (same site), because the auth cookies
+  are `SameSite=Lax`.
+- `application-prod.properties` sets `server.forward-headers-strategy=framework` so Spring sees the
+  proxy's `https`; the Google `redirect_uri` depends on it.
+- Under compose, `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` and `SPRING_PROFILES_ACTIVE` come from the
+  compose file, not from `deploy/.env`.
+
 ## R01 status
 
 **`docs/auth-endpoints.md` is the authentication contract**: endpoints, flows, cookies, every error code, configuration, decisions, and an implementation-status table. Change the code and that file in the same PR.

@@ -1,0 +1,59 @@
+# Production stack for the VPS. Run from this folder: docker compose pull && docker compose up -d
+# Settings come from deploy/.env (gitignored), which compose also uses for the ${...} below.
+# The backend image is built from the repo's Dockerfile and pushed to Docker Hub; the VPS only pulls it.
+# Nginx Proxy Manager is configured in its web UI on port 81 - see docs/deployment.md.
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sprintory
+
+  backend:
+    image: ${BACKEND_IMAGE:?set BACKEND_IMAGE in .env, e.g. user/sprintory-backend:latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sprintory
+
+  nginx:
+    image: jc21/nginx-proxy-manager:2.12.3
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - npm-data:/data
+      - npm-letsencrypt:/etc/letsencrypt
+    networks:
+      - sprintory
+
+volumes:
+  db-data:
+  npm-data:
+  npm-letsencrypt:
+
+networks:
+  sprintory:
+    name: sprintory
