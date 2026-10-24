@@ -11,6 +11,7 @@ import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectMember;
 import team.sprintory_backend.project.models.ProjectRole;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -39,6 +40,15 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
             + "where pm.project.id = :projectId and pm.user.id = :userId")
     Optional<ProjectMember> findWithRolesByProjectIdAndUserId(@Param("projectId") Long projectId,
                                                               @Param("userId") Long userId);
+
+    /**
+     * The caller's memberships for a page of projects. Fetching roles in one query avoids an
+     * extra SQL query per project when returning per-caller permissions in a list response.
+     */
+    @Query("select distinct pm from ProjectMember pm left join fetch pm.roles "
+            + "where pm.project.id in :projectIds and pm.user.id = :userId")
+    List<ProjectMember> findWithRolesByProjectIdsAndUserId(@Param("projectIds") Collection<Long> projectIds,
+                                                          @Param("userId") Long userId);
 
     /** How many members of the project hold the role, e.g. for "at least one Project Manager". */
     @Query("select count(pm) from ProjectMember pm join pm.roles r where pm.project.id = :projectId and r = :role")

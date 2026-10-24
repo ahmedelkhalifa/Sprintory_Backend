@@ -8,6 +8,7 @@ import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
+import team.sprintory_backend.workspace.dto.ChangeWorkspaceRoleRequest;
 import team.sprintory_backend.workspace.dto.CreateWorkspaceRequest;
 import team.sprintory_backend.workspace.dto.InvitationLookupResponse;
 import team.sprintory_backend.workspace.dto.InvitationTokenRequest;
@@ -85,6 +86,32 @@ class WorkspaceControllerTest {
         when(workspaceService.listMembers(user, 3L, "ada", pageable)).thenReturn(page);
 
         assertSame(page, workspaceController.listMembers(principal, 3L, "ada", pageable));
+    }
+
+    @Test
+    void workspaceRoleChangeReturnsTheUpdatedMember() {
+        ChangeWorkspaceRoleRequest request = new ChangeWorkspaceRoleRequest(Role.WORKSPACE_ADMIN);
+        WorkspaceMemberResponse changed = new WorkspaceMemberResponse(8L, "Grace", "Hopper",
+                "grace@example.com", Role.WORKSPACE_ADMIN);
+        when(workspaceService.changeRole(user, 3L, 8L, Role.WORKSPACE_ADMIN)).thenReturn(changed);
+
+        assertEquals(changed, workspaceController.changeMemberRole(principal, 3L, 8L, request));
+        verify(workspaceService).changeRole(user, 3L, 8L, Role.WORKSPACE_ADMIN);
+    }
+
+    @Test
+    void workspaceMemberRemovalAnswersNoContent() {
+        var result = workspaceController.removeMember(principal, 3L, 8L);
+        assertEquals(HttpStatus.NO_CONTENT, result.getStatusCode());
+        assertNull(result.getBody());
+        verify(workspaceService).removeMember(user, 3L, 8L);
+    }
+
+    @Test
+    void leavingWorkspaceUsesTheSameEndpoint() {
+        assertEquals(HttpStatus.NO_CONTENT,
+                workspaceController.removeMember(principal, 3L, 7L).getStatusCode());
+        verify(workspaceService).removeMember(user, 3L, 7L);
     }
 
     @Test

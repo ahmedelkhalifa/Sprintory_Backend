@@ -21,6 +21,7 @@ import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
 import team.sprintory_backend.project.exceptions.LastProjectManagerException;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectMember;
+import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
@@ -132,7 +133,8 @@ class ProjectServiceTest {
         assertSame(member, first.getValue().getUser());
         assertEquals(PROJECT_ID, first.getValue().getProject().getId());
         assertEquals(Set.of(ProjectRole.PROJECT_MANAGER), first.getValue().getRoles());
-        assertEquals(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App"), response);
+        assertEquals(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App", ProjectTemplate.KANBAN,
+                Set.of(ProjectRole.PROJECT_MANAGER), ProjectRole.PROJECT_MANAGER.permissions()), response);
     }
 
     // --- list ---
@@ -150,7 +152,27 @@ class ProjectServiceTest {
         verify(projectRepository).searchByWorkspaceId(eq(WORKSPACE_ID), eq("%mob%"), pageable.capture());
         assertTrue(pageable.getValue().getSort().isUnsorted());
         verify(projectRepository, never()).searchByWorkspaceIdAndMemberId(anyLong(), anyLong(), anyString(), any());
-        assertEquals(List.of(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App")), page.content());
+        assertEquals(List.of(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App", ProjectTemplate.SCRUM,
+                Set.of(), ProjectPermission.WORKSPACE_ADMIN)), page.content());
+    }
+
+    @Test
+    void listIncludesTheCallersActualProjectRolesAndPermissions() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        ProjectMember mine = ProjectMember.builder().project(project).user(member)
+                .roles(new HashSet<>(Set.of(ProjectRole.PRODUCT_OWNER, ProjectRole.SCRUM_MASTER))).build();
+        when(projectRepository.searchByWorkspaceIdAndMemberId(anyLong(), anyLong(), anyString(), any()))
+                .thenReturn(new PageImpl<>(List.of(project), PageRequest.of(0, 20), 1));
+        when(projectMemberRepository.findWithRolesByProjectIdsAndUserId(List.of(PROJECT_ID), member.getId()))
+                .thenReturn(List.of(mine));
+
+        ProjectResponse result = service.list(member, WORKSPACE_ID, null, PageRequest.of(0, 20))
+                .content().get(0);
+        assertEquals(Set.of(ProjectRole.PRODUCT_OWNER, ProjectRole.SCRUM_MASTER), result.roles());
+        assertTrue(result.permissions().contains(ProjectPermission.MANAGE_BACKLOG));
+        assertTrue(result.permissions().contains(ProjectPermission.MANAGE_SPRINTS));
+        assertFalse(result.permissions().contains(ProjectPermission.MANAGE_ROLES));
+        verify(projectMemberRepository).findWithRolesByProjectIdsAndUserId(List.of(PROJECT_ID), member.getId());
     }
 
     @Test
@@ -197,14 +219,21 @@ class ProjectServiceTest {
         givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
         givenInProject(member);
 
-        assertEquals("Mobile App", service.get(member, PROJECT_ID).name());
+        ProjectResponse response = service.get(member, PROJECT_ID);
+        assertEquals("Mobile App", response.name());
+        assertEquals(ProjectTemplate.SCRUM, response.template());
+        assertEquals(Set.of(ProjectRole.MEMBER), response.roles());
+        assertTrue(response.permissions().contains(ProjectPermission.EDIT_TASKS));
     }
 
     @Test
     void getAllowsAnAdminWhoIsNotInTheProject() {
         givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
 
-        assertEquals("Mobile App", service.get(admin, PROJECT_ID).name());
+        ProjectResponse response = service.get(admin, PROJECT_ID);
+        assertEquals("Mobile App", response.name());
+        assertEquals(Set.of(), response.roles());
+        assertEquals(ProjectPermission.WORKSPACE_ADMIN, response.permissions());
     }
 
     @Test
@@ -229,6 +258,7 @@ class ProjectServiceTest {
 
         verify(projectMemberRepository).searchByProjectId(eq(PROJECT_ID), eq("%grace%"), any());
         assertEquals(8L, page.content().get(0).userId());
+        assertEquals(Set.of(), page.content().get(0).roles());
     }
 
     @Test
@@ -447,6 +477,7 @@ class ProjectServiceTest {
         verify(projectMemberRepository).save(saved.capture());
         assertEquals(Set.of(ProjectRole.PRODUCT_OWNER, ProjectRole.SCRUM_MASTER), saved.getValue().getRoles());
         assertEquals(12L, response.userId());
+        assertEquals(Set.of(ProjectRole.PRODUCT_OWNER, ProjectRole.SCRUM_MASTER), response.roles());
     }
 
     @Test

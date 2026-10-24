@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -20,6 +21,7 @@ import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.dto.ProjectMemberResponse;
 import team.sprintory_backend.project.dto.ProjectResponse;
+import team.sprintory_backend.project.dto.SetProjectRolesRequest;
 import team.sprintory_backend.project.services.ProjectService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 
@@ -80,6 +82,15 @@ public class ProjectController {
                                         @Valid @RequestBody AddTeamToProjectRequest request) {
         projectService.addTeam(principal.getUser(), projectId, request);
         return ResponseEntity.noContent().build();
+    }
+
+    /** R03: replaces the member's role set; authorization and last-manager checks live in the service. */
+    @PutMapping("/projects/{projectId}/members/{userId}/roles")
+    public ProjectMemberResponse setRoles(@AuthenticationPrincipal AppUserDetails principal,
+                                          @PathVariable Long projectId,
+                                          @PathVariable Long userId,
+                                          @Valid @RequestBody SetProjectRolesRequest request) {
+        return projectService.setRoles(principal.getUser(), projectId, userId, request.roles());
     }
 
     @DeleteMapping("/projects/{projectId}/members/{userId}")

@@ -1,6 +1,6 @@
 # Sprintory — Roles and permissions contract (R03)
 
-**Status:** roles, the permission matrix and every rule are implemented in the services. **The HTTP endpoints are not built yet**; see [§3 Endpoints](#3-endpoints). See [§10 Implementation status](#10-implementation-status).
+**Status:** role permissions and service rules implemented; the three role-management HTTP endpoints, request DTOs and caller-specific response fields are implemented. See [§3 Endpoints](#3-endpoints) and [§10 Implementation status](#10-implementation-status).
 **Applies to:** workspace roles on `workspace_members`, project roles on `project_members`, and every permission check inside a project.
 **Related:** [Workspaces](./workspaces-docs.md), [Projects](./projects-docs.md), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R03, R04, R38.
 
@@ -80,22 +80,33 @@ The creator of a workspace is its first admin; people who accept an invitation j
 
 ## 3. Endpoints
 
-**Not built yet.** The service methods below are implemented and tested; the developer adding the controllers documents the endpoints here, following [API conventions](./api-conventions.md). The table is the agreed shape.
+All paths are under `/api/v1`. The authenticated user is taken from the access-token cookie, not supplied in the body. Controllers delegate authorization and last-admin/last-manager checks to the existing services.
 
-| Action | Planned endpoint | Service method |
-| --- | --- | --- |
-| Change a member's workspace role | `PATCH /workspaces/{workspaceId}/members/{userId}` `{ "role": "WORKSPACE_ADMIN" }` | `WorkspaceService.changeRole` → `WorkspaceMemberResponse` |
-| Remove a member, or leave (own `userId`) | `DELETE /workspaces/{workspaceId}/members/{userId}` → `204` | `WorkspaceService.removeMember` |
-| Replace a member's project roles | `PUT /projects/{projectId}/members/{userId}/roles` `{ "roles": ["PRODUCT_OWNER", "SCRUM_MASTER"] }` | `ProjectService.setRoles` → `ProjectMemberResponse` |
+| Action | Endpoint | Request | Response | Service |
+| --- | --- | --- | --- | --- |
+| Change a member's workspace role | `PATCH /workspaces/{workspaceId}/members/{userId}` | `{ "role": "WORKSPACE_ADMIN" }` | `200 WorkspaceMemberResponse` | `WorkspaceService.changeRole` |
+| Remove a member, or leave (own `userId`) | `DELETE /workspaces/{workspaceId}/members/{userId}` | none | `204`, no body | `WorkspaceService.removeMember` |
+| Replace a member's project roles | `PUT /projects/{projectId}/members/{userId}/roles` | `{ "roles": ["PRODUCT_OWNER", "SCRUM_MASTER"] }` | `200 ProjectMemberResponse` | `ProjectService.setRoles` |
 
-Still to add to the DTOs (other developer):
+- `ChangeWorkspaceRoleRequest.role` is required and must be `WORKSPACE_ADMIN` or `WORKSPACE_MEMBER`.
+- `SetProjectRolesRequest.roles` is required and contains valid project-role enum values. An **empty array** reaches the service and returns `400 INVALID_PROJECT_ROLES`; the service also enforces the template and Viewer restrictions in §4.3.
+- `ProjectMemberResponse` includes `roles` alongside the member's `userId`, `firstName`, `lastName`, and `email`.
+- All `ProjectResponse` objects (create, list, get) include `template`, the **caller's own** `roles`, and their effective `permissions` under that project. For workspace admins who are not project members, `roles` is `[]`, but `permissions` contains the workspace-admin grants. Never use the target member's roles in these fields.
 
-- `ProjectResponse.template`
-- `ProjectMemberResponse.roles`
-- the caller's own `roles` and `permissions` on the project response (`ProjectAccessResult.permissions()` holds them), so the frontend can hide controls (§7)
-- request DTOs with validation for the three endpoints above
+Example project response for a Scrum Master who is also Product Owner:
 
-Project membership endpoints already exist and are documented in [projects-docs.md](./projects-docs.md); story 6 only changes who may call them (§4).
+```json
+{
+  "id": 21,
+  "workspaceId": 3,
+  "name": "Mobile App",
+  "template": "SCRUM",
+  "roles": ["PRODUCT_OWNER", "SCRUM_MASTER"],
+  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "MANAGE_BACKLOG", "MANAGE_SPRINTS", "EDIT_TASKS", "COMMENT", "LOG_TIME"]
+}
+```
+
+Project membership endpoints already exist and are documented in [projects-docs.md](./projects-docs.md); story 6 changes who may call them (§4).
 
 ---
 
@@ -222,7 +233,7 @@ A later feature checks its permission with one line, for example `projectAccess.
 
 ## 9. Known limitations
 
-- **Endpoints and DTO fields are not built yet** (§3).
+- The role-management endpoints and DTO response fields are implemented (§3); HTTP-to-database integration tests remain pending.
 - **No audit log of role changes** yet; R05 (sprint 2) adds it.
 - **A project whose creator had left before V3** has no Project Manager. A workspace admin can assign one.
 
@@ -244,7 +255,7 @@ As of 24 Oct 2026, on branch `features/roles`:
 | `V3__project_roles.sql` | Written, **not yet run against PostgreSQL** |
 | Unit tests: `ProjectRoleTest` (14), `ProjectTemplateTest` (4), `ProjectAccessTest` (11), `ProjectServiceTest` (42), `WorkspaceServiceTest` (40), `ExceptionHandlerTest` (8) | Implemented, all passing |
 | Database tests against PostgreSQL for the new queries, locks and cascades | Pending |
-| Endpoints, DTO fields, controller tests | Pending (other developer) |
+| Three R03 endpoints, request DTOs, project response roles/template/permissions, controller and DTO tests | Implemented; Maven verification required |
 
 ---
 

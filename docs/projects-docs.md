@@ -58,7 +58,7 @@ All paths are under `/api/v1`. Request and response bodies are JSON in `camelCas
 
 Creating and listing sit under the workspace because a project belongs to exactly one. Everything else is addressed by the project's own id.
 
-Not available yet, on purpose: renaming or editing a project and its settings (story 8), archiving a project (R30), and deleting a single project. Changing a member's project roles is implemented in the service; its endpoint is listed in [roles-docs.md §3](./roles-docs.md#3-endpoints).
+Not available yet, on purpose: renaming or editing a project and its settings (story 8), archiving a project (R30), and deleting a single project. Changing a member's project roles is available via the role-management endpoint in [roles-docs.md §3](./roles-docs.md#3-endpoints).
 
 ### Path variables
 
@@ -106,11 +106,14 @@ A page past the end returns `200` with an empty `content`.
 // AddTeamToProjectRequest
 { "teamId": 4 }
 
-// ProjectResponse
-{ "id": 21, "workspaceId": 3, "name": "Mobile App" }
+// ProjectResponse: the caller's project roles and effective permissions
+{ "id": 21, "workspaceId": 3, "name": "Mobile App", "template": "SCRUM",
+  "roles": ["PROJECT_MANAGER"],
+  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "EDIT_TASKS", "COMMENT", "LOG_TIME"] }
 
-// ProjectMemberResponse: public profile data only (the roles field is still to be added, roles-docs §3)
-{ "userId": 7, "firstName": "Ada", "lastName": "Lovelace", "email": "ada@example.com" }
+// ProjectMemberResponse: public profile data and that member's project roles
+{ "userId": 7, "firstName": "Ada", "lastName": "Lovelace", "email": "ada@example.com",
+  "roles": ["PROJECT_MANAGER"] }
 ```
 
 | Field | Rules |
@@ -139,7 +142,8 @@ Creates a project in the workspace and makes the caller its Project Manager.
   ```
 - **Response `201`:**
   ```json
-  { "id": 21, "workspaceId": 3, "name": "Mobile App" }
+  { "id": 21, "workspaceId": 3, "name": "Mobile App", "template": "SCRUM",
+    "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "EDIT_TASKS", "COMMENT", "LOG_TIME"] }
   ```
 - **After creation:** the caller appears in 3.4 with the `PROJECT_MANAGER` role.
 - **Errors:**
@@ -167,7 +171,8 @@ One page of projects, sorted by name.
   ```json
   {
     "content": [
-      { "id": 21, "workspaceId": 3, "name": "Mobile App" },
+      { "id": 21, "workspaceId": 3, "name": "Mobile App", "template": "SCRUM",
+    "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "EDIT_TASKS", "COMMENT", "LOG_TIME"] },
       { "id": 22, "workspaceId": 3, "name": "Website" }
     ],
     "page": 0,
@@ -191,7 +196,8 @@ One page of projects, sorted by name.
 - **Archived workspace:** allowed.
 - **Response `200`:**
   ```json
-  { "id": 21, "workspaceId": 3, "name": "Mobile App" }
+  { "id": 21, "workspaceId": 3, "name": "Mobile App", "template": "SCRUM",
+    "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "EDIT_TASKS", "COMMENT", "LOG_TIME"] }
   ```
 - **Errors:**
 

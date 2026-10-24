@@ -33,6 +33,8 @@ import team.sprintory_backend.workspace.services.WorkspaceAccess;
 
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -61,14 +63,15 @@ public class ProjectService {
     /** Any member of an active workspace can create a project, and becomes its Project Manager. */
     @Transactional
     public ProjectResponse create(User user, Long workspaceId, CreateProjectRequest request) {
-        Workspace workspace = workspaceAccess.requireActiveMember(workspaceId, user).getWorkspace();
+        WorkspaceMember creator = workspaceAccess.requireActiveMember(workspaceId, user);
+        Workspace workspace = creator.getWorkspace();
         Project project = projectRepository.save(Project.builder()
                 .workspace(workspace)
                 .name(request.name().trim())
                 .template(request.template())
                 .build());
         projectMemberRepository.save(newMember(project, user, ProjectRole.PROJECT_MANAGER));
-        return ProjectResponse.from(project);
+        return responseFor(project, Set.of(ProjectRole.PROJECT_MANAGER), creator.isAdmin());
     }
 
     /** Admins see every project of the workspace, members only the projects they belong to. */
@@ -79,13 +82,25 @@ public class ProjectService {
         Page<Project> projects = membership.isAdmin()
                 ? projectRepository.searchByWorkspaceId(workspaceId, pattern, page)
                 : projectRepository.searchByWorkspaceIdAndMemberId(workspaceId, user.getId(), pattern, page);
-        return PageResponse.from(projects.map(ProjectResponse::from));
+        // Load the caller's roles for the page in one query; workspace admins may not be project members.
+        List<Long> ids = projects.getContent().stream().map(Project::getId).toList();
+        Map<Long, Set<ProjectRole>> rolesByProject = new HashMap<>();
+        if (!ids.isEmpty()) {
+            projectMemberRepository.findWithRolesByProjectIdsAndUserId(ids, user.getId())
+                    .forEach(member -> rolesByProject.put(member.getProject().getId(), member.getRoles()));
+        }
+        return PageResponse.from(projects.map(project -> responseFor(project,
+                rolesByProject.getOrDefault(project.getId(), Set.of()), membership.isAdmin())));
     }
 
     public ProjectResponse get(User user, Long projectId) {
-        return ProjectResponse.from(projectAccess.requireVisible(projectId, user).project());
+        ProjectAccessResult access = projectAccess.requireVisible(projectId, user);
+        Set<ProjectRole> roles = access.projectMember() == null
+                ? Set.of() : access.projectMember().getRoles();
+        return ProjectResponse.from(access.project(), roles, access.permissions());
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<ProjectMemberResponse> listMembers(User user, Long projectId, String q, Pageable pageable) {
         projectAccess.requireVisible(projectId, user);
         return PageResponse.from(projectMemberRepository
@@ -157,6 +172,15 @@ public class ProjectService {
         target.getRoles().clear();
         target.getRoles().addAll(wanted);
         return ProjectMemberResponse.from(projectMemberRepository.save(target));
+    }
+
+    private static ProjectResponse responseFor(Project project, Set<ProjectRole> roles, boolean workspaceAdmin) {
+        Set<ProjectPermission> permissions = EnumSet.noneOf(ProjectPermission.class);
+        permissions.addAll(ProjectRole.permissionsOf(roles));
+        if (workspaceAdmin) {
+            permissions.addAll(ProjectPermission.WORKSPACE_ADMIN);
+        }
+        return ProjectResponse.from(project, roles, permissions);
     }
 
     private void addIfAbsent(Project project, User user) {
