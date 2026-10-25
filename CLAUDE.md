@@ -124,6 +124,17 @@ Random generation and hashing live in one place, `OpaqueTokens`, shared by `Refr
 - **Permanent workspace delete relies on the database's `ON DELETE CASCADE`.** Every table that hangs off a workspace (or a user) must put `@OnDelete(action = OnDeleteAction.CASCADE)` on that `@ManyToOne`, or the delete fails on the foreign key.
 - Invitations are addressed to an email, not a user, so they have their own table (`WorkspaceInvitation`) instead of `one_time_tokens`, but use the same `OpaqueTokens`. Replacing an invitation uses a bulk `@Modifying` delete on purpose: Hibernate flushes inserts before derived deletes, which would hit the (workspace, email) unique constraint.
 
+## Roles and permissions (R03)
+
+**`docs/roles-docs.md` is the roles contract** (roles, permission matrix, rules, error codes, status). Change the code and that file in the same PR.
+
+- **Every check inside a project goes through `project/services/ProjectAccess`** and asks for a `ProjectPermission`, never a role name: `requireVisible` (404), `require(…, permission)` (403), `requireActive(…, permission)` (also 409 archived). A new feature (tasks, sprints, backlog, settings) adds one such call per action.
+- **The matrix lives in `ProjectRole`**: each role lists its permissions, and `permissionsOf` combines a person's roles. Workspace admins get `ProjectPermission.WORKSPACE_ADMIN` in every project, which deliberately excludes `VIEW_WORK`. `ProjectTemplate` decides which roles a project offers.
+- "At least one admin / Project Manager" checks run under a row lock (`WorkspaceRepository.lockById`, `ProjectRepository.lockById`). Keep that when adding a path that removes an admin or a Project Manager.
+- Leaving a workspace is **not** an `ON DELETE CASCADE`: it deletes only the `workspace_members` row, so `WorkspaceService.removeMember` deletes the person's team and project rows of that workspace explicitly. A new per-workspace membership table needs the same.
+- A new `ProjectRole` value needs a migration changing `ck_project_member_roles_role`; a new `ProjectPermission` needs only code and the matrix test.
+- Story 6's endpoints and DTO fields are built by another developer, against `docs/roles-docs.md` §3.
+
 ## Error response contract
 
 One JSON shape (`docs/api-conventions.md` §4), produced from three places that must stay in sync: `exceptionHandler/ExceptionHandler` for anything thrown inside MVC, `AppAuthenticationEntryPoint` for 401, `AppAccessDeniedHandler` for 403. `ErrorCode` is the stable machine-readable vocabulary — add to the enum rather than inventing strings.
@@ -136,12 +147,12 @@ Services should let their exceptions propagate; the advice maps them.
 
 ## Conventions in this codebase
 
-- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `team/{models,repositories,services,controllers,dto}`, `project/{models,repositories,services,controllers,dto}`, `common/` for cross-feature helpers (`PageResponse`, `Pageables`), `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
+- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `team/{models,repositories,services,controllers,dto}`, `project/{models,repositories,services,controllers,dto,exceptions}`, `common/` for cross-feature helpers (`PageResponse`, `Pageables`), `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
 - **Edit the existing class rather than adding a parallel one.** Do not create `GlobalExceptionHandler` next to `ExceptionHandler`, or a `*V2`.
 - Entities extend `audit/BaseEntity` for the four audit columns. `AuditorProvider` stamps `system` for anonymous and unauthenticated writes.
 - `@Value` on a **`final`** field combined with `@RequiredArgsConstructor` silently produces a constructor with no parameter annotation and fails at startup. Use a non-final field or write the constructor explicitly.
 - **Jackson 3**: `tools.jackson.databind.ObjectMapper`, not `com.fasterxml.jackson.databind`. Annotations are still `com.fasterxml.jackson.annotation`. `JacksonException` is unchecked, so no `throws` clause is needed. `jjwt-jackson` drags in Jackson 2 as well; the two coexist in different packages.
-- **Users have no role** (decided 23 Oct 2026). Roles are per workspace, on `WorkspaceMember`: the creator of a workspace is its `WORKSPACE_ADMIN`, invitees join as `WORKSPACE_MEMBER`. Logins carry no authorities, so `hasRole(...)` / `@PreAuthorize` role checks never match — check roles in the service through `WorkspaceAccess`.
+- **Users have no role** (decided 23 Oct 2026). Roles are per workspace, on `WorkspaceMember`: the creator of a workspace is its `WORKSPACE_ADMIN`, invitees join as `WORKSPACE_MEMBER`. Logins carry no authorities, so `hasRole(...)` / `@PreAuthorize` role checks never match — check roles in the service through `WorkspaceAccess` and, inside a project, permissions through `ProjectAccess`.
 - Emails are stored trimmed and lower-cased with **`toLowerCase(Locale.ROOT)`** — a Turkish default locale turns `I` into a dotless `ı`. Every place that normalizes an email does it this way; keep it so.
-- `Role` is `{WORKSPACE_MEMBER, WORKSPACE_ADMIN}` and is used only by `WorkspaceMember`. `Provider` is `{LOCAL, GOOGLE}`.
+- `Role` is `{WORKSPACE_MEMBER, WORKSPACE_ADMIN}` and is used only by `WorkspaceMember`; project roles are the separate `ProjectRole`. `Provider` is `{LOCAL, GOOGLE}`.
 - The 8-character password minimum has **no backstop in the service layer** — it belongs on the request DTOs as `@Size(min = 8)`.

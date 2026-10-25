@@ -2,7 +2,7 @@
 
 **Status:** workspaces and invitations implemented. See [§10 Implementation status](#10-implementation-status).
 **Applies to:** backend `/api/v1/workspaces/**` and `/api/v1/invitations/**`, plus the rules every feature inside a workspace builds on (roles, archiving, pagination).
-**Related:** [Teams](./teams-docs.md), [Projects](./projects-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private resources §5), [Authentication](./auth-endpoints.md), [Email service](./email-service.md), [Requirements](./requirements.md) R02, R04.
+**Related:** [Roles and permissions](./roles-docs.md), [Teams](./teams-docs.md), [Projects](./projects-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private resources §5), [Authentication](./auth-endpoints.md), [Email service](./email-service.md), [Requirements](./requirements.md) R02, R04.
 
 This document is the single reference for how workspaces work end to end. If the code and this file disagree, fix one of them in the same PR.
 
@@ -22,10 +22,10 @@ This document is the single reference for how workspaces work end to end. If the
 
 | Role | Can do |
 | --- | --- |
-| `WORKSPACE_ADMIN` | Everything a member can, plus rename, archive, restore and delete the workspace, invite people, see and manage every team, see every project and manage its membership |
-| `WORKSPACE_MEMBER` | See the workspace and its member list, see the teams and projects they belong to, create projects |
+| `WORKSPACE_ADMIN` | Everything a member can, plus rename, archive, restore and delete the workspace, invite people, change members' roles, remove members, see and manage every team, see every project and manage its membership and roles |
+| `WORKSPACE_MEMBER` | See the workspace and its member list, see the teams and projects they belong to, create projects, leave the workspace |
 
-Story 6 adds role changes (promote a member to admin, "at least one admin" rule) and project roles.
+A workspace always keeps at least one admin. Changing roles, removing members and leaving are implemented in `WorkspaceService` (story 6); their rules, errors and planned endpoints are in [roles-docs.md §4](./roles-docs.md#4-rules).
 
 ### Who can do what
 
@@ -176,6 +176,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 | `RESOURCE_NOT_FOUND` | 404 | Invitation not found or expired. | The invitation link is unknown, already used, replaced by a newer one, expired, or its workspace was deleted |
 | `WORKSPACE_ARCHIVED` | 409 | This workspace is archived. Restore it to make changes. | Any change to an archived workspace: rename, invite, accepting an invitation, team changes, creating projects and changing their membership |
 | `WORKSPACE_NOT_ARCHIVED` | 409 | Archive the workspace before deleting it. | `DELETE` on an active workspace |
+| `LAST_WORKSPACE_ADMIN` | 409 | A workspace must have at least one admin. | Demoting or removing the last admin, or the last admin leaving ([roles-docs.md §5](./roles-docs.md#5-errors)) |
 | `CONFLICT` | 409 | That value is already in use. | Two workspaces with the same name created at the same instant ended up with the same slug. Retrying succeeds. |
 | `SERVICE_UNAVAILABLE` | 503 | We couldn't send the email. Please try again later. | An invitation email could not be sent. **No invitation from that request was kept**, so the admin can retry the whole list. |
 | `INTERNAL_ERROR` | 500 | Something went wrong. Please try again. | Unexpected server error; details go to the server log only |
@@ -308,7 +309,8 @@ Slugs are unique across all workspaces. The API addresses workspaces by numeric 
 Team tables are described in [teams-docs.md §6](./teams-docs.md#6-data-model), project tables in [projects-docs.md §6](./projects-docs.md#6-data-model).
 
 - The audit columns are `created_at`, `updated_at`, `created_by`, `updated_by`, from `BaseEntity`.
-- Every foreign key to a workspace or user is `ON DELETE CASCADE`. Deleting a workspace deletes its memberships, invitations, teams and projects (with their member rows) in the same statement; deleting a user deletes their memberships.
+- Every foreign key to a workspace or user is `ON DELETE CASCADE`. Deleting a workspace deletes its memberships, invitations, teams and projects (with their member and role rows) in the same statement; deleting a user deletes their memberships.
+- Leaving a workspace, or being removed, deletes only the `workspace_members` row, which team and project rows do not reference. `WorkspaceService.removeMember` therefore deletes the person's team and project rows of that workspace itself.
 - **Every future table under a workspace (tasks, sprints, comments) must also use `@OnDelete(action = OnDeleteAction.CASCADE)`**, or a permanent workspace delete fails on the foreign key.
 - Invitation tokens follow the same rules as the auth link tokens: 32 random bytes in the link, only the SHA-256 hash in the database, deleted on use.
 - Expired invitations are removed by a nightly job at 03:40, server time.
@@ -382,11 +384,11 @@ As of 23 Oct 2026, on branch `features/workspaces-teams-projects`:
 | Unit tests: `SlugGeneratorTest` (12), `WorkspaceServiceTest` (20), `InvitationServiceTest` (17), `WorkspaceControllerTest` (10, includes invitations), `WorkspaceRequestValidationTest` (6), `ExceptionHandlerTest` (5) | Implemented, all passing |
 | Database test against PostgreSQL: `WorkspaceDataIntegrationTest` (9) — searches, paging, visibility queries, invitation replacement, workspace delete cascade | Implemented, all passing |
 | End-to-end check against a running app with Mailpit | Pending |
+| Role changes, removing members, leaving, "at least one admin" (story 6) | Implemented in `WorkspaceService`; endpoints pending, see [roles-docs.md §10](./roles-docs.md#10-implementation-status) |
 
 ### Known limitations
 
-- **No way to leave or remove people yet.** Removing a member from a workspace, and changing a member's role, arrive with story 6.
-- **No "at least one admin" rule yet.** Story 6 adds it together with role changes. Until then the creator stays the only admin.
+- **Role changes and removal have no endpoints yet.** The service methods exist ([roles-docs.md §3](./roles-docs.md#3-endpoints)).
 - **Archived pending invitations still count.** Archiving does not delete pending invitations, so they become usable again after a restore if they have not expired.
 
 ---

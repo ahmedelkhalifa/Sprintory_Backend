@@ -2,6 +2,8 @@ package team.sprintory_backend.project.models;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -20,8 +22,8 @@ import team.sprintory_backend.audit.BaseEntity;
 import team.sprintory_backend.workspace.models.Workspace;
 
 /**
- * A project inside a workspace (R02). Minimal on purpose: story 8 (R06) adds the key, the
- * Scrum/Kanban template and the board, and story 6 adds project roles on ProjectMember.
+ * A project inside a workspace (R02). Story 6 adds the Scrum/Kanban template, because the
+ * roles a project offers depend on it; story 8 (R06) adds the key and the board.
  */
 @Entity
 @Table(name = "projects")
@@ -43,6 +45,11 @@ public class Project extends BaseEntity {
 
     @Column(nullable = false, length = 100)
     private String name;
+
+    /** Chosen at creation; never changes. */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, updatable = false)
+    private ProjectTemplate template;
 
     @Override
     public boolean equals(Object o) {

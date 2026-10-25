@@ -11,6 +11,7 @@ import team.sprintory_backend.AbstractIntegrationTest;
 import team.sprintory_backend.common.Pageables;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectMember;
+import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.security.auth.services.OpaqueTokens;
 import team.sprintory_backend.team.models.Team;
@@ -80,8 +81,10 @@ class WorkspaceDataIntegrationTest extends AbstractIntegrationTest {
         teamMemberRepository.save(TeamMember.builder().team(backend).user(grace).build());
         teamMemberRepository.save(TeamMember.builder().team(design).user(linus).build());
 
-        mobileApp = projectRepository.save(Project.builder().workspace(workspace).name("Mobile App").build());
-        website = projectRepository.save(Project.builder().workspace(workspace).name("Website").build());
+        mobileApp = projectRepository.save(Project.builder().workspace(workspace).name("Mobile App")
+                .template(ProjectTemplate.SCRUM).build());
+        website = projectRepository.save(Project.builder().workspace(workspace).name("Website")
+                .template(ProjectTemplate.KANBAN).build());
         entityManager.persist(ProjectMember.builder().project(mobileApp).user(grace).build());
 
         invitationRepository.save(invitation("new@example.com", "old-token"));

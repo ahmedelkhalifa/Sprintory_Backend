@@ -2,16 +2,26 @@ package team.sprintory_backend.workspace.services;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import team.sprintory_backend.common.Pageables;
 import team.sprintory_backend.common.dto.PageResponse;
+import team.sprintory_backend.exceptionHandler.BadRequestException;
+import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.project.exceptions.LastProjectManagerException;
+import team.sprintory_backend.project.models.Project;
+import team.sprintory_backend.project.models.ProjectRole;
+import team.sprintory_backend.project.repositories.ProjectMemberRepository;
+import team.sprintory_backend.project.repositories.ProjectRepository;
+import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.workspace.dto.CreateWorkspaceRequest;
 import team.sprintory_backend.workspace.dto.UpdateWorkspaceRequest;
 import team.sprintory_backend.workspace.dto.WorkspaceMemberResponse;
 import team.sprintory_backend.workspace.dto.WorkspaceResponse;
+import team.sprintory_backend.workspace.exceptions.LastWorkspaceAdminException;
 import team.sprintory_backend.workspace.exceptions.WorkspaceNotArchivedException;
 import team.sprintory_backend.workspace.models.Workspace;
 import team.sprintory_backend.workspace.models.WorkspaceMember;
@@ -20,10 +30,11 @@ import team.sprintory_backend.workspace.repositories.WorkspaceRepository;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
- * R02 workspace logic: create, read, rename, archive, restore and permanently delete.
- * Access rules are in {@link WorkspaceAccess}.
+ * R02 workspace logic: create, read, rename, archive, restore and permanently delete; R03 role
+ * changes and removing or leaving members. Access rules are in {@link WorkspaceAccess}.
  */
 @Service
 @RequiredArgsConstructor
@@ -33,6 +44,9 @@ public class WorkspaceService {
     private final WorkspaceMemberRepository workspaceMemberRepository;
     private final WorkspaceAccess workspaceAccess;
     private final SlugGenerator slugGenerator;
+    private final ProjectRepository projectRepository;
+    private final ProjectMemberRepository projectMemberRepository;
+    private final TeamMemberRepository teamMemberRepository;
 
     /** Creates an empty workspace and makes the caller its admin. */
     @Transactional
@@ -103,6 +117,68 @@ public class WorkspaceService {
             workspaceRepository.save(workspace);
         }
         return WorkspaceResponse.from(admin);
+    }
+
+    /**
+     * Gives a member the admin or member role. Admins only, active workspace only. Demoting the
+     * last admin, oneself included, is refused; giving someone the role they have changes nothing.
+     */
+    @Transactional
+    public WorkspaceMemberResponse changeRole(User user, Long workspaceId, Long userId, Role role) {
+        if (role == null) {
+            throw new BadRequestException("A role is required.");
+        }
+        workspaceRepository.lockById(workspaceId);
+        workspaceAccess.requireActiveAdmin(workspaceId, user);
+        WorkspaceMember target = requireTarget(workspaceId, userId);
+        if (target.isAdmin() && role != Role.WORKSPACE_ADMIN) {
+            requireAnotherAdmin(workspaceId);
+        }
+        target.setRole(role);
+        return WorkspaceMemberResponse.from(workspaceMemberRepository.save(target));
+    }
+
+    /**
+     * Removes a member from the workspace: an admin may remove anyone, a member only themselves
+     * (leaving). The person also leaves every team and project of this workspace, and nothing in
+     * other workspaces changes. Refused for the last admin, and for the only Project Manager of a
+     * project, who must hand that role over first.
+     */
+    @Transactional
+    public void removeMember(User user, Long workspaceId, Long userId) {
+        workspaceRepository.lockById(workspaceId);
+        WorkspaceMember caller = workspaceAccess.requireActiveMember(workspaceId, user);
+        boolean leaving = user.getId().equals(userId);
+        if (!leaving && !caller.isAdmin()) {
+            throw new AccessDeniedException("Workspace admin role required.");
+        }
+        WorkspaceMember target = leaving ? caller : requireTarget(workspaceId, userId);
+        if (target.isAdmin()) {
+            requireAnotherAdmin(workspaceId);
+        }
+        projectRepository.lockAllWhereMemberHasRole(workspaceId, userId, ProjectRole.PROJECT_MANAGER);
+        List<Project> onlyManagerOf = projectMemberRepository
+                .findProjectsWhereOnlyHolder(workspaceId, userId, ProjectRole.PROJECT_MANAGER);
+        if (!onlyManagerOf.isEmpty()) {
+            throw new LastProjectManagerException("A project must have at least one Project Manager. "
+                    + "Assign another one first in: "
+                    + onlyManagerOf.stream().map(Project::getName).collect(Collectors.joining(", ")) + ".");
+        }
+        projectMemberRepository.deleteByWorkspaceIdAndUserId(workspaceId, userId);
+        teamMemberRepository.deleteByWorkspaceIdAndUserId(workspaceId, userId);
+        workspaceMemberRepository.delete(target);
+    }
+
+    private WorkspaceMember requireTarget(Long workspaceId, Long userId) {
+        return workspaceMemberRepository.findByWorkspaceIdAndUserId(workspaceId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Member not found."));
+    }
+
+    /** Callers hold the workspace lock, so the count cannot change before they commit. */
+    private void requireAnotherAdmin(Long workspaceId) {
+        if (workspaceMemberRepository.countByWorkspaceIdAndRole(workspaceId, Role.WORKSPACE_ADMIN) <= 1) {
+            throw new LastWorkspaceAdminException("A workspace must have at least one admin.");
+        }
     }
 
     /**

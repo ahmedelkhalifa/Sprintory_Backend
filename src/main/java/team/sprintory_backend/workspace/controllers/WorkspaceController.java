@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
+import team.sprintory_backend.workspace.dto.ChangeWorkspaceRoleRequest;
 import team.sprintory_backend.workspace.dto.CreateWorkspaceRequest;
 import team.sprintory_backend.workspace.dto.UpdateWorkspaceRequest;
 import team.sprintory_backend.workspace.dto.WorkspaceMemberResponse;
@@ -58,6 +59,24 @@ public class WorkspaceController {
                                                              @RequestParam(required = false) String q,
                                                              Pageable pageable) {
         return workspaceService.listMembers(principal.getUser(), workspaceId, q, pageable);
+    }
+
+    /** R03: workspace admins may change a member's workspace role; the last admin is protected. */
+    @PatchMapping("/{workspaceId}/members/{userId}")
+    public WorkspaceMemberResponse changeMemberRole(@AuthenticationPrincipal AppUserDetails principal,
+                                                    @PathVariable Long workspaceId,
+                                                    @PathVariable Long userId,
+                                                    @Valid @RequestBody ChangeWorkspaceRoleRequest request) {
+        return workspaceService.changeRole(principal.getUser(), workspaceId, userId, request.role());
+    }
+
+    /** An admin may remove a member; a member may leave by requesting their own user ID. */
+    @DeleteMapping("/{workspaceId}/members/{userId}")
+    public ResponseEntity<Void> removeMember(@AuthenticationPrincipal AppUserDetails principal,
+                                             @PathVariable Long workspaceId,
+                                             @PathVariable Long userId) {
+        workspaceService.removeMember(principal.getUser(), workspaceId, userId);
+        return ResponseEntity.noContent().build();
     }
 
     @PatchMapping("/{workspaceId}")

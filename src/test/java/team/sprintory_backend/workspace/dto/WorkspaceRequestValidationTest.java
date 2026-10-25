@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import team.sprintory_backend.project.dto.AddProjectMembersRequest;
 import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
+import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.team.dto.AddTeamMembersRequest;
 import team.sprintory_backend.team.dto.CreateTeamRequest;
 import team.sprintory_backend.team.dto.UpdateTeamRequest;
@@ -53,11 +54,18 @@ class WorkspaceRequestValidationTest {
             assertFalse(validator.validate(new UpdateWorkspaceRequest(bad)).isEmpty(), "rename: " + bad);
             assertFalse(validator.validate(new CreateTeamRequest(bad)).isEmpty(), "team: " + bad);
             assertFalse(validator.validate(new UpdateTeamRequest(bad)).isEmpty(), "team rename: " + bad);
-            assertFalse(validator.validate(new CreateProjectRequest(bad)).isEmpty(), "project: " + bad);
+            assertFalse(validator.validate(new CreateProjectRequest(bad, ProjectTemplate.SCRUM)).isEmpty(),
+                    "project: " + bad);
         }
         assertTrue(validator.validate(new CreateWorkspaceRequest(longest)).isEmpty());
         assertTrue(validator.validate(new CreateTeamRequest(longest)).isEmpty());
-        assertTrue(validator.validate(new CreateProjectRequest(longest)).isEmpty());
+        assertTrue(validator.validate(new CreateProjectRequest(longest, ProjectTemplate.SCRUM)).isEmpty());
+    }
+
+    @Test
+    void projectTemplateIsRequired() {
+        assertFalse(validator.validate(new CreateProjectRequest("Mobile App", null)).isEmpty());
+        assertTrue(validator.validate(new CreateProjectRequest("Mobile App", ProjectTemplate.KANBAN)).isEmpty());
     }
 
     // --- invitations ---

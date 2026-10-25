@@ -6,6 +6,9 @@ import org.springframework.core.MethodParameter;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
+import team.sprintory_backend.project.exceptions.LastProjectManagerException;
+import team.sprintory_backend.workspace.exceptions.LastWorkspaceAdminException;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -44,6 +47,27 @@ class ExceptionHandlerTest {
     void deletingAnActiveWorkspaceAnswers409() {
         assertError(handler.handleWorkspaceNotArchived(request),
                 409, ErrorCode.WORKSPACE_NOT_ARCHIVED, "Archive the workspace before deleting it.");
+    }
+
+    @Test
+    void lastWorkspaceAdminAnswers409WithTheExceptionsMessage() {
+        assertError(handler.handleLastWorkspaceAdmin(
+                        new LastWorkspaceAdminException("A workspace must have at least one admin."), request),
+                409, ErrorCode.LAST_WORKSPACE_ADMIN, "A workspace must have at least one admin.");
+    }
+
+    @Test
+    void lastProjectManagerAnswers409WithTheExceptionsMessage() {
+        assertError(handler.handleLastProjectManager(
+                        new LastProjectManagerException("A project must have at least one Project Manager."), request),
+                409, ErrorCode.LAST_PROJECT_MANAGER, "A project must have at least one Project Manager.");
+    }
+
+    @Test
+    void invalidProjectRolesAnswers400WithTheExceptionsMessage() {
+        assertError(handler.handleInvalidProjectRoles(
+                        new InvalidProjectRolesException("Viewer cannot be combined with other roles."), request),
+                400, ErrorCode.INVALID_PROJECT_ROLES, "Viewer cannot be combined with other roles.");
     }
 
     @Test

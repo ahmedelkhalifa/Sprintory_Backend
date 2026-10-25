@@ -36,6 +36,15 @@ public interface TeamMemberRepository extends JpaRepository<TeamMember, Long> {
     @Query("select tm.user from TeamMember tm where tm.team.id = :teamId")
     List<User> findUsersByTeamId(@Param("teamId") Long teamId);
 
+    /**
+     * Removes the user from every team of the workspace, for leaving it. ON DELETE CASCADE does
+     * not cover this: leaving deletes only the workspace membership, which team rows do not reference.
+     */
+    @Modifying
+    @Query("delete from TeamMember tm where tm.user.id = :userId "
+            + "and tm.team.id in (select t.id from Team t where t.workspace.id = :workspaceId)")
+    int deleteByWorkspaceIdAndUserId(@Param("workspaceId") Long workspaceId, @Param("userId") Long userId);
+
     /** Returns the number of rows removed; 0 means the user was not in the team. */
     @Modifying
     @Query("delete from TeamMember tm where tm.team.id = :teamId and tm.user.id = :userId")

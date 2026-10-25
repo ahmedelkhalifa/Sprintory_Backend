@@ -10,11 +10,15 @@ import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.dto.ProjectMemberResponse;
 import team.sprintory_backend.project.dto.ProjectResponse;
+import team.sprintory_backend.project.dto.SetProjectRolesRequest;
+import team.sprintory_backend.project.models.ProjectRole;
+import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.services.ProjectService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 import team.sprintory_backend.user.models.User;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -22,7 +26,8 @@ import static org.mockito.Mockito.*;
 /** Pure controller tests: the service is mocked, so no database or Spring context. */
 class ProjectControllerTest {
 
-    private static final ProjectResponse PROJECT = new ProjectResponse(21L, 3L, "Mobile App");
+    private static final ProjectResponse PROJECT = new ProjectResponse(21L, 3L, "Mobile App", ProjectTemplate.SCRUM,
+                    Set.of(ProjectRole.PROJECT_MANAGER), ProjectRole.PROJECT_MANAGER.permissions());
 
     private ProjectService service;
     private ProjectController controller;
@@ -39,7 +44,7 @@ class ProjectControllerTest {
 
     @Test
     void createAnswersCreatedWithTheProject() {
-        CreateProjectRequest request = new CreateProjectRequest("Mobile App");
+        CreateProjectRequest request = new CreateProjectRequest("Mobile App", ProjectTemplate.SCRUM);
         when(service.create(user, 3L, request)).thenReturn(PROJECT);
 
         var response = controller.create(principal, 3L, request);
@@ -71,6 +76,18 @@ class ProjectControllerTest {
         when(service.listMembers(user, 21L, "ada", pageable)).thenReturn(page);
 
         assertSame(page, controller.listMembers(principal, 21L, "ada", pageable));
+    }
+
+    @Test
+    void setRolesDelegatesTheFullReplacementAndReturnsMember() {
+        SetProjectRolesRequest request = new SetProjectRolesRequest(
+                Set.of(ProjectRole.SCRUM_MASTER, ProjectRole.PRODUCT_OWNER));
+        ProjectMemberResponse updated = new ProjectMemberResponse(8L, "Grace", "Hopper",
+                "grace@example.com", request.roles());
+        when(service.setRoles(user, 21L, 8L, request.roles())).thenReturn(updated);
+
+        assertEquals(updated, controller.setRoles(principal, 21L, 8L, request));
+        verify(service).setRoles(user, 21L, 8L, request.roles());
     }
 
     @Test

@@ -7,7 +7,13 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectMember;
+import team.sprintory_backend.project.models.ProjectRole;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Long> {
@@ -28,6 +34,49 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
                                           Pageable pageable);
 
     boolean existsByProjectIdAndUserId(Long projectId, Long userId);
+
+    /** The user's membership in the project with its roles loaded, or empty if they are not in it. */
+    @Query("select pm from ProjectMember pm left join fetch pm.roles "
+            + "where pm.project.id = :projectId and pm.user.id = :userId")
+    Optional<ProjectMember> findWithRolesByProjectIdAndUserId(@Param("projectId") Long projectId,
+                                                              @Param("userId") Long userId);
+
+    /**
+     * The caller's memberships for a page of projects. Fetching roles in one query avoids an
+     * extra SQL query per project when returning per-caller permissions in a list response.
+     */
+    @Query("select distinct pm from ProjectMember pm left join fetch pm.roles "
+            + "where pm.project.id in :projectIds and pm.user.id = :userId")
+    List<ProjectMember> findWithRolesByProjectIdsAndUserId(@Param("projectIds") Collection<Long> projectIds,
+                                                          @Param("userId") Long userId);
+
+    /** How many members of the project hold the role, e.g. for "at least one Project Manager". */
+    @Query("select count(pm) from ProjectMember pm join pm.roles r where pm.project.id = :projectId and r = :role")
+    long countByProjectIdAndRole(@Param("projectId") Long projectId, @Param("role") ProjectRole role);
+
+    /**
+     * The workspace's projects in which the user is the only holder of the role. Called with
+     * PROJECT_MANAGER only: removing the only PM from the workspace is refused, while the only
+     * Scrum Master or Product Owner may leave.
+     */
+    @Query("select pm.project from ProjectMember pm join pm.roles r "
+            + "where pm.project.workspace.id = :workspaceId and pm.user.id = :userId and r = :role "
+            + "and (select count(other) from ProjectMember other join other.roles otherRole "
+            + "where other.project = pm.project and otherRole = :role) = 1 "
+            + "order by pm.project.name, pm.project.id")
+    List<Project> findProjectsWhereOnlyHolder(@Param("workspaceId") Long workspaceId,
+                                              @Param("userId") Long userId,
+                                              @Param("role") ProjectRole role);
+
+    /**
+     * Removes the user from every project of the workspace, for leaving it. ON DELETE CASCADE does
+     * not cover this: leaving deletes only the workspace membership, which project rows do not
+     * reference. Their role rows do go with them through the cascade.
+     */
+    @Modifying
+    @Query("delete from ProjectMember pm where pm.user.id = :userId "
+            + "and pm.project.id in (select p.id from Project p where p.workspace.id = :workspaceId)")
+    int deleteByWorkspaceIdAndUserId(@Param("workspaceId") Long workspaceId, @Param("userId") Long userId);
 
     /** Returns the number of rows removed; 0 means the user was not in the project. */
     @Modifying

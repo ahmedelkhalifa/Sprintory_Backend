@@ -410,7 +410,7 @@ When `WorkspaceResponse.archivedAt` is set, show teams read-only and hide every 
 
 ## 8. Known limitations
 
-- **Leaving the workspace does not remove team memberships yet.** Removing people from a workspace arrives with story 6, which must also remove them from that workspace's teams.
+- **Leaving the workspace removes team memberships** in that workspace (story 6, `WorkspaceService.removeMember`, see [roles-docs.md §4.2](./roles-docs.md#42-removing-a-member-and-leaving)); its endpoint is still to be built.
 - **Names differing only in case are allowed**, e.g. "Backend" and "backend" in the same workspace.
 
 ---
