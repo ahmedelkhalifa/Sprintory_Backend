@@ -59,6 +59,7 @@ public class ProjectService {
     private final TeamMemberRepository teamMemberRepository;
     private final WorkspaceAccess workspaceAccess;
     private final ProjectAccess projectAccess;
+    private final ProjectBoardService projectBoardService;
 
     /** Any member of an active workspace can create a project, and becomes its Project Manager. */
     @Transactional
@@ -71,6 +72,7 @@ public class ProjectService {
                 .template(request.template())
                 .build());
         projectMemberRepository.save(newMember(project, user, ProjectRole.PROJECT_MANAGER));
+        projectBoardService.initialize(project);
         return responseFor(project, Set.of(ProjectRole.PROJECT_MANAGER), creator.isAdmin());
     }
 

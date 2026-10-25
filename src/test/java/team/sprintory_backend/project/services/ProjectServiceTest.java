@@ -66,6 +66,7 @@ class ProjectServiceTest {
     private TeamRepository teamRepository;
     private TeamMemberRepository teamMemberRepository;
     private ProjectService service;
+    private ProjectBoardService boardService;
 
     private Workspace workspace;
     private Project project;
@@ -80,9 +81,10 @@ class ProjectServiceTest {
         teamRepository = mock(TeamRepository.class);
         teamMemberRepository = mock(TeamMemberRepository.class);
         WorkspaceAccess workspaceAccess = new WorkspaceAccess(workspaceMemberRepository);
+        boardService = mock(ProjectBoardService.class);
         service = new ProjectService(projectRepository, projectMemberRepository, workspaceMemberRepository,
                 teamRepository, teamMemberRepository, workspaceAccess,
-                new ProjectAccess(projectRepository, projectMemberRepository, workspaceAccess));
+                new ProjectAccess(projectRepository, projectMemberRepository, workspaceAccess), boardService);
 
         workspace = Workspace.builder().id(WORKSPACE_ID).name("Acme").slug("acme").build();
         project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App")
@@ -111,6 +113,7 @@ class ProjectServiceTest {
         assertThrows(WorkspaceArchivedException.class,
                 () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App", ProjectTemplate.SCRUM)));
         verify(projectRepository, never()).save(any());
+        verifyNoInteractions(boardService);
     }
 
     @Test
@@ -128,6 +131,7 @@ class ProjectServiceTest {
         ArgumentCaptor<Project> saved = ArgumentCaptor.forClass(Project.class);
         verify(projectRepository).save(saved.capture());
         assertEquals(ProjectTemplate.KANBAN, saved.getValue().getTemplate());
+        verify(boardService).initialize(saved.getValue());
         ArgumentCaptor<ProjectMember> first = ArgumentCaptor.forClass(ProjectMember.class);
         verify(projectMemberRepository).save(first.capture());
         assertSame(member, first.getValue().getUser());
