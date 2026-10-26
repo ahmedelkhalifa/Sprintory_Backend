@@ -49,9 +49,9 @@ class ProjectBoardCreationIntegrationTest extends AbstractIntegrationTest {
                 .role(Role.WORKSPACE_MEMBER).build());
 
         var scrum = projects.create(creator, workspace.getId(),
-                new CreateProjectRequest("Scrum Pilot", ProjectTemplate.SCRUM));
+                new CreateProjectRequest("Scrum Pilot", "SCR", ProjectTemplate.SCRUM, null));
         var kanban = projects.create(creator, workspace.getId(),
-                new CreateProjectRequest("Kanban Pilot", ProjectTemplate.KANBAN));
+                new CreateProjectRequest("Kanban Pilot", "KAN", ProjectTemplate.KANBAN, null));
         entityManager.flush();
         entityManager.clear();
 
@@ -67,9 +67,9 @@ class ProjectBoardCreationIntegrationTest extends AbstractIntegrationTest {
         assertTrue(scrumBoard.sprintsEnabled());
         assertFalse(scrumBoard.wipLimitsEnabled());
         assertNull(scrumBoard.activeSprintId());
-        assertEquals(List.of("To Do", "In Progress", "Done"),
+        assertEquals(List.of("To Do", "In Progress", "In Review", "Done"),
                 scrumBoard.columns().stream().map(c -> c.name()).toList());
-        assertEquals(List.of(0, 1, 2), scrumBoard.columns().stream().map(c -> c.position()).toList());
+        assertEquals(List.of(0, 1, 2, 3), scrumBoard.columns().stream().map(c -> c.position()).toList());
         assertTrue(scrumBoard.columns().stream().allMatch(c -> c.id() != null && c.wipLimit() == null));
 
         var kanbanBoard = boards.get(creator, kanban.id());
@@ -77,10 +77,10 @@ class ProjectBoardCreationIntegrationTest extends AbstractIntegrationTest {
         assertFalse(kanbanBoard.sprintsEnabled());
         assertTrue(kanbanBoard.wipLimitsEnabled());
         assertNull(kanbanBoard.activeSprintId());
-        assertEquals(List.of("To Do", "In Progress", "In Review", "Done"),
+        assertEquals(List.of("Backlog", "To Do", "In Progress", "Done"),
                 kanbanBoard.columns().stream().map(c -> c.name()).toList());
         assertTrue(kanbanBoard.columns().stream().allMatch(c -> c.wipLimit() == null));
-        assertEquals(3, columnRepository.findByBoardProjectIdOrderByPositionAscIdAsc(scrum.id()).size());
+        assertEquals(4, columnRepository.findByBoardProjectIdOrderByPositionAscIdAsc(scrum.id()).size());
         assertEquals(4, columnRepository.findByBoardProjectIdOrderByPositionAscIdAsc(kanban.id()).size());
 
         // Deleting a project must cascade to its board and all columns.

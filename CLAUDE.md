@@ -131,9 +131,30 @@ Random generation and hashing live in one place, `OpaqueTokens`, shared by `Refr
 - **Every check inside a project goes through `project/services/ProjectAccess`** and asks for a `ProjectPermission`, never a role name: `requireVisible` (404), `require(…, permission)` (403), `requireActive(…, permission)` (also 409 archived). A new feature (tasks, sprints, backlog, settings) adds one such call per action.
 - **The matrix lives in `ProjectRole`**: each role lists its permissions, and `permissionsOf` combines a person's roles. Workspace admins get `ProjectPermission.WORKSPACE_ADMIN` in every project, which deliberately excludes `VIEW_WORK`. `ProjectTemplate` decides which roles a project offers.
 - "At least one admin / Project Manager" checks run under a row lock (`WorkspaceRepository.lockById`, `ProjectRepository.lockById`). Keep that when adding a path that removes an admin or a Project Manager.
-- Leaving a workspace is **not** an `ON DELETE CASCADE`: it deletes only the `workspace_members` row, so `WorkspaceService.removeMember` deletes the person's team and project rows of that workspace explicitly. A new per-workspace membership table needs the same.
+- Leaving a workspace is **not** an `ON DELETE CASCADE`: it deletes only the `workspace_members` row, so `WorkspaceService.removeMember` deletes the person's team and project rows of that workspace explicitly, and unassigns them from its tasks. A new per-workspace membership table needs the same, and every path that takes someone out of a project must call `TaskRepository.unassignInProject` (or `unassignInWorkspace`).
 - A new `ProjectRole` value needs a migration changing `ck_project_member_roles_role`; a new `ProjectPermission` needs only code and the matrix test.
 - Story 6's endpoints and DTO fields are built by another developer, against `docs/roles-docs.md` §3.
+
+## Projects and boards (R06)
+
+The contract is `docs/projects-docs.md` (§3.1 create, §3.8 board, §3.9 settings).
+
+- **The board is created with the project**, in `ProjectService.create`'s transaction, by `ProjectBoardService.initialize` (`Propagation.MANDATORY`). Default columns and the backlog/sprints/WIP flags come from one strategy per template in `project/strategy/`; `ProjectBoardStrategies` fails at startup if a template has no strategy or two. The flags are not stored: the template never changes.
+- A new `ProjectTemplate` value needs a strategy class, a migration for `ck_projects_template`, and its roles in `ProjectRole`.
+- **The project key never changes** (`updatable = false`): task keys are built from it. It is stored upper-case (`Locale.ROOT`) and unique per workspace (`uk_projects_workspace_key`); the service checks first for a clean 409 `PROJECT_KEY_TAKEN`, the constraint catches races. The column is `project_key` because `key` is an SQL keyword.
+- The board is project *work*: `GET /board` needs `VIEW_WORK`, so a workspace admin who is not in the project gets 403. Settings need `EDIT_SETTINGS`.
+- Board columns keep their ids. Change default columns of existing boards by renaming rows in a migration, not by deleting and recreating them, once tasks point at columns.
+
+## Tasks (R09) and universal search
+
+Contracts: `docs/tasks-docs.md` and `docs/search-docs.md`. Damir built the controllers, DTOs and filters; the rules live in `task/services/TaskApiService`.
+
+- **Soft delete.** `Task` carries `@SQLRestriction("deleted_at is null")`, so no JPA query returns a deleted task. **Native SQL does not get that filter**: write `deleted_at is null` yourself (as `UniversalSearchRepository` does).
+- **Keys** (`MOB-42`): `ProjectRepository.incrementTaskNumber` (an UPDATE, which also takes the project row lock) then `findLastTaskNumber`. `Project.lastTaskNumber` is `updatable = false` so a project save never writes back a stale value. The counter never decreases: keys are never reused.
+- **Status is a board column** (`status_column_id`), with **no cascade** on purpose. Scrum's "backlog" means "in no sprint"; Kanban's backlog is its first column.
+- **Order:** `board_position` and `backlog_rank` are sparse (`TaskRanks.GAP`, 1,000,000 apart); a move takes the midpoint and renumbers the list only when there is no room. Every create and move runs under the project row lock (`incrementTaskNumber` or `ProjectRepository.lockById`). Read a column's max **before** the moving task joins it, or the auto-flush counts the task itself.
+- **Universal search** is one native `UNION ALL` in `search/repositories/UniversalSearchRepository`. Every part must alias all its columns (a UNION takes its names from whichever part comes first). Its visibility rules duplicate `ProjectAccess` and the team rules: change both together.
+- `JpaSpecificationExecutor` adds `delete(Specification)`, so Mockito's `delete(any())` on `TaskRepository` is ambiguous; use `any(Task.class)`.
 
 ## Error response contract
 
@@ -147,7 +168,7 @@ Services should let their exceptions propagate; the advice maps them.
 
 ## Conventions in this codebase
 
-- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `team/{models,repositories,services,controllers,dto}`, `project/{models,repositories,services,controllers,dto,exceptions}`, `common/` for cross-feature helpers (`PageResponse`, `Pageables`), `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
+- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `team/{models,repositories,services,controllers,dto}`, `project/{models,repositories,services,controllers,dto,exceptions,strategy}`, `task/{models,repositories,services,controllers,dto,api}`, `search/{controllers,dto,services,repositories}`, `common/` for cross-feature helpers (`PageResponse`, `Pageables`), `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
 - **Edit the existing class rather than adding a parallel one.** Do not create `GlobalExceptionHandler` next to `ExceptionHandler`, or a `*V2`.
 - Entities extend `audit/BaseEntity` for the four audit columns. `AuditorProvider` stamps `system` for anonymous and unauthenticated writes.
 - `@Value` on a **`final`** field combined with `@RequiredArgsConstructor` silently produces a constructor with no parameter annotation and fails at startup. Use a non-final field or write the constructor explicitly.

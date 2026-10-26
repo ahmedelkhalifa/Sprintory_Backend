@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -24,6 +25,7 @@ import team.sprintory_backend.project.dto.ProjectResponse;
 import team.sprintory_backend.project.dto.ProjectBoardResponse;
 import team.sprintory_backend.project.services.ProjectBoardService;
 import team.sprintory_backend.project.dto.SetProjectRolesRequest;
+import team.sprintory_backend.project.dto.UpdateProjectRequest;
 import team.sprintory_backend.project.services.ProjectService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 
@@ -61,7 +63,14 @@ public class ProjectController {
         return projectService.get(principal.getUser(), projectId);
     }
 
-    /** {@code ?q=} searches first name, last name and email; {@code ?page=&size=} pages (max 100). */
+    /** Name and description; a field left out is unchanged. */
+    @PatchMapping("/projects/{projectId}")
+    public ProjectResponse update(@AuthenticationPrincipal AppUserDetails principal,
+                                  @PathVariable Long projectId,
+                                  @Valid @RequestBody UpdateProjectRequest request) {
+        return projectService.update(principal.getUser(), projectId, request);
+    }
+
     /** Board metadata and workflow columns; only project members with VIEW_WORK may read it. */
     @GetMapping("/projects/{projectId}/board")
     public ProjectBoardResponse board(@AuthenticationPrincipal AppUserDetails principal,
@@ -69,6 +78,7 @@ public class ProjectController {
         return projectBoardService.get(principal.getUser(), projectId);
     }
 
+    /** {@code ?q=} searches first name, last name and email; {@code ?page=&size=} pages (max 100). */
     @GetMapping("/projects/{projectId}/members")
     public PageResponse<ProjectMemberResponse> listMembers(@AuthenticationPrincipal AppUserDetails principal,
                                                            @PathVariable Long projectId,

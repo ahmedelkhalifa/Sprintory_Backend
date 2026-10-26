@@ -8,7 +8,7 @@ import team.sprintory_backend.project.models.ProjectTemplate;
 public class KanbanBoardStrategy implements ProjectBoardTemplateStrategy {
     @Override public ProjectTemplate template() { return ProjectTemplate.KANBAN; }
     @Override public List<String> defaultColumns() {
-        return List.of("To Do", "In Progress", "In Review", "Done");
+        return List.of("Backlog", "To Do", "In Progress", "Done");
     }
     @Override public boolean backlogEnabled() { return false; }
     @Override public boolean sprintsEnabled() { return false; }

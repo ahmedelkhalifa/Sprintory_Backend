@@ -12,7 +12,7 @@ class ProjectBoardStrategiesTest {
     @Test
     void scrumDefaultsAndFeatures() {
         var scrum = strategies.forTemplate(ProjectTemplate.SCRUM);
-        assertEquals(List.of("To Do", "In Progress", "Done"), scrum.defaultColumns());
+        assertEquals(List.of("To Do", "In Progress", "In Review", "Done"), scrum.defaultColumns());
         assertTrue(scrum.backlogEnabled());
         assertTrue(scrum.sprintsEnabled());
         assertFalse(scrum.wipLimitsEnabled());
@@ -21,7 +21,7 @@ class ProjectBoardStrategiesTest {
     @Test
     void kanbanDefaultsAndFeatures() {
         var kanban = strategies.forTemplate(ProjectTemplate.KANBAN);
-        assertEquals(List.of("To Do", "In Progress", "In Review", "Done"), kanban.defaultColumns());
+        assertEquals(List.of("Backlog", "To Do", "In Progress", "Done"), kanban.defaultColumns());
         assertFalse(kanban.backlogEnabled());
         assertFalse(kanban.sprintsEnabled());
         assertTrue(kanban.wipLimitsEnabled());

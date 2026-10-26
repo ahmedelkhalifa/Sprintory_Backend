@@ -12,6 +12,7 @@ import team.sprintory_backend.project.dto.ProjectMemberResponse;
 import team.sprintory_backend.project.dto.ProjectResponse;
 import team.sprintory_backend.project.dto.ProjectBoardResponse;
 import team.sprintory_backend.project.dto.SetProjectRolesRequest;
+import team.sprintory_backend.project.dto.UpdateProjectRequest;
 import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.services.ProjectService;
@@ -28,7 +29,7 @@ import static org.mockito.Mockito.*;
 /** Pure controller tests: the service is mocked, so no database or Spring context. */
 class ProjectControllerTest {
 
-    private static final ProjectResponse PROJECT = new ProjectResponse(21L, 3L, "Mobile App", ProjectTemplate.SCRUM,
+    private static final ProjectResponse PROJECT = new ProjectResponse(21L, 3L, "Mobile App", "MOB", null, ProjectTemplate.SCRUM,
                     Set.of(ProjectRole.PROJECT_MANAGER), ProjectRole.PROJECT_MANAGER.permissions());
 
     private ProjectService service;
@@ -48,7 +49,7 @@ class ProjectControllerTest {
 
     @Test
     void createAnswersCreatedWithTheProject() {
-        CreateProjectRequest request = new CreateProjectRequest("Mobile App", ProjectTemplate.SCRUM);
+        CreateProjectRequest request = new CreateProjectRequest("Mobile App", "MOB", ProjectTemplate.SCRUM, null);
         when(service.create(user, 3L, request)).thenReturn(PROJECT);
 
         var response = controller.create(principal, 3L, request);
@@ -71,6 +72,14 @@ class ProjectControllerTest {
         when(service.get(user, 21L)).thenReturn(PROJECT);
 
         assertEquals(PROJECT, controller.get(principal, 21L));
+    }
+
+    @Test
+    void updatePassesTheSettingsThrough() {
+        UpdateProjectRequest request = new UpdateProjectRequest("Mobile App", "Ship it");
+        when(service.update(user, 21L, request)).thenReturn(PROJECT);
+
+        assertEquals(PROJECT, controller.update(principal, 21L, request));
     }
 
     @Test

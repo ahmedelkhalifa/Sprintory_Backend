@@ -14,14 +14,17 @@ import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.dto.ProjectMemberResponse;
 import team.sprintory_backend.project.dto.ProjectResponse;
+import team.sprintory_backend.project.dto.UpdateProjectRequest;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectMember;
 import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
 import team.sprintory_backend.project.exceptions.LastProjectManagerException;
+import team.sprintory_backend.project.exceptions.ProjectKeyTakenException;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
+import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.team.models.Team;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.team.repositories.TeamRepository;
@@ -44,7 +47,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * R02 project membership, with a minimal project (story 8 adds the key and the board).
+ * R02 project membership, and R06 project creation with a key and a template board.
  * Access rules live in {@link ProjectAccess}: membership is managed by whoever holds
  * MANAGE_MEMBERS, i.e. the project's Project Managers and the workspace's admins.
  */
@@ -60,15 +63,23 @@ public class ProjectService {
     private final WorkspaceAccess workspaceAccess;
     private final ProjectAccess projectAccess;
     private final ProjectBoardService projectBoardService;
+    private final TaskRepository taskRepository;
 
     /** Any member of an active workspace can create a project, and becomes its Project Manager. */
     @Transactional
     public ProjectResponse create(User user, Long workspaceId, CreateProjectRequest request) {
         WorkspaceMember creator = workspaceAccess.requireActiveMember(workspaceId, user);
         Workspace workspace = creator.getWorkspace();
+        String key = request.key().trim().toUpperCase(Locale.ROOT);
+        // The unique constraint on (workspace_id, project_key) catches a concurrent create (409).
+        if (projectRepository.existsByWorkspaceIdAndKey(workspaceId, key)) {
+            throw new ProjectKeyTakenException("The key " + key + " is already used in this workspace.");
+        }
         Project project = projectRepository.save(Project.builder()
                 .workspace(workspace)
                 .name(request.name().trim())
+                .key(key)
+                .description(normalizeDescription(request.description()))
                 .template(request.template())
                 .build());
         projectMemberRepository.save(newMember(project, user, ProjectRole.PROJECT_MANAGER));
@@ -97,9 +108,24 @@ public class ProjectService {
 
     public ProjectResponse get(User user, Long projectId) {
         ProjectAccessResult access = projectAccess.requireVisible(projectId, user);
-        Set<ProjectRole> roles = access.projectMember() == null
-                ? Set.of() : access.projectMember().getRoles();
-        return ProjectResponse.from(access.project(), roles, access.permissions());
+        return ProjectResponse.from(access.project(), rolesOf(access), access.permissions());
+    }
+
+    /**
+     * Project settings: name and description. Needs EDIT_SETTINGS (Project Managers and workspace
+     * admins) and an active workspace. The key and the template cannot change.
+     */
+    @Transactional
+    public ProjectResponse update(User user, Long projectId, UpdateProjectRequest request) {
+        ProjectAccessResult access = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_SETTINGS);
+        Project project = access.project();
+        if (request.name() != null) {
+            project.setName(request.name().trim());
+        }
+        if (request.description() != null) {
+            project.setDescription(normalizeDescription(request.description()));
+        }
+        return ProjectResponse.from(project, rolesOf(access), access.permissions());
     }
 
     @Transactional(readOnly = true)
@@ -153,6 +179,8 @@ public class ProjectService {
                 .filter(target -> target.hasRole(ProjectRole.PROJECT_MANAGER))
                 .ifPresent(target -> requireAnotherManager(project));
         projectMemberRepository.deleteByProjectIdAndUserId(project.getId(), userId);
+        // Only project members may be assignees (story 9).
+        taskRepository.unassignInProject(project.getId(), userId);
     }
 
     /**
@@ -174,6 +202,19 @@ public class ProjectService {
         target.getRoles().clear();
         target.getRoles().addAll(wanted);
         return ProjectMemberResponse.from(projectMemberRepository.save(target));
+    }
+
+    /** The caller's own project roles; empty for a workspace admin who is not in the project. */
+    private static Set<ProjectRole> rolesOf(ProjectAccessResult access) {
+        return access.projectMember() == null ? Set.of() : access.projectMember().getRoles();
+    }
+
+    /** Trimmed; blank means "no description" and is stored as null. */
+    private static String normalizeDescription(String description) {
+        if (description == null || description.isBlank()) {
+            return null;
+        }
+        return description.trim();
     }
 
     private static ProjectResponse responseFor(Project project, Set<ProjectRole> roles, boolean workspaceAdmin) {
