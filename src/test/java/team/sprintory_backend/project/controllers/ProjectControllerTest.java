@@ -10,10 +10,12 @@ import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.dto.ProjectMemberResponse;
 import team.sprintory_backend.project.dto.ProjectResponse;
+import team.sprintory_backend.project.dto.ProjectBoardResponse;
 import team.sprintory_backend.project.dto.SetProjectRolesRequest;
 import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.services.ProjectService;
+import team.sprintory_backend.project.services.ProjectBoardService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 import team.sprintory_backend.user.models.User;
 
@@ -30,6 +32,7 @@ class ProjectControllerTest {
                     Set.of(ProjectRole.PROJECT_MANAGER), ProjectRole.PROJECT_MANAGER.permissions());
 
     private ProjectService service;
+    private ProjectBoardService boardService;
     private ProjectController controller;
     private User user;
     private AppUserDetails principal;
@@ -37,7 +40,8 @@ class ProjectControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(ProjectService.class);
-        controller = new ProjectController(service);
+        boardService = mock(ProjectBoardService.class);
+        controller = new ProjectController(service, boardService);
         user = User.builder().id(7L).firstName("Ada").lastName("Lovelace").email("ada@example.com").build();
         principal = new AppUserDetails(user);
     }
@@ -67,6 +71,15 @@ class ProjectControllerTest {
         when(service.get(user, 21L)).thenReturn(PROJECT);
 
         assertEquals(PROJECT, controller.get(principal, 21L));
+    }
+
+    @Test
+    void boardDelegatesToMembershipProtectedService() {
+        ProjectBoardResponse board = new ProjectBoardResponse(21L, ProjectTemplate.SCRUM,
+                true, true, false, null, List.of());
+        when(boardService.get(user, 21L)).thenReturn(board);
+        assertSame(board, controller.board(principal, 21L));
+        verify(boardService).get(user, 21L);
     }
 
     @Test

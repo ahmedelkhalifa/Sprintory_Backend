@@ -1,6 +1,6 @@
-# Sprintory — Projects API contract (R02, minimal)
+# Sprintory — Projects API contract (R02 + R06 board initialization)
 
-**Status:** projects with a Scrum/Kanban template, project membership and project roles implemented. Story 8 (R06) adds the project key, the board and settings. Roles and permissions are in [roles-docs.md](./roles-docs.md). See [§9 Implementation status](#9-implementation-status).
+**Status:** project creation, Scrum/Kanban board initialization, membership and roles implemented. Project key, settings editing and column-management operations remain follow-up work. Roles and permissions are in [roles-docs.md](./roles-docs.md). See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/workspaces/{workspaceId}/projects` and `/api/v1/projects/**`.
 **Related:** [Roles and permissions](./roles-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Authentication](./auth-endpoints.md), [Requirements](./requirements.md) R02, R04, R06.
 
@@ -10,7 +10,7 @@ This document is the single reference for how projects and their membership work
 
 ## 1. Overview
 
-- **A project lives inside one workspace.** It has a name and a **template**, `SCRUM` or `KANBAN`, chosen at creation and never changed. Story 8 adds a key and a board.
+- **A project lives inside one workspace.** It has a name and a **template**, `SCRUM` or `KANBAN`, chosen at creation and never changed. The board and initial columns are created in the same transaction; a project key and editable settings are follow-up work.
 - **Any member of a workspace can create a project** and becomes its **Project Manager**.
 - **Membership is what grants access.** Only the project's members can see it, plus the workspace's admins, who manage it.
 - **Each member has one or more project roles** (Project Manager, Product Owner, Scrum Master, Member/Developer, Viewer). What each role allows is in [roles-docs.md](./roles-docs.md).
@@ -55,10 +55,11 @@ All paths are under `/api/v1`. Request and response bodies are JSON in `camelCas
 | 3.5 | POST | `/projects/{projectId}/members` | `AddProjectMembersRequest` | `204` |
 | 3.6 | POST | `/projects/{projectId}/teams` | `AddTeamToProjectRequest` | `204` |
 | 3.7 | DELETE | `/projects/{projectId}/members/{userId}` | none | `204` |
+| 3.8 | GET | `/projects/{projectId}/board` | none | `200` + `ProjectBoardResponse` |
 
 Creating and listing sit under the workspace because a project belongs to exactly one. Everything else is addressed by the project's own id.
 
-Not available yet, on purpose: renaming or editing a project and its settings (story 8), archiving a project (R30), and deleting a single project. Changing a member's project roles is available via the role-management endpoint in [roles-docs.md §3](./roles-docs.md#3-endpoints).
+Not available yet, on purpose: renaming/editing project settings, managing board columns, archiving a project (R30), and deleting a single project. Changing a member's project roles is available via the role-management endpoint in [roles-docs.md §3](./roles-docs.md#3-endpoints).
 
 ### Path variables
 
@@ -118,7 +119,7 @@ A page past the end returns `200` with an empty `content`.
 
 | Field | Rules |
 | --- | --- |
-| `name` | Required, not blank, at most 100 characters. Leading and trailing spaces are removed before saving. **Not unique**: two projects may share a name. Story 8's project key is the unique identifier. |
+| `name` | Required, not blank, at most 100 characters. Leading and trailing spaces are removed before saving. **Not unique**: two projects may share a name. The numeric project `id` identifies it until a future story implements unique project keys. |
 | `template` | Required, `"SCRUM"` or `"KANBAN"`. Cannot be changed after creation. Decides which project roles the project offers ([roles-docs.md §1](./roles-docs.md#project-roles)). |
 | `userIds` | Required, 1 to 100 ids, none `null`. Duplicates in the list count once. Every id must belong to a member of the project's workspace. |
 | `teamId` | Required. A team of the **same** workspace as the project. |
@@ -145,7 +146,7 @@ Creates a project in the workspace and makes the caller its Project Manager.
   { "id": 21, "workspaceId": 3, "name": "Mobile App", "template": "SCRUM",
     "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "EDIT_TASKS", "COMMENT", "LOG_TIME"] }
   ```
-- **After creation:** the caller appears in 3.4 with the `PROJECT_MANAGER` role.
+- **After creation:** the caller appears in 3.4 with the `PROJECT_MANAGER` role. A persisted board and ordered columns are created atomically. Scrum defaults to **To Do → In Progress → Done** with Backlog and sprints enabled. Kanban defaults to **To Do → In Progress → In Review → Done**, with no Backlog or sprints. No sprint is created or started, no tasks exist, and all column WIP limits are `null`. See §3.8 and [board initialization](./project-board-initialization.md).
 - **Errors:**
 
   | Status | Code | When |
@@ -320,6 +321,33 @@ The story's "add team to project": all the team's members are assigned to the pr
 
 ---
 
+### 3.8 Read the project's board
+
+`GET /api/v1/projects/{projectId}/board`
+
+- **Who:** project members with `VIEW_WORK`. A workspace administrator who is not a project member may manage project settings but **cannot** read the board; they receive `403`. Unknown or hidden projects return `404` under the existing `ProjectAccess` rules.
+- **Archived workspace:** read-only board access remains allowed.
+- **Response `200`** (new Scrum project):
+  ```json
+  {
+    "projectId": 21,
+    "template": "SCRUM",
+    "backlogEnabled": true,
+    "sprintsEnabled": true,
+    "wipLimitsEnabled": false,
+    "activeSprintId": null,
+    "columns": [
+      {"id": 1, "name": "To Do", "position": 0, "wipLimit": null},
+      {"id": 2, "name": "In Progress", "position": 1, "wipLimit": null},
+      {"id": 3, "name": "Done", "position": 2, "wipLimit": null}
+    ]
+  }
+  ```
+- Kanban has four columns (third is `In Review`), `backlogEnabled=false`, `sprintsEnabled=false`, and `wipLimitsEnabled=true`. All WIP values remain null until deliberately configured.
+- **Important:** `activeSprintId=null` represents the empty initial state. Sprint lifecycle and tasks are not yet implemented; their actual records will be introduced by later stories. Column IDs are persistent, and the schema permits future renaming, ordering, and additions; **mutation endpoints are not included in this task**.
+
+---
+
 ## 4. Errors
 
 Every error uses the shared shape from [API conventions §4](./api-conventions.md#4-standard-error-responses):
@@ -364,7 +392,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 
 ### 5.2 Project page (members, for now)
 
-1. `GET /projects/{projectId}` for the name, and `GET /projects/{projectId}/members` for the people.
+1. `GET /projects/{projectId}` for the name, `GET /projects/{projectId}/members` for the people, and (for project members with `VIEW_WORK`) `GET /projects/{projectId}/board` for initialized columns and template flags.
 2. Show **Add people**, **Add team** and **Remove** only to the project's Project Managers and the workspace's admins. Once the project response carries the caller's `permissions` ([roles-docs.md §3](./roles-docs.md#3-endpoints)), check for `MANAGE_MEMBERS` instead. Hiding them is for usability; the backend enforces it either way.
 3. `404` means the project does not exist or the user may not see it, for example because they were just removed. Send the user back to the projects list.
 
@@ -393,6 +421,8 @@ When `WorkspaceResponse.archivedAt` is set, show projects read-only and hide **C
 | Table | Columns | Constraints |
 | --- | --- | --- |
 | `projects` | `id`, `workspace_id`, `name` (≤ 100), `template` (`SCRUM` / `KANBAN`), audit columns | none on the name; `template` not null, check constraint, never updated; story 8 adds a key unique within the workspace |
+| `project_boards` | `project_id` (primary/foreign key) | exactly one per newly created project |
+| `project_board_columns` | `id`, `project_id`, `name`, `sort_order`, `wip_limit` (nullable) | unique (`project_id`, `sort_order`), nonnegative order, positive WIP when set |
 | `project_members` | `id`, `project_id`, `user_id`, audit columns | unique on (`project_id`, `user_id`): the same person cannot be added twice |
 | `project_member_roles` | `project_member_id`, `role` | primary key on both; check constraint on the five roles ([roles-docs.md §6](./roles-docs.md#6-data-model)) |
 
@@ -426,7 +456,7 @@ When `WorkspaceResponse.archivedAt` is set, show projects read-only and hide **C
 | --- | --- |
 | Story 6 (R03) | **Done in the services**, see [roles-docs.md](./roles-docs.md): the template, project roles, Project Managers managing membership, the "at least one Project Manager" rule. Endpoints for changing roles are still to be built. |
 | Story 7 (R04) | Applies this document's visibility rule to everything inside a project, through `ProjectAccess` and `VIEW_WORK`. Admins manage membership but see project work only if they are members. |
-| Story 8 (R06) | Project key (unique in the workspace), default board columns per template, editing name and description (`EDIT_SETTINGS`), settings page showing the template read-only. |
+| Story 8 (R06) | **Board initialization and default columns implemented** (V4); project key, board column editing, and project settings remain to be implemented. |
 | Story 9 (R09) | Tasks inside projects; task endpoints check `EDIT_TASKS` / `VIEW_WORK` through `ProjectAccess`. |
 | R30 | Completing and archiving a project (`ARCHIVE_PROJECT`). |
 
@@ -439,7 +469,7 @@ When `WorkspaceResponse.archivedAt` is set, show projects read-only and hide **C
 
 ## 9. Implementation status
 
-As of 24 Oct 2026, on branch `features/roles`:
+Base state as of 24 Oct 2026 on `features/roles`, plus the subsequent R06 board-initialization change:
 
 | Part | Status |
 | --- | --- |
@@ -448,6 +478,7 @@ As of 24 Oct 2026, on branch `features/roles`:
 | `ProjectController`: the seven endpoints in §2 | Implemented |
 | Pagination and search on both lists | Implemented |
 | Template on create, project roles, `ProjectAccess` (story 6) | Implemented, see [roles-docs.md §10](./roles-docs.md#10-implementation-status) |
+| Strategy-based initial board, columns, read endpoint, backfill migration V4 | Implemented (new project-templates task); verification pending local Maven tests |
 | Unit tests: `ProjectServiceTest` (42), `ProjectAccessTest` (11), `ProjectControllerTest` (5) | Implemented, all passing |
 | Database test against PostgreSQL (`WorkspaceDataIntegrationTest`): "my projects", project member rows removed with the workspace | Implemented; not yet re-run with migration V3 |
 

@@ -21,6 +21,8 @@ import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.dto.ProjectMemberResponse;
 import team.sprintory_backend.project.dto.ProjectResponse;
+import team.sprintory_backend.project.dto.ProjectBoardResponse;
+import team.sprintory_backend.project.services.ProjectBoardService;
 import team.sprintory_backend.project.dto.SetProjectRolesRequest;
 import team.sprintory_backend.project.services.ProjectService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
@@ -35,6 +37,7 @@ import team.sprintory_backend.security.userdetails.AppUserDetails;
 public class ProjectController {
 
     private final ProjectService projectService;
+    private final ProjectBoardService projectBoardService;
 
     @PostMapping("/workspaces/{workspaceId}/projects")
     public ResponseEntity<ProjectResponse> create(@AuthenticationPrincipal AppUserDetails principal,
@@ -59,6 +62,13 @@ public class ProjectController {
     }
 
     /** {@code ?q=} searches first name, last name and email; {@code ?page=&size=} pages (max 100). */
+    /** Board metadata and workflow columns; only project members with VIEW_WORK may read it. */
+    @GetMapping("/projects/{projectId}/board")
+    public ProjectBoardResponse board(@AuthenticationPrincipal AppUserDetails principal,
+                                      @PathVariable Long projectId) {
+        return projectBoardService.get(principal.getUser(), projectId);
+    }
+
     @GetMapping("/projects/{projectId}/members")
     public PageResponse<ProjectMemberResponse> listMembers(@AuthenticationPrincipal AppUserDetails principal,
                                                            @PathVariable Long projectId,
