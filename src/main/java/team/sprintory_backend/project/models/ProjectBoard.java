@@ -12,6 +12,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
+import team.sprintory_backend.audit.BaseEntity;
 
 /** One persistent board per project; its workflow columns are separate rows. */
 @Entity
@@ -19,7 +20,7 @@ import org.hibernate.annotations.OnDeleteAction;
 @Getter
 @Setter
 @NoArgsConstructor
-public class ProjectBoard {
+public class ProjectBoard extends BaseEntity {
     @Id
     private Long projectId;
 
@@ -31,5 +32,17 @@ public class ProjectBoard {
 
     public ProjectBoard(Project project) {
         this.project = project;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof ProjectBoard other)) return false;
+        return projectId != null && projectId.equals(other.projectId);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
     }
 }

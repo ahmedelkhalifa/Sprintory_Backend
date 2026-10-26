@@ -21,6 +21,9 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     @Query("select p from Project p join fetch p.workspace where p.id = :projectId")
     Optional<Project> findWithWorkspaceById(@Param("projectId") Long projectId);
 
+    /** Keys are stored upper-case, so the caller passes the normalized key. */
+    boolean existsByWorkspaceIdAndKey(Long workspaceId, String key);
+
     /**
      * Locks the project row until the transaction ends, so role changes in one project run one at
      * a time and two of them cannot both pass the "at least one Project Manager" check.

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import team.sprintory_backend.project.dto.AddProjectMembersRequest;
 import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
+import team.sprintory_backend.project.dto.UpdateProjectRequest;
 import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.team.dto.AddTeamMembersRequest;
 import team.sprintory_backend.team.dto.CreateTeamRequest;
@@ -54,18 +55,40 @@ class WorkspaceRequestValidationTest {
             assertFalse(validator.validate(new UpdateWorkspaceRequest(bad)).isEmpty(), "rename: " + bad);
             assertFalse(validator.validate(new CreateTeamRequest(bad)).isEmpty(), "team: " + bad);
             assertFalse(validator.validate(new UpdateTeamRequest(bad)).isEmpty(), "team rename: " + bad);
-            assertFalse(validator.validate(new CreateProjectRequest(bad, ProjectTemplate.SCRUM)).isEmpty(),
+            assertFalse(validator.validate(new CreateProjectRequest(bad, "MOB", ProjectTemplate.SCRUM, null)).isEmpty(),
                     "project: " + bad);
         }
         assertTrue(validator.validate(new CreateWorkspaceRequest(longest)).isEmpty());
         assertTrue(validator.validate(new CreateTeamRequest(longest)).isEmpty());
-        assertTrue(validator.validate(new CreateProjectRequest(longest, ProjectTemplate.SCRUM)).isEmpty());
+        assertTrue(validator.validate(new CreateProjectRequest(longest, "MOB", ProjectTemplate.SCRUM, null)).isEmpty());
     }
 
     @Test
     void projectTemplateIsRequired() {
-        assertFalse(validator.validate(new CreateProjectRequest("Mobile App", null)).isEmpty());
-        assertTrue(validator.validate(new CreateProjectRequest("Mobile App", ProjectTemplate.KANBAN)).isEmpty());
+        assertFalse(validator.validate(new CreateProjectRequest("Mobile App", "MOB", null, null)).isEmpty());
+        assertTrue(validator.validate(new CreateProjectRequest("Mobile App", "MOB", ProjectTemplate.KANBAN, null)).isEmpty());
+    }
+
+    @Test
+    void projectKeyIsTwoToTenLettersOrDigitsStartingWithALetter() {
+        for (String bad : new String[]{null, "", "   ", "M", "1AB", "MO-B", "MO B", "ABCDEFGHIJK", "MÖB"}) {
+            assertFalse(validator.validate(new CreateProjectRequest("Mobile App", bad, ProjectTemplate.SCRUM, null))
+                    .isEmpty(), "key: " + bad);
+        }
+        for (String good : new String[]{"MO", "mob", "PMP2", "ABCDEFGHIJ", " mob "}) {
+            assertTrue(validator.validate(new CreateProjectRequest("Mobile App", good, ProjectTemplate.SCRUM, null))
+                    .isEmpty(), "key: " + good);
+        }
+    }
+
+    @Test
+    void projectSettingsAcceptLeftOutFieldsButNotABlankOrTooLongName() {
+        assertTrue(validator.validate(new UpdateProjectRequest(null, null)).isEmpty());
+        assertTrue(validator.validate(new UpdateProjectRequest("a".repeat(100), "x".repeat(10_000))).isEmpty());
+        assertTrue(validator.validate(new UpdateProjectRequest("Mobile App", "")).isEmpty());
+        for (String bad : new String[]{"", "   ", "a".repeat(101)}) {
+            assertFalse(validator.validate(new UpdateProjectRequest(bad, null)).isEmpty(), "name: " + bad);
+        }
     }
 
     // --- invitations ---

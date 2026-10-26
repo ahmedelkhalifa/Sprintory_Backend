@@ -7,7 +7,9 @@ import team.sprintory_backend.project.models.ProjectTemplate;
 @Component
 public class ScrumBoardStrategy implements ProjectBoardTemplateStrategy {
     @Override public ProjectTemplate template() { return ProjectTemplate.SCRUM; }
-    @Override public List<String> defaultColumns() { return List.of("To Do", "In Progress", "Done"); }
+    @Override public List<String> defaultColumns() {
+        return List.of("To Do", "In Progress", "In Review", "Done");
+    }
     @Override public boolean backlogEnabled() { return true; }
     @Override public boolean sprintsEnabled() { return true; }
     @Override public boolean wipLimitsEnabled() { return false; }

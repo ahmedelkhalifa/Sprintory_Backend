@@ -135,6 +135,16 @@ Random generation and hashing live in one place, `OpaqueTokens`, shared by `Refr
 - A new `ProjectRole` value needs a migration changing `ck_project_member_roles_role`; a new `ProjectPermission` needs only code and the matrix test.
 - Story 6's endpoints and DTO fields are built by another developer, against `docs/roles-docs.md` §3.
 
+## Projects and boards (R06)
+
+The contract is `docs/projects-docs.md` (§3.1 create, §3.8 board, §3.9 settings).
+
+- **The board is created with the project**, in `ProjectService.create`'s transaction, by `ProjectBoardService.initialize` (`Propagation.MANDATORY`). Default columns and the backlog/sprints/WIP flags come from one strategy per template in `project/strategy/`; `ProjectBoardStrategies` fails at startup if a template has no strategy or two. The flags are not stored: the template never changes.
+- A new `ProjectTemplate` value needs a strategy class, a migration for `ck_projects_template`, and its roles in `ProjectRole`.
+- **The project key never changes** (`updatable = false`): task keys are built from it. It is stored upper-case (`Locale.ROOT`) and unique per workspace (`uk_projects_workspace_key`); the service checks first for a clean 409 `PROJECT_KEY_TAKEN`, the constraint catches races. The column is `project_key` because `key` is an SQL keyword.
+- The board is project *work*: `GET /board` needs `VIEW_WORK`, so a workspace admin who is not in the project gets 403. Settings need `EDIT_SETTINGS`.
+- Board columns keep their ids. Change default columns of existing boards by renaming rows in a migration, not by deleting and recreating them, once tasks point at columns.
+
 ## Error response contract
 
 One JSON shape (`docs/api-conventions.md` §4), produced from three places that must stay in sync: `exceptionHandler/ExceptionHandler` for anything thrown inside MVC, `AppAuthenticationEntryPoint` for 401, `AppAccessDeniedHandler` for 403. `ErrorCode` is the stable machine-readable vocabulary — add to the enum rather than inventing strings.
@@ -147,7 +157,7 @@ Services should let their exceptions propagate; the advice maps them.
 
 ## Conventions in this codebase
 
-- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `team/{models,repositories,services,controllers,dto}`, `project/{models,repositories,services,controllers,dto,exceptions}`, `common/` for cross-feature helpers (`PageResponse`, `Pageables`), `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
+- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `team/{models,repositories,services,controllers,dto}`, `project/{models,repositories,services,controllers,dto,exceptions,strategy}`, `common/` for cross-feature helpers (`PageResponse`, `Pageables`), `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
 - **Edit the existing class rather than adding a parallel one.** Do not create `GlobalExceptionHandler` next to `ExceptionHandler`, or a `*V2`.
 - Entities extend `audit/BaseEntity` for the four audit columns. `AuditorProvider` stamps `system` for anonymous and unauthenticated writes.
 - `@Value` on a **`final`** field combined with `@RequiredArgsConstructor` silently produces a constructor with no parameter annotation and fails at startup. Use a non-final field or write the constructor explicitly.

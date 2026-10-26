@@ -81,9 +81,9 @@ class WorkspaceDataIntegrationTest extends AbstractIntegrationTest {
         teamMemberRepository.save(TeamMember.builder().team(backend).user(grace).build());
         teamMemberRepository.save(TeamMember.builder().team(design).user(linus).build());
 
-        mobileApp = projectRepository.save(Project.builder().workspace(workspace).name("Mobile App")
+        mobileApp = projectRepository.save(Project.builder().workspace(workspace).name("Mobile App").key("MOB")
                 .template(ProjectTemplate.SCRUM).build());
-        website = projectRepository.save(Project.builder().workspace(workspace).name("Website")
+        website = projectRepository.save(Project.builder().workspace(workspace).name("Website").key("WEB")
                 .template(ProjectTemplate.KANBAN).build());
         entityManager.persist(ProjectMember.builder().project(mobileApp).user(grace).build());
 

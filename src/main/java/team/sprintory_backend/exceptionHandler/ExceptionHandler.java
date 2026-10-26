@@ -18,6 +18,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import team.sprintory_backend.notification.email.EmailDeliveryException;
 import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
 import team.sprintory_backend.project.exceptions.LastProjectManagerException;
+import team.sprintory_backend.project.exceptions.ProjectKeyTakenException;
 import team.sprintory_backend.security.exceptions.EmailAlreadyRegisteredException;
 import team.sprintory_backend.security.exceptions.InvalidTokenException;
 import team.sprintory_backend.security.exceptions.ProviderMismatchException;
@@ -98,6 +99,12 @@ public class ExceptionHandler {
     public ResponseEntity<ErrorResponse> handleInvalidProjectRoles(InvalidProjectRolesException e,
                                                                    HttpServletRequest request) {
         return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.INVALID_PROJECT_ROLES, e.getMessage(), request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(ProjectKeyTakenException.class)
+    public ResponseEntity<ErrorResponse> handleProjectKeyTaken(ProjectKeyTakenException e,
+                                                               HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.PROJECT_KEY_TAKEN, e.getMessage(), request);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(InvalidTokenException.class)

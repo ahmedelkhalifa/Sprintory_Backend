@@ -11,6 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -23,10 +24,12 @@ import team.sprintory_backend.workspace.models.Workspace;
 
 /**
  * A project inside a workspace (R02). Story 6 adds the Scrum/Kanban template, because the
- * roles a project offers depend on it; story 8 (R06) adds the key and the board.
+ * roles a project offers depend on it; story 8 (R06) adds the key and the board
+ * ({@link ProjectBoard}).
  */
 @Entity
-@Table(name = "projects")
+@Table(name = "projects",
+        uniqueConstraints = @UniqueConstraint(columnNames = {"workspace_id", "project_key"}))
 @Getter
 @Setter
 @Builder
@@ -45,6 +48,17 @@ public class Project extends BaseEntity {
 
     @Column(nullable = false, length = 100)
     private String name;
+
+    /**
+     * Upper-case, unique within the workspace, never changes: task keys (story 9) are built from
+     * it. The column is {@code project_key} because {@code key} is an SQL keyword.
+     */
+    @Column(name = "project_key", nullable = false, updatable = false, length = 10)
+    private String key;
+
+    /** Optional, no length limit; null when not set. */
+    @Column(columnDefinition = "text")
+    private String description;
 
     /** Chosen at creation; never changes. */
     @Enumerated(EnumType.STRING)
