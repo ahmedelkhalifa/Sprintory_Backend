@@ -14,6 +14,7 @@ import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
+import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
@@ -47,6 +48,7 @@ public class WorkspaceService {
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final TeamMemberRepository teamMemberRepository;
+    private final TaskRepository taskRepository;
 
     /** Creates an empty workspace and makes the caller its admin. */
     @Transactional
@@ -166,6 +168,8 @@ public class WorkspaceService {
         }
         projectMemberRepository.deleteByWorkspaceIdAndUserId(workspaceId, userId);
         teamMemberRepository.deleteByWorkspaceIdAndUserId(workspaceId, userId);
+        // They are in none of the workspace's projects any more, so they cannot stay assignees.
+        taskRepository.unassignInWorkspace(workspaceId, userId);
         workspaceMemberRepository.delete(target);
     }
 

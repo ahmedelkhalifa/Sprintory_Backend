@@ -65,6 +65,15 @@ public class Project extends BaseEntity {
     @Column(nullable = false, updatable = false)
     private ProjectTemplate template;
 
+    /**
+     * The number of the project's latest task, so the next one is {@code KEY-(n+1)} (story 9).
+     * Never decreases, so task keys are never reused. Only {@code ProjectRepository
+     * .incrementTaskNumber} changes it: {@code updatable = false} keeps a save of this entity from
+     * writing back a stale value.
+     */
+    @Column(name = "last_task_number", nullable = false, updatable = false)
+    private int lastTaskNumber;
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

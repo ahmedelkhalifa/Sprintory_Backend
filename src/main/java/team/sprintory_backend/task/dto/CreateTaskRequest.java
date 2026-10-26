@@ -19,7 +19,7 @@ public record CreateTaskRequest(
         TaskPriority priority,
         @Positive Long assigneeId,
         @PositiveOrZero Integer estimate,
-        List<@NotBlank String> labels,
+        @Size(max = 20) List<@NotBlank @Size(max = 50) String> labels,
         String description
 ) {
 }

@@ -62,7 +62,7 @@ The creator of a workspace is its first admin; people who accept an invitation j
 
 - **WS Admin** is what a workspace admin gets in **every** project of their workspace, whether or not they are a member of it. They manage the project but **do not see its work** unless they are a member (story 7). An admin who is also a project member gets the admin column plus their project roles combined.
 - **Strict Scrum roles:** only the Product Owner orders the backlog and only the Scrum Master runs sprints. A Project Manager who should do either gives themselves that role too.
-- **Only the permissions marked R02 and R03 are enforced today.** The others are defined ahead of their features; each feature checks its permission when it is built.
+- **Enforced today:** the R02 and R03 permissions, `VIEW_WORK` (the board and every task read), `EDIT_SETTINGS` (`PATCH /projects/{id}`), `EDIT_TASKS` (task create, edit, delete, board moves) and `MANAGE_BACKLOG` (backlog reordering), see [tasks-docs.md](./tasks-docs.md). The others are defined ahead of their features; each feature checks its permission when it is built.
 - The matrix is fixed in code (`ProjectRole`), not configurable per workspace.
 
 ### Examples
@@ -130,7 +130,7 @@ Project membership endpoints already exist and are documented in [projects-docs.
   - the **last admin** → `409 LAST_WORKSPACE_ADMIN`
   - the **only Project Manager** of one or more projects of the workspace → `409 LAST_PROJECT_MANAGER`, and the message names those projects. Someone else must be made Project Manager there first.
   - The only Scrum Master, Product Owner or Developer of a project **may** leave; the project simply has no one in that role until it is given again.
-- Otherwise the person is removed from **every team and every project of this workspace**, with their project roles, and then from the workspace. Their memberships in other workspaces do not change.
+- Otherwise the person is removed from **every team and every project of this workspace**, with their project roles, unassigned from the tasks of those projects, and then removed from the workspace. Their memberships and assignments in other workspaces do not change.
 - Pending invitations are not touched. Inviting the person again works as usual; they come back as a member with no teams, projects or roles.
 
 ### 4.3 Project roles

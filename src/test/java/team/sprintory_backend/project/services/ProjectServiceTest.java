@@ -28,6 +28,7 @@ import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
+import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.team.models.Team;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.team.repositories.TeamRepository;
@@ -69,6 +70,7 @@ class ProjectServiceTest {
     private TeamMemberRepository teamMemberRepository;
     private ProjectService service;
     private ProjectBoardService boardService;
+    private TaskRepository taskRepository;
 
     private Workspace workspace;
     private Project project;
@@ -84,9 +86,11 @@ class ProjectServiceTest {
         teamMemberRepository = mock(TeamMemberRepository.class);
         WorkspaceAccess workspaceAccess = new WorkspaceAccess(workspaceMemberRepository);
         boardService = mock(ProjectBoardService.class);
+        taskRepository = mock(TaskRepository.class);
         service = new ProjectService(projectRepository, projectMemberRepository, workspaceMemberRepository,
                 teamRepository, teamMemberRepository, workspaceAccess,
-                new ProjectAccess(projectRepository, projectMemberRepository, workspaceAccess), boardService);
+                new ProjectAccess(projectRepository, projectMemberRepository, workspaceAccess), boardService,
+                taskRepository);
 
         workspace = Workspace.builder().id(WORKSPACE_ID).name("Acme").slug("acme").build();
         project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App").key("MOB")
@@ -515,6 +519,7 @@ class ProjectServiceTest {
 
         assertThrows(WorkspaceArchivedException.class, () -> service.removeMember(admin, PROJECT_ID, 12L));
         verify(projectMemberRepository, never()).deleteByProjectIdAndUserId(anyLong(), anyLong());
+        verify(taskRepository, never()).unassignInProject(anyLong(), anyLong());
     }
 
     @Test
@@ -527,6 +532,7 @@ class ProjectServiceTest {
                 () -> service.removeMember(admin, PROJECT_ID, member.getId()));
         assertEquals("A project must have at least one Project Manager.", e.getMessage());
         verify(projectMemberRepository, never()).deleteByProjectIdAndUserId(anyLong(), anyLong());
+        verify(taskRepository, never()).unassignInProject(anyLong(), anyLong());
     }
 
     @Test
@@ -538,6 +544,7 @@ class ProjectServiceTest {
         service.removeMember(admin, PROJECT_ID, member.getId());
 
         verify(projectMemberRepository).deleteByProjectIdAndUserId(PROJECT_ID, member.getId());
+        verify(taskRepository).unassignInProject(PROJECT_ID, member.getId());
     }
 
     @Test

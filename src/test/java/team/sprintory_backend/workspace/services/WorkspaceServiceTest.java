@@ -16,6 +16,7 @@ import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
+import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
@@ -57,6 +58,7 @@ class WorkspaceServiceTest {
     private ProjectRepository projectRepository;
     private ProjectMemberRepository projectMemberRepository;
     private TeamMemberRepository teamMemberRepository;
+    private TaskRepository taskRepository;
     private WorkspaceService service;
     private User user;
     private final User grace = User.builder().id(OTHER_ID).firstName("Grace").lastName("Hopper")
@@ -70,9 +72,10 @@ class WorkspaceServiceTest {
         projectRepository = mock(ProjectRepository.class);
         projectMemberRepository = mock(ProjectMemberRepository.class);
         teamMemberRepository = mock(TeamMemberRepository.class);
+        taskRepository = mock(TaskRepository.class);
         service = new WorkspaceService(workspaceRepository, workspaceMemberRepository,
                 new WorkspaceAccess(workspaceMemberRepository), slugGenerator,
-                projectRepository, projectMemberRepository, teamMemberRepository);
+                projectRepository, projectMemberRepository, teamMemberRepository, taskRepository);
         user = User.builder().id(7L).firstName("Ada").lastName("Lovelace").email("ada@example.com").build();
         when(workspaceMemberRepository.findByWorkspaceIdAndUserId(anyLong(), anyLong())).thenReturn(Optional.empty());
         when(workspaceMemberRepository.save(any(WorkspaceMember.class))).thenAnswer(call -> call.getArgument(0));
@@ -401,6 +404,7 @@ class WorkspaceServiceTest {
 
         verify(projectMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, OTHER_ID);
         verify(teamMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, OTHER_ID);
+        verify(taskRepository).unassignInWorkspace(WORKSPACE_ID, OTHER_ID);
         verify(workspaceMemberRepository).delete(other);
     }
 
@@ -412,6 +416,7 @@ class WorkspaceServiceTest {
 
         verify(projectMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, 7L);
         verify(teamMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, 7L);
+        verify(taskRepository).unassignInWorkspace(WORKSPACE_ID, 7L);
         verify(workspaceMemberRepository).delete(member);
     }
 
@@ -517,6 +522,7 @@ class WorkspaceServiceTest {
     private void verifyNothingRemoved() {
         verify(projectMemberRepository, never()).deleteByWorkspaceIdAndUserId(anyLong(), anyLong());
         verify(teamMemberRepository, never()).deleteByWorkspaceIdAndUserId(anyLong(), anyLong());
+        verify(taskRepository, never()).unassignInWorkspace(anyLong(), anyLong());
         verify(workspaceMemberRepository, never()).delete(any());
     }
 

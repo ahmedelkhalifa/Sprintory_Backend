@@ -24,6 +24,7 @@ import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
+import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.team.models.Team;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.team.repositories.TeamRepository;
@@ -62,6 +63,7 @@ public class ProjectService {
     private final WorkspaceAccess workspaceAccess;
     private final ProjectAccess projectAccess;
     private final ProjectBoardService projectBoardService;
+    private final TaskRepository taskRepository;
 
     /** Any member of an active workspace can create a project, and becomes its Project Manager. */
     @Transactional
@@ -177,6 +179,8 @@ public class ProjectService {
                 .filter(target -> target.hasRole(ProjectRole.PROJECT_MANAGER))
                 .ifPresent(target -> requireAnotherManager(project));
         projectMemberRepository.deleteByProjectIdAndUserId(project.getId(), userId);
+        // Only project members may be assignees (story 9).
+        taskRepository.unassignInProject(project.getId(), userId);
     }
 
     /**

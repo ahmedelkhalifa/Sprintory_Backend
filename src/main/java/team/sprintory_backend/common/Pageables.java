@@ -30,4 +30,13 @@ public final class Pageables {
     public static String containsPattern(String q) {
         return (q == null || q.isBlank()) ? "%" : "%" + q.trim().toLowerCase(Locale.ROOT) + "%";
     }
+
+    /**
+     * Escapes {@code like} wildcards so {@code q=50%} looks for a literal "50%". The query must
+     * declare the escape character: {@code like :pattern escape '\'}. Used by the task list and
+     * universal search; the older lists above do not escape.
+     */
+    public static String escapeLike(String text) {
+        return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
 }

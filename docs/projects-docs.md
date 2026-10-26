@@ -2,7 +2,7 @@
 
 **Status:** projects with a key, a description and a Scrum/Kanban template; the template's board and default columns; project settings (name, description); membership and roles. Managing board columns (R16) and sprints (R14, R15) are later stories. Roles and permissions are in [roles-docs.md](./roles-docs.md). See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/workspaces/{workspaceId}/projects` and `/api/v1/projects/**`.
-**Related:** [Roles and permissions](./roles-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Authentication](./auth-endpoints.md), [Requirements](./requirements.md) R02, R04, R06.
+**Related:** [Roles and permissions](./roles-docs.md), [Tasks](./tasks-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Authentication](./auth-endpoints.md), [Requirements](./requirements.md) R02, R04, R06.
 
 This document is the single reference for how projects and their membership work end to end. If the code and this file disagree, fix one of them in the same PR.
 
@@ -41,7 +41,7 @@ Why `404` for some members and `403` for others: someone who cannot see a projec
 
 The membership changes need the `MANAGE_MEMBERS` permission, editing settings needs `EDIT_SETTINGS`, and reading the board needs `VIEW_WORK`; see the full matrix in [roles-docs.md §2](./roles-docs.md#2-permission-matrix).
 
-**Admins and project work.** Story 7 says a workspace admin manages any project's members and settings but does not see the project's *work* (board, tasks, comments, attachments, sprints) unless they are a member. That is why the board (3.8) answers `403` to an admin who is not in the project. Task endpoints (story 9) must check `VIEW_WORK` / `EDIT_TASKS` the same way, not the admin role.
+**Admins and project work.** Story 7 says a workspace admin manages any project's members and settings but does not see the project's *work* (board, tasks, comments, attachments, sprints) unless they are a member. That is why the board (3.8) and every task endpoint ([tasks-docs.md](./tasks-docs.md)) answer `403` to an admin who is not in the project.
 
 ---
 
@@ -322,6 +322,7 @@ The story's "add team to project": all the team's members are assigned to the pr
 - **Rules:**
   - The person loses access to the project **immediately**: their next request to it gets `404` (story 7).
   - They stay in the workspace and in their teams.
+  - They are **unassigned** from the project's tasks, because an assignee must be a project member ([tasks-docs.md](./tasks-docs.md)).
   - Removing someone who is not in the project changes nothing and still returns `204`.
   - The project's **last Project Manager cannot be removed**; make someone else Project Manager first. Project Managers can remove themselves while another one remains.
 - **Response:** `204`, no body.
@@ -503,7 +504,7 @@ When `WorkspaceResponse.archivedAt` is set, show projects read-only and hide **C
 
 | Table | Columns | Constraints |
 | --- | --- | --- |
-| `projects` | `id`, `workspace_id`, `name` (≤ 100), `project_key` (≤ 10), `description` (`text`, nullable), `template` (`SCRUM` / `KANBAN`), audit columns | none on the name; `project_key` not null, never updated, unique on (`workspace_id`, `project_key`) as `uk_projects_workspace_key`; `template` not null, check constraint, never updated |
+| `projects` | `id`, `workspace_id`, `name` (≤ 100), `project_key` (≤ 10), `description` (`text`, nullable), `template` (`SCRUM` / `KANBAN`), `last_task_number` (the counter behind task keys, [tasks-docs.md §6](./tasks-docs.md#6-data-model)), audit columns | none on the name; `project_key` not null, never updated, unique on (`workspace_id`, `project_key`) as `uk_projects_workspace_key`; `template` not null, check constraint, never updated |
 | `project_boards` | `project_id` (primary key and foreign key to `projects`), audit columns | exactly one per project |
 | `project_board_columns` | `id`, `project_id` (foreign key to `project_boards`), `name` (≤ 100), `sort_order`, `wip_limit` (nullable), audit columns | unique on (`project_id`, `sort_order`); `sort_order` ≥ 0; `wip_limit` > 0 when set |
 | `project_members` | `id`, `project_id`, `user_id`, audit columns | unique on (`project_id`, `user_id`): the same person cannot be added twice |
@@ -512,7 +513,7 @@ When `WorkspaceResponse.archivedAt` is set, show projects read-only and hide **C
 - The audit columns are `created_at`, `updated_at`, `created_by`, `updated_by`, from `BaseEntity`.
 - All foreign keys are `ON DELETE CASCADE` (`@OnDelete` in the entities):
   - deleting a **workspace** deletes its projects, their member rows and their role rows
-  - deleting a **project** deletes its member rows and their role rows, its board and the board's columns
+  - deleting a **project** deletes its member rows and their role rows, its board and the board's columns, and its tasks
   - deleting a **member row** deletes its role rows
   - deleting a **user** deletes their project memberships
 - Leaving a workspace is not a cascade: the service removes the person's project rows of that workspace explicitly ([roles-docs.md §4.2](./roles-docs.md#42-removing-a-member-and-leaving)).
@@ -542,9 +543,9 @@ When `WorkspaceResponse.archivedAt` is set, show projects read-only and hide **C
 | Story 6 (R03) | **Done in the services**, see [roles-docs.md](./roles-docs.md): the template, project roles, Project Managers managing membership, the "at least one Project Manager" rule. Endpoints for changing roles are still to be built. |
 | Story 7 (R04) | Applies this document's visibility rule to everything inside a project, through `ProjectAccess` and `VIEW_WORK`. Admins manage membership but see project work only if they are members. |
 | Story 8 (R06) | **Done:** key, description, template board and default columns, settings (3.9). |
-| Story 9 (R09) | Tasks inside projects, with keys built from the project key (`MOB-42`); a task's status is one of the board's columns. Task endpoints check `EDIT_TASKS` / `VIEW_WORK` through `ProjectAccess`. |
-| R13–R15 | Backlog and sprints for Scrum projects; `activeSprintId` on the board gets a value. |
-| R16 | Adding, renaming and reordering columns and setting WIP limits (`CONFIGURE_BOARD`). |
+| Story 9 (R09) | **Done:** tasks with keys built from the project key (`MOB-42`), status = a board column, order on the board and in the backlog. See [tasks-docs.md](./tasks-docs.md). |
+| R13–R15 | Sprint planning and the sprint lifecycle; `activeSprintId` on the board gets a value. (Backlog reordering already exists, [tasks-docs.md §3.7](./tasks-docs.md#37-reorder-the-backlog-scrum).) |
+| R16 | Adding, renaming and reordering columns and setting WIP limits (`CONFIGURE_BOARD`). A removed column must move or refuse its tasks: the task → column key has no cascade. |
 | R30 | Completing and archiving a project (`ARCHIVE_PROJECT`). |
 
 ### Known limitations
@@ -558,7 +559,7 @@ When `WorkspaceResponse.archivedAt` is set, show projects read-only and hide **C
 
 ## 9. Implementation status
 
-As of 26 Oct 2026, on branch `fix/scrum-kanban-fixes`:
+As of 26 Oct 2026, from branch `fix/scrum-kanban-fixes` (merged into `features/project-template-defaults`):
 
 | Part | Status |
 | --- | --- |
@@ -570,7 +571,7 @@ As of 26 Oct 2026, on branch `fix/scrum-kanban-fixes`:
 | Board per template (strategy pattern), default columns, `GET /board`, migrations V4 and V5 | Implemented |
 | Project key (unique per workspace, `PROJECT_KEY_TAKEN`) and description | Implemented |
 | Unit tests: `ProjectServiceTest` (51), `ProjectAccessTest` (11), `ProjectControllerTest` (8), `ProjectBoardStrategiesTest` (3), request validation | Implemented, all passing |
-| Database tests against PostgreSQL: `ProjectBoardCreationIntegrationTest` (boards, columns, cascade) and `WorkspaceDataIntegrationTest` | Implemented; **not yet run with V5** (needs Docker) |
+| Database tests against PostgreSQL: `ProjectBoardCreationIntegrationTest` (boards, columns, cascade) and `WorkspaceDataIntegrationTest` | Implemented, passing with V1–V6 (26 Oct 2026) |
 
 ---
 

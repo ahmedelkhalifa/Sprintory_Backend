@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -23,6 +24,19 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
 
     /** Keys are stored upper-case, so the caller passes the normalized key. */
     boolean existsByWorkspaceIdAndKey(Long workspaceId, String key);
+
+    /**
+     * Reserves the next task number (story 9). The UPDATE locks the project row until the
+     * transaction ends, so two tasks created at the same moment get different numbers. Read the
+     * new value with {@link #findLastTaskNumber} in the same transaction.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("update Project p set p.lastTaskNumber = p.lastTaskNumber + 1 where p.id = :projectId")
+    int incrementTaskNumber(@Param("projectId") Long projectId);
+
+    /** A scalar query, so it reads the database and not a project already loaded in memory. */
+    @Query("select p.lastTaskNumber from Project p where p.id = :projectId")
+    int findLastTaskNumber(@Param("projectId") Long projectId);
 
     /**
      * Locks the project row until the transaction ends, so role changes in one project run one at

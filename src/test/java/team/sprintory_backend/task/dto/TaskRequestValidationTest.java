@@ -39,6 +39,17 @@ class TaskRequestValidationTest {
     }
 
     @Test
+    void labelsAreAtMostTwentyAndEachAtMostFiftyCharacters() {
+        List<String> twenty = java.util.stream.IntStream.range(0, 20).mapToObj(i -> "l" + i).toList();
+        List<String> twentyOne = java.util.stream.IntStream.range(0, 21).mapToObj(i -> "l" + i).toList();
+        assertTrue(validator.validate(create("Valid", null, null, twenty)).isEmpty());
+        assertFalse(validator.validate(create("Valid", null, null, twentyOne)).isEmpty());
+        assertTrue(validator.validate(create("Valid", null, null, List.of("x".repeat(50)))).isEmpty());
+        assertFalse(validator.validate(create("Valid", null, null, List.of("x".repeat(51)))).isEmpty());
+        assertFalse(validator.validate(update(null, null, null, twentyOne, false, false, false)).isEmpty());
+    }
+
+    @Test
     void partialUpdateValidatesNonBlankTitle() {
         var invalid = update(" ", null, null, null, false, false, false);
         assertFalse(validator.validate(invalid).isEmpty());

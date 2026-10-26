@@ -22,7 +22,7 @@ public record UpdateTaskRequest(
         @Positive Long statusId,
         @Positive Long assigneeId,
         @PositiveOrZero Integer estimate,
-        List<@NotBlank String> labels,
+        @Size(max = 20) List<@NotBlank @Size(max = 50) String> labels,
         String description,
         boolean clearAssignee,
         boolean clearEstimate,
