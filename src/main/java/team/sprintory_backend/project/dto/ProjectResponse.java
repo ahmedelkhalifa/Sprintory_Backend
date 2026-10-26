@@ -12,11 +12,13 @@ import java.util.Set;
  * workspace admin is not in the project). Permissions also include their workspace-admin grants.
  * The template is immutable after project creation.
  */
-public record ProjectResponse(Long id, Long workspaceId, String name, ProjectTemplate template,
-                              Set<ProjectRole> roles, Set<ProjectPermission> permissions) {
+public record ProjectResponse(Long id, Long workspaceId, String name, String key, String description,
+                              ProjectTemplate template, Set<ProjectRole> roles,
+                              Set<ProjectPermission> permissions) {
     public static ProjectResponse from(Project project, Set<ProjectRole> roles,
                                        Set<ProjectPermission> permissions) {
         return new ProjectResponse(project.getId(), project.getWorkspace().getId(), project.getName(),
-                project.getTemplate(), Set.copyOf(roles), Set.copyOf(permissions));
+                project.getKey(), project.getDescription(), project.getTemplate(),
+                Set.copyOf(roles), Set.copyOf(permissions));
     }
 }

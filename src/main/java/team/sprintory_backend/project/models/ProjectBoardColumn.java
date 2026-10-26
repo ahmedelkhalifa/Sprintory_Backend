@@ -14,6 +14,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
+import team.sprintory_backend.audit.BaseEntity;
 
 /** Persisted, ordered workflow column. WIP is optional and initially unset. */
 @Entity
@@ -21,7 +22,7 @@ import org.hibernate.annotations.OnDeleteAction;
 @Getter
 @Setter
 @NoArgsConstructor
-public class ProjectBoardColumn {
+public class ProjectBoardColumn extends BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -45,5 +46,17 @@ public class ProjectBoardColumn {
         this.name = name;
         this.position = position;
         this.wipLimit = null;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof ProjectBoardColumn other)) return false;
+        return id != null && id.equals(other.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
     }
 }

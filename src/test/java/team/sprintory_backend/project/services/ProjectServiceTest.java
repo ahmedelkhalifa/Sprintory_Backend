@@ -17,8 +17,10 @@ import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.dto.ProjectMemberResponse;
 import team.sprintory_backend.project.dto.ProjectResponse;
+import team.sprintory_backend.project.dto.UpdateProjectRequest;
 import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
 import team.sprintory_backend.project.exceptions.LastProjectManagerException;
+import team.sprintory_backend.project.exceptions.ProjectKeyTakenException;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectMember;
 import team.sprintory_backend.project.models.ProjectPermission;
@@ -87,7 +89,7 @@ class ProjectServiceTest {
                 new ProjectAccess(projectRepository, projectMemberRepository, workspaceAccess), boardService);
 
         workspace = Workspace.builder().id(WORKSPACE_ID).name("Acme").slug("acme").build();
-        project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App")
+        project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App").key("MOB")
                 .template(ProjectTemplate.SCRUM).build();
         when(workspaceMemberRepository.findByWorkspaceIdAndUserId(anyLong(), anyLong())).thenReturn(Optional.empty());
         when(projectRepository.findWithWorkspaceById(anyLong())).thenReturn(Optional.empty());
@@ -101,7 +103,7 @@ class ProjectServiceTest {
     @Test
     void createRefusesNonMembersWithWorkspaceNotFound() {
         ResourceNotFoundException e = assertThrows(ResourceNotFoundException.class,
-                () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App", ProjectTemplate.SCRUM)));
+                () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App", "MOB", ProjectTemplate.SCRUM, null)));
         assertEquals("Workspace not found.", e.getMessage());
     }
 
@@ -111,7 +113,19 @@ class ProjectServiceTest {
         archiveWorkspace();
 
         assertThrows(WorkspaceArchivedException.class,
-                () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App", ProjectTemplate.SCRUM)));
+                () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App", "MOB", ProjectTemplate.SCRUM, null)));
+        verify(projectRepository, never()).save(any());
+        verifyNoInteractions(boardService);
+    }
+
+    @Test
+    void createRefusesAKeyAlreadyUsedInTheWorkspace() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        when(projectRepository.existsByWorkspaceIdAndKey(WORKSPACE_ID, "MOB")).thenReturn(true);
+
+        ProjectKeyTakenException e = assertThrows(ProjectKeyTakenException.class,
+                () -> service.create(member, WORKSPACE_ID, new CreateProjectRequest("Mobile App", " mob ", ProjectTemplate.SCRUM, null)));
+        assertEquals("The key MOB is already used in this workspace.", e.getMessage());
         verify(projectRepository, never()).save(any());
         verifyNoInteractions(boardService);
     }
@@ -126,10 +140,11 @@ class ProjectServiceTest {
         });
 
         ProjectResponse response = service.create(member, WORKSPACE_ID,
-                new CreateProjectRequest("  Mobile App ", ProjectTemplate.KANBAN));
+                new CreateProjectRequest("  Mobile App ", " mob ", ProjectTemplate.KANBAN, null));
 
         ArgumentCaptor<Project> saved = ArgumentCaptor.forClass(Project.class);
         verify(projectRepository).save(saved.capture());
+        assertEquals("MOB", saved.getValue().getKey());
         assertEquals(ProjectTemplate.KANBAN, saved.getValue().getTemplate());
         verify(boardService).initialize(saved.getValue());
         ArgumentCaptor<ProjectMember> first = ArgumentCaptor.forClass(ProjectMember.class);
@@ -137,8 +152,91 @@ class ProjectServiceTest {
         assertSame(member, first.getValue().getUser());
         assertEquals(PROJECT_ID, first.getValue().getProject().getId());
         assertEquals(Set.of(ProjectRole.PROJECT_MANAGER), first.getValue().getRoles());
-        assertEquals(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App", ProjectTemplate.KANBAN,
+        assertEquals(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App", "MOB", null, ProjectTemplate.KANBAN,
                 Set.of(ProjectRole.PROJECT_MANAGER), ProjectRole.PROJECT_MANAGER.permissions()), response);
+    }
+
+    @Test
+    void createTrimsTheDescriptionAndStoresABlankOneAsNull() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        when(projectRepository.save(any(Project.class))).thenAnswer(call -> call.getArgument(0));
+
+        service.create(member, WORKSPACE_ID, new CreateProjectRequest("A", "AA", ProjectTemplate.SCRUM, "  Goals \n"));
+        service.create(member, WORKSPACE_ID, new CreateProjectRequest("B", "BB", ProjectTemplate.SCRUM, "   "));
+
+        ArgumentCaptor<Project> saved = ArgumentCaptor.forClass(Project.class);
+        verify(projectRepository, times(2)).save(saved.capture());
+        assertEquals("Goals", saved.getAllValues().get(0).getDescription());
+        assertNull(saved.getAllValues().get(1).getDescription());
+    }
+
+    // --- update (settings) ---
+
+    @Test
+    void updateLetsAProjectManagerChangeNameAndDescription() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+
+        ProjectResponse response = service.update(member, PROJECT_ID,
+                new UpdateProjectRequest("  Mobile App v2 ", " Ship it "));
+
+        assertEquals("Mobile App v2", project.getName());
+        assertEquals("Ship it", project.getDescription());
+        assertEquals(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App v2", "MOB", "Ship it",
+                ProjectTemplate.SCRUM, Set.of(ProjectRole.PROJECT_MANAGER),
+                ProjectRole.PROJECT_MANAGER.permissions()), response);
+    }
+
+    @Test
+    void updateLeavesNullFieldsUnchangedAndClearsABlankDescription() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        project.setDescription("Old");
+
+        service.update(member, PROJECT_ID, new UpdateProjectRequest(null, null));
+        assertEquals("Mobile App", project.getName());
+        assertEquals("Old", project.getDescription());
+
+        service.update(member, PROJECT_ID, new UpdateProjectRequest(null, "  "));
+        assertNull(project.getDescription());
+    }
+
+    @Test
+    void updateLetsAWorkspaceAdminWhoIsNotInTheProject() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+
+        service.update(admin, PROJECT_ID, new UpdateProjectRequest("Renamed", null));
+
+        assertEquals("Renamed", project.getName());
+    }
+
+    @Test
+    void updateRefusesMembersAndViewers() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        for (ProjectRole role : List.of(ProjectRole.MEMBER, ProjectRole.VIEWER)) {
+            givenInProject(member, role);
+            assertThrows(AccessDeniedException.class,
+                    () -> service.update(member, PROJECT_ID, new UpdateProjectRequest("Renamed", null)), role.name());
+        }
+        assertEquals("Mobile App", project.getName());
+    }
+
+    @Test
+    void updateRefusesAnArchivedWorkspace() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        archiveWorkspace();
+
+        assertThrows(WorkspaceArchivedException.class,
+                () -> service.update(member, PROJECT_ID, new UpdateProjectRequest("Renamed", null)));
+        assertEquals("Mobile App", project.getName());
+    }
+
+    @Test
+    void updateHidesProjectsTheCallerCannotSee() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+
+        assertProjectNotFound(() -> service.update(member, PROJECT_ID, new UpdateProjectRequest("Renamed", null)));
     }
 
     // --- list ---
@@ -156,7 +254,7 @@ class ProjectServiceTest {
         verify(projectRepository).searchByWorkspaceId(eq(WORKSPACE_ID), eq("%mob%"), pageable.capture());
         assertTrue(pageable.getValue().getSort().isUnsorted());
         verify(projectRepository, never()).searchByWorkspaceIdAndMemberId(anyLong(), anyLong(), anyString(), any());
-        assertEquals(List.of(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App", ProjectTemplate.SCRUM,
+        assertEquals(List.of(new ProjectResponse(PROJECT_ID, WORKSPACE_ID, "Mobile App", "MOB", null, ProjectTemplate.SCRUM,
                 Set.of(), ProjectPermission.WORKSPACE_ADMIN)), page.content());
     }
 
