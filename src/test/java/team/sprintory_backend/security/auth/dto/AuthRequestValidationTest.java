@@ -5,6 +5,7 @@ import jakarta.validation.Validator;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -33,6 +34,13 @@ class AuthRequestValidationTest {
     @Test
     void validLoginWithShortPasswordIsNotRejectedByRegistrationOnlyRule() {
         assertTrue(validator.validate(new LoginRequest("a@example.com", "pass", false)).isEmpty());
+    }
+
+    @Test
+    void loginJsonWithoutRememberMeIsReadAsFalse() {
+        LoginRequest request = JsonMapper.builder().build()
+                .readValue("{\"email\":\"a@example.com\",\"password\":\"pass\"}", LoginRequest.class);
+        assertFalse(request.rememberMe());
     }
 
     @Test
