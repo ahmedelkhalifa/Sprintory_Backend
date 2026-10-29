@@ -158,7 +158,7 @@ A `statusId` or `assigneeId` that does not belong to the project simply finds no
 - **Who:** members with `EDIT_TASKS`. The workspace must be active.
 - **Rules:**
   - A field that is left out or `null` **stays as it is**. `{}` changes nothing.
-  - To empty a field, send its flag: `clearAssignee`, `clearEstimate`, `clearDescription` (`true`). Sending a value **and** its clear flag is a `400`.
+  - To empty a field, send its flag: `clearAssignee`, `clearEstimate`, `clearDescription` (`true`). The flags are optional; left out or `null` means `false`. Sending a value **and** its clear flag is a `400`.
   - `labels` replaces all labels; `"labels": []` removes them all.
   - `statusId` must be a column of this project's board. Changing it puts the task **last** in the new column. To drop it at a particular place, use 3.6 instead.
   - `assigneeId` must be a project member.

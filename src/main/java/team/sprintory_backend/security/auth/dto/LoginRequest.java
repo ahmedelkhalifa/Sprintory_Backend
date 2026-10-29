@@ -7,5 +7,10 @@ import jakarta.validation.constraints.NotBlank;
 public record LoginRequest(
         @NotBlank @Email String email,
         @NotBlank String password,
-        boolean rememberMe
-) {}
+        Boolean rememberMe
+) {
+    /** Absent means false. Jackson 3 rejects a missing field for a primitive boolean with 400. */
+    public LoginRequest {
+        rememberMe = Boolean.TRUE.equals(rememberMe);
+    }
+}

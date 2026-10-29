@@ -24,10 +24,17 @@ public record UpdateTaskRequest(
         @PositiveOrZero Integer estimate,
         @Size(max = 20) List<@NotBlank @Size(max = 50) String> labels,
         String description,
-        boolean clearAssignee,
-        boolean clearEstimate,
-        boolean clearDescription
+        Boolean clearAssignee,
+        Boolean clearEstimate,
+        Boolean clearDescription
 ) {
+    /** Absent flags mean false. Jackson 3 rejects a missing field for a primitive boolean with 400. */
+    public UpdateTaskRequest {
+        clearAssignee = Boolean.TRUE.equals(clearAssignee);
+        clearEstimate = Boolean.TRUE.equals(clearEstimate);
+        clearDescription = Boolean.TRUE.equals(clearDescription);
+    }
+
     @AssertTrue(message = "Title must not be blank")
     public boolean isValidTitle() {
         return title == null || !title.isBlank();
