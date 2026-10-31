@@ -4,7 +4,7 @@
 
 `.github/workflows/cd.yml` runs after **Backend CI** has succeeded for a **push to main**, or by manual dispatch from `main`. It is dormant until the repository variable `SPRINTORY_CD_ENABLED` is set to `true`.
 
-It builds `DOCKERHUB_IMAGE:sha-<40-character-commit-SHA>` and `DOCKERHUB_IMAGE:latest`, pushes both tags to the **existing** Docker Hub repository, and SSHes to the VPS to pull and run `db` + `backend` with `docker compose`. It does **not** start the `nginx` service: the existing host Nginx and Nginx Proxy Manager both require TCP 80/443, so choose the reverse proxy architecture separately. It never edits or uploads `.env`.
+It builds `DOCKERHUB_IMAGE:sha-<40-character-commit-SHA>` and `DOCKERHUB_IMAGE:latest`, pushes both tags to the **existing** Docker Hub repository, and SSHes to the VPS to pull and run `db` + `backend` with `docker compose`. It runs the exact `sha-...` image, then (only once it is up) tags it as `DOCKERHUB_IMAGE:latest` on the VPS too, so the host's `latest` is always the last deployed image: a manual `docker compose up -d` with `BACKEND_IMAGE=<repo>` or `<repo>:latest` starts the same image instead of an old cached one. It does **not** start the `nginx` service: the existing host Nginx and Nginx Proxy Manager both require TCP 80/443, so choose the reverse proxy architecture separately. It never edits or uploads `.env`.
 
 ## One-time VPS setup (run from the local laptop)
 
