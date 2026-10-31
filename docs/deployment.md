@@ -96,7 +96,10 @@ application starting. Prod runs `ddl-auto=validate`, so a missing migration stop
 
 ## 6. Day to day
 
-- **Update**: push a new image, then on the VPS `docker compose pull && docker compose up -d`.
+- **Update**: merging to `main` deploys through CD (`docs/cd-setup.md`), which also keeps the VPS's
+  local `latest` tag equal to the deployed image. By hand, always pull first:
+  `docker compose pull backend && docker compose up -d backend`. Compose never re-pulls a tag it
+  already has, so `up -d` alone reuses whatever `latest` was cached, which can be an old image.
 - **Roll back**: set `BACKEND_IMAGE` to an earlier tag in `.env`, then `docker compose up -d`.
   This only works if images are pushed with a tag per version, not only `latest`. A rolled-back
   image cannot undo migrations a newer one already applied.
