@@ -32,7 +32,7 @@ class ProjectRoleTest {
 
     @Test
     void workspaceAdminsManageProjectsButDoNotSeeTheirWork() {
-        assertEquals(EnumSet.of(VIEW_PROJECT, EDIT_SETTINGS, ARCHIVE_PROJECT, MANAGE_MEMBERS, MANAGE_ROLES),
+        assertEquals(EnumSet.of(VIEW_PROJECT, EDIT_SETTINGS, ARCHIVE_PROJECT, MANAGE_MEMBERS, MANAGE_ROLES, CONFIGURE_BOARD),
                 ProjectPermission.WORKSPACE_ADMIN);
         assertFalse(ProjectPermission.WORKSPACE_ADMIN.contains(VIEW_WORK));
     }

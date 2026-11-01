@@ -1,11 +1,20 @@
 package team.sprintory_backend.project.dto;
 
+import team.sprintory_backend.project.models.BoardColumnCategory;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
 
-/** The stable column ID is available for future add/rename/reorder/task APIs. */
-public record ProjectBoardColumnResponse(Long id, String name, int position, Integer wipLimit) {
-    public static ProjectBoardColumnResponse from(ProjectBoardColumn column) {
+/** Column metadata and unfiltered active task count. */
+public record ProjectBoardColumnResponse(Long id, String name, int position, Integer wipLimit,
+                                         BoardColumnCategory category, long taskCount, boolean wipExceeded) {
+    public ProjectBoardColumnResponse(Long id, String name, int position, Integer wipLimit) {
+        this(id, name, position, wipLimit, null, 0, false);
+    }
+    public static ProjectBoardColumnResponse from(ProjectBoardColumn column, long count) {
         return new ProjectBoardColumnResponse(column.getId(), column.getName(), column.getPosition(),
-                column.getWipLimit());
+                column.getWipLimit(), column.getCategory(), count,
+                column.getWipLimit() != null && count > column.getWipLimit());
+    }
+    public static ProjectBoardColumnResponse from(ProjectBoardColumn column) {
+        return from(column, 0);
     }
 }

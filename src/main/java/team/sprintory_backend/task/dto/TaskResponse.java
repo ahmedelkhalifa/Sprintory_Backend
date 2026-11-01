@@ -25,8 +25,22 @@ public record TaskResponse(
         String description,
         Long sprintId,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        WipWarning wipWarning
 ) {
+    public TaskResponse(Long id, Long projectId, String key, String title, TaskType type,
+                        TaskPriority priority, Long statusId, String statusName, Long assigneeId,
+                        Integer estimate, List<String> labels, String description, Long sprintId,
+                        Instant createdAt, Instant updatedAt) {
+        this(id, projectId, key, title, type, priority, statusId, statusName, assigneeId,
+                estimate, labels, description, sprintId, createdAt, updatedAt, null);
+    }
+
+    public TaskResponse withWipWarning(WipWarning warning) {
+        return new TaskResponse(id, projectId, key, title, type, priority, statusId, statusName,
+                assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt, warning);
+    }
+
     /** Labels sorted for a stable order. {@code sprintId} stays null until sprints exist (R14). */
     public static TaskResponse from(Task task) {
         return new TaskResponse(task.getId(), task.getProject().getId(), task.getKey(), task.getTitle(),

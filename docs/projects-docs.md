@@ -1,8 +1,8 @@
 # Sprintory — Projects API contract (R02, R06)
 
-**Status:** projects with a key, a description and a Scrum/Kanban template; the template's board and default columns; project settings (name, description); membership and roles. Managing board columns (R16) and sprints (R14, R15) are later stories. Roles and permissions are in [roles-docs.md](./roles-docs.md). See [§9 Implementation status](#9-implementation-status).
+**Status:** projects with key, description and immutable Scrum/Kanban template; board and default columns; settings (name, description); membership and roles. Board configuration and WIP limits are implemented under PMP-125 ([board-docs.md](./board-docs.md)); sprint lifecycle (R14, R15) remains later work. See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/workspaces/{workspaceId}/projects` and `/api/v1/projects/**`.
-**Related:** [Roles and permissions](./roles-docs.md), [Tasks](./tasks-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Authentication](./auth-endpoints.md), [Requirements](./requirements.md) R02, R04, R06.
+**Related:** [Roles and permissions](./roles-docs.md), [Board configuration](./board-docs.md), [Tasks](./tasks-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Authentication](./auth-endpoints.md), [Requirements](./requirements.md) R02, R04, R06.
 
 This document is the single reference for how projects and their membership work end to end. If the code and this file disagree, fix one of them in the same PR.
 
@@ -31,7 +31,8 @@ This document is the single reference for how projects and their membership work
 | List the workspace's projects | 401 | 404 | sees only their own projects | sees only their own projects | sees only their own projects | sees all projects |
 | Get a project | 401 | 404 | 404 | allowed | allowed | allowed |
 | Edit the project's settings | 401 | 404 | 404 | 403 | allowed (active workspace) | allowed (active workspace) |
-| Read the board | 401 | 404 | 404 | allowed | allowed | 403 unless also a project member |
+| Read the board configuration | 401 | 404 | 404 | allowed | allowed | allowed (`CONFIGURE_BOARD`) |
+| Configure columns and WIP | 401 | 404 | 404 | 403 | allowed | allowed |
 | List a project's members | 401 | 404 | 404 | allowed | allowed | allowed |
 | Add people to a project | 401 | 404 | 404 | 403 | allowed (active workspace) | allowed (active workspace) |
 | Add a team to a project | 401 | 404 | 404 | 403 | allowed (active workspace) | allowed (active workspace) |
@@ -39,9 +40,9 @@ This document is the single reference for how projects and their membership work
 
 Why `404` for some members and `403` for others: someone who cannot see a project must not learn that it exists, so they get `404`. A project member can already see the project, so refusing a change with `403` reveals nothing new.
 
-The membership changes need the `MANAGE_MEMBERS` permission, editing settings needs `EDIT_SETTINGS`, and reading the board needs `VIEW_WORK`; see the full matrix in [roles-docs.md §2](./roles-docs.md#2-permission-matrix).
+The membership changes need `MANAGE_MEMBERS`, editing settings needs `EDIT_SETTINGS`, reading the board needs `VIEW_WORK` **or** `CONFIGURE_BOARD` (for workspace admins), and changing columns needs `CONFIGURE_BOARD`; see the full matrix in [roles-docs.md §2](./roles-docs.md#2-permission-matrix).
 
-**Admins and project work.** Story 7 says a workspace admin manages any project's members and settings but does not see the project's *work* (board, tasks, comments, attachments, sprints) unless they are a member. That is why the board (3.8) and every task endpoint ([tasks-docs.md](./tasks-docs.md)) answer `403` to an admin who is not in the project.
+**Admins and project work.** Story 7 says a workspace admin manages any project's settings but cannot read its *task details* unless they are a project member. PMP-125 permits admin access to board **configuration and aggregate counts** with `CONFIGURE_BOARD`; task endpoints ([tasks-docs.md](./tasks-docs.md)) still answer `403` to an admin who is not in the project.
 
 ---
 
@@ -60,10 +61,11 @@ All paths are under `/api/v1`. Request and response bodies are JSON in `camelCas
 | 3.7 | DELETE | `/projects/{projectId}/members/{userId}` | none | `204` |
 | 3.8 | GET | `/projects/{projectId}/board` | none | `200` + `ProjectBoardResponse` |
 | 3.9 | PATCH | `/projects/{projectId}` | `UpdateProjectRequest` | `200` + `ProjectResponse` |
+| Board | POST/PATCH/PUT/DELETE | `/projects/{projectId}/board/columns/**` | board column DTOs | `201`/`200` board, or `204` |
 
 Creating and listing sit under the workspace because a project belongs to exactly one. Everything else is addressed by the project's own id.
 
-Not available yet, on purpose: managing board columns and WIP limits (R16), sprints and the backlog (R13–R15), archiving a project (R30), and deleting a single project. Changing a member's project roles is available via the role-management endpoint in [roles-docs.md §3](./roles-docs.md#3-endpoints).
+Board column mutation endpoints are described in [board-docs.md](./board-docs.md). Not available yet, on purpose: sprints and the backlog (R13–R15), archiving a project (R30), and deleting a single project. Changing a member's project roles is available via the role-management endpoint in [roles-docs.md §3](./roles-docs.md#3-endpoints).
 
 ### Path variables
 
@@ -348,7 +350,7 @@ The board is created together with the project (3.1). What it starts with depend
 | `SCRUM` | To Do, In Progress, In Review, Done | yes | yes | no |
 | `KANBAN` | Backlog, To Do, In Progress, Done | no ("Backlog" is the first column instead) | no | yes, all empty (`null`) at first |
 
-- **Who:** members of this project (`VIEW_WORK`). A workspace admin who is **not** in the project gets `403`: admins manage a project but do not see its work (story 7). Everyone else who cannot see the project gets `404`, as in 3.3.
+- **Who:** project members with `VIEW_WORK`, or a workspace admin with `CONFIGURE_BOARD`. Admins who are not project members can read board configuration and aggregate counts, but not task details. Everyone else who cannot see the project gets `404`, as in 3.3.
 - **Archived workspace:** allowed.
 - **Response `200`** (a new Scrum project):
   ```json
@@ -360,24 +362,24 @@ The board is created together with the project (3.1). What it starts with depend
     "wipLimitsEnabled": false,
     "activeSprintId": null,
     "columns": [
-      { "id": 1, "name": "To Do", "position": 0, "wipLimit": null },
-      { "id": 2, "name": "In Progress", "position": 1, "wipLimit": null },
-      { "id": 3, "name": "In Review", "position": 2, "wipLimit": null },
-      { "id": 4, "name": "Done", "position": 3, "wipLimit": null }
+      { "id": 1, "name": "To Do", "position": 0, "wipLimit": null, "category": "TODO", "taskCount": 0, "wipExceeded": false },
+      { "id": 2, "name": "In Progress", "position": 1, "wipLimit": null, "category": "IN_PROGRESS", "taskCount": 0, "wipExceeded": false },
+      { "id": 3, "name": "In Review", "position": 2, "wipLimit": null, "category": "IN_PROGRESS", "taskCount": 0, "wipExceeded": false },
+      { "id": 4, "name": "Done", "position": 3, "wipLimit": null, "category": "DONE", "taskCount": 0, "wipExceeded": false }
     ]
   }
   ```
 - **Fields:**
   - `backlogEnabled`, `sprintsEnabled`, `wipLimitsEnabled` come from the template, not from the database. They tell the frontend which pages and controls to show.
   - `activeSprintId` is always `null` until sprints exist (R15).
-  - `columns` are sorted by `position` (0-based). A column's `id` never changes, so later stories (column editing in R16, tasks in story 9) can refer to it.
-- **Read-only.** Adding, renaming and reordering columns and setting WIP limits come with R16 and will need `CONFIGURE_BOARD`; they must also handle columns that already hold tasks.
+  - `columns` are sorted by `position` (0-based). A column's `id` stays stable across renaming, recategorization and reordering. `category` describes TODO/IN_PROGRESS/DONE semantics; `taskCount` is the unfiltered number of active tasks in that column; `wipExceeded` marks a soft limit violation.
+- **PMP-125:** Column create/update/order/soft-delete and Kanban WIP configuration require `CONFIGURE_BOARD`. See [board-docs.md](./board-docs.md) for the endpoints, payloads and rules.
 - **Errors:**
 
   | Status | Code | When |
   | --- | --- | --- |
   | 401 | `AUTHENTICATION_ERROR` | not logged in |
-  | 403 | `ACCESS_DENIED` | a workspace admin who is not a member of this project |
+  | 403 | `ACCESS_DENIED` | a caller who can see the project but has neither `VIEW_WORK` nor `CONFIGURE_BOARD` |
   | 404 | `RESOURCE_NOT_FOUND` "Project not found." | as in 3.3 |
 
 #### How the board is created (strategy pattern)
@@ -545,14 +547,14 @@ When `WorkspaceResponse.archivedAt` is set, show projects read-only and hide **C
 | Story 8 (R06) | **Done:** key, description, template board and default columns, settings (3.9). |
 | Story 9 (R09) | **Done:** tasks with keys built from the project key (`MOB-42`), status = a board column, order on the board and in the backlog. See [tasks-docs.md](./tasks-docs.md). |
 | R13–R15 | Sprint planning and the sprint lifecycle; `activeSprintId` on the board gets a value. (Backlog reordering already exists, [tasks-docs.md §3.7](./tasks-docs.md#37-reorder-the-backlog-scrum).) |
-| R16 | Adding, renaming and reordering columns and setting WIP limits (`CONFIGURE_BOARD`). A removed column must move or refuse its tasks: the task → column key has no cascade. |
+| R16 / PMP-125 | **Implemented in backend:** column create/rename/reorder/category/soft-delete and Kanban WIP limits (`CONFIGURE_BOARD`); deletion rehomes tasks and records history. See [board-docs.md](./board-docs.md). |
 | R30 | Completing and archiving a project (`ARCHIVE_PROJECT`). |
 
 ### Known limitations
 
 - **Projects cannot be deleted individually yet.** Deleting the whole workspace removes its projects.
 - **Projects created before migration V5 have the key `P` + id** (e.g. `P12`). The key cannot be changed, so they keep it.
-- **Dev databases** run with Flyway off (`ddl-auto=update`), which cannot add the not-null `project_key` column to a `projects` table that already has rows, and does not create boards for old projects. Reset the dev database after pulling this change.
+- **Dev databases** run with Flyway off (`ddl-auto=update`). Hibernate does not apply V7's category backfill, active-only indexes or status-history migration reliably. Use a separate, properly migrated PostgreSQL database to validate V7; back up any previously hand-patched dev database before changing its migration settings.
 - **A project whose creator left before migration V3** has no Project Manager; a workspace admin can assign one.
 
 ---
@@ -569,6 +571,7 @@ As of 26 Oct 2026, from branch `fix/scrum-kanban-fixes` (merged into `features/p
 | Pagination and search on both lists | Implemented |
 | Template on create, project roles, `ProjectAccess` (story 6) | Implemented, see [roles-docs.md §10](./roles-docs.md#10-implementation-status) |
 | Board per template (strategy pattern), default columns, `GET /board`, migrations V4 and V5 | Implemented |
+| PMP-125 board configuration, category, WIP counts and history; V7 | Implemented; clean verify passed 381 tests and V7 applied on PostgreSQL Testcontainers (1 Nov 2026); final regression re-run and frontend acceptance pending. See [board-docs.md](./board-docs.md). |
 | Project key (unique per workspace, `PROJECT_KEY_TAKEN`) and description | Implemented |
 | Unit tests: `ProjectServiceTest` (51), `ProjectAccessTest` (11), `ProjectControllerTest` (8), `ProjectBoardStrategiesTest` (3), request validation | Implemented, all passing |
 | Database tests against PostgreSQL: `ProjectBoardCreationIntegrationTest` (boards, columns, cascade) and `WorkspaceDataIntegrationTest` | Implemented, passing with V1–V6 (26 Oct 2026) |
@@ -593,4 +596,5 @@ As of 26 Oct 2026, from branch `fix/scrum-kanban-fixes` (merged into `features/p
 | 26 Oct 2026 | Default columns: Scrum To Do, In Progress, In Review, Done; Kanban Backlog, To Do, In Progress, Done ("Backlog" as a column, no Backlog page). |
 | 26 Oct 2026 | The project key is 2–10 letters/digits starting with a letter, stored upper-case, unique within the workspace, and never changes (task keys depend on it). Existing projects got `P` + id. |
 | 26 Oct 2026 | The description is optional and has no length limit (`text`). |
+| 1 Nov 2026 | Board columns are configurable via `CONFIGURE_BOARD`; names and persisted categories are independent; Kanban Backlog is fixed first and WIP warnings are nonblocking. |
 | 26 Oct 2026 | Settings are edited with `PATCH /projects/{id}` (`EDIT_SETTINGS`): name and description only. |

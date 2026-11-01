@@ -40,5 +40,5 @@ public enum ProjectPermission {
      * it, but not see its work unless they are a member (story 7).
      */
     public static final Set<ProjectPermission> WORKSPACE_ADMIN = Collections.unmodifiableSet(EnumSet.of(
-            VIEW_PROJECT, EDIT_SETTINGS, ARCHIVE_PROJECT, MANAGE_MEMBERS, MANAGE_ROLES));
+            VIEW_PROJECT, EDIT_SETTINGS, ARCHIVE_PROJECT, MANAGE_MEMBERS, MANAGE_ROLES, CONFIGURE_BOARD));
 }

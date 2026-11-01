@@ -22,6 +22,8 @@ import team.sprintory_backend.task.dto.CreateTaskRequest;
 import team.sprintory_backend.task.dto.MoveTaskRequest;
 import team.sprintory_backend.task.dto.ReorderBacklogRequest;
 import team.sprintory_backend.task.dto.TaskResponse;
+import team.sprintory_backend.task.dto.WipWarning;
+import team.sprintory_backend.task.dto.TaskStatusHistoryResponse;
 import team.sprintory_backend.task.dto.UpdateTaskRequest;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.models.TaskPriority;
@@ -59,6 +61,7 @@ public class TaskApiService {
     private final ProjectBoardColumnRepository columnRepository;
     private final UserRepository userRepository;
     private final ProjectBoardStrategies boardStrategies;
+    private final TaskStatusHistoryService statusHistory;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -69,10 +72,10 @@ public class TaskApiService {
     public TaskResponse create(User user, Long projectId, CreateTaskRequest request) {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
         User assignee = (request.assigneeId() == null) ? null : requireAssignee(projectId, request.assigneeId());
-        ProjectBoardColumn status = firstColumn(projectId);
-
-        // The UPDATE locks the project row first, so the ranks below are read one create at a time.
+        // Lock before selecting a column: a concurrent board edit could soft-delete or reorder
+        // the old first column. Keep the selection and insert in the same locked transaction.
         projectRepository.incrementTaskNumber(projectId);
+        ProjectBoardColumn status = firstColumn(projectId);
         int number = projectRepository.findLastTaskNumber(projectId);
         long boardPosition = TaskRanks.last(taskRepository.findMaxBoardPosition(projectId, status.getId()));
         long backlogRank = TaskRanks.last(taskRepository.findMaxBacklogRank(projectId));
@@ -121,7 +124,10 @@ public class TaskApiService {
     @Transactional
     public TaskResponse update(User user, Long projectId, Long taskId, UpdateTaskRequest request) {
         projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS);
+        // Board configuration and moves lock the project; do the same before loading status.
+        if (request.statusId() != null) projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
+        boolean changedColumn = false;
 
         if (request.title() != null) {
             task.setTitle(request.title().trim());
@@ -136,9 +142,10 @@ public class TaskApiService {
             ProjectBoardColumn status = requireColumn(projectId, request.statusId());
             if (!status.getId().equals(task.getStatus().getId())) {
                 // Last in the new column. Read the column before the task joins it, under the lock.
-                projectRepository.lockById(projectId);
                 long position = TaskRanks.last(taskRepository.findMaxBoardPosition(projectId, status.getId()));
+                statusHistory.record(task, task.getStatus(), status, user);
                 task.setStatus(status);
+                changedColumn = true;
                 task.setBoardPosition(position);
             }
         }
@@ -162,13 +169,15 @@ public class TaskApiService {
             task.getLabels().addAll(normalizeLabels(request.labels()));
         }
         // Flush now so the response carries the new updatedAt.
-        return TaskResponse.from(taskRepository.saveAndFlush(task));
+        TaskResponse saved = TaskResponse.from(taskRepository.saveAndFlush(task));
+        return changedColumn ? saved.withWipWarning(wipWarning(projectId, task.getStatus())) : saved;
     }
 
     /** Soft delete: the row stays, the key is never handed out again, and every read hides it. */
     @Transactional
     public void delete(User user, Long projectId, Long taskId) {
         projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS);
+        projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
         task.setDeletedAt(Instant.now());
         taskRepository.save(task);
@@ -196,6 +205,7 @@ public class TaskApiService {
                 .findFirst().map(Task::getBoardPosition).orElse(null);
         Long position = TaskRanks.between(previous, next);
 
+        statusHistory.record(task, task.getStatus(), target, user);
         task.setStatus(target);
         if (position != null) {
             task.setBoardPosition(position);
@@ -203,7 +213,8 @@ public class TaskApiService {
             renumber(taskRepository.findColumnInBoardOrder(projectId, target.getId()), task, after,
                     Task::setBoardPosition);
         }
-        return TaskResponse.from(taskRepository.saveAndFlush(task));
+        TaskResponse saved = TaskResponse.from(taskRepository.saveAndFlush(task));
+        return saved.withWipWarning(wipWarning(projectId, target));
     }
 
     /**
@@ -257,6 +268,19 @@ public class TaskApiService {
         }
         return taskRepository.findByIdAndProjectId(afterTaskId, projectId)
                 .orElseThrow(() -> new BadRequestException("The task to place it after is not in this project."));
+    }
+
+    @Transactional(readOnly = true)
+    public List<TaskStatusHistoryResponse> history(User user, Long projectId, Long taskId) {
+        return statusHistory.list(user, projectId, taskId);
+    }
+
+    private WipWarning wipWarning(Long projectId, ProjectBoardColumn column) {
+        if (column.getWipLimit() == null) return null;
+        long count = taskRepository.countByProjectIdAndStatusId(projectId, column.getId());
+        return count > column.getWipLimit()
+                ? new WipWarning(column.getId(), count, column.getWipLimit(),
+                        "WIP limit exceeded; the task was moved successfully.") : null;
     }
 
     private ProjectBoardColumn requireColumn(Long projectId, Long statusId) {

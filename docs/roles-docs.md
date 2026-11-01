@@ -2,7 +2,7 @@
 
 **Status:** role permissions and service rules implemented; the three role-management HTTP endpoints, request DTOs and caller-specific response fields are implemented. See [§3 Endpoints](#3-endpoints) and [§10 Implementation status](#10-implementation-status).
 **Applies to:** workspace roles on `workspace_members`, project roles on `project_members`, and every permission check inside a project.
-**Related:** [Workspaces](./workspaces-docs.md), [Projects](./projects-docs.md), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R03, R04, R38.
+**Related:** [Workspaces](./workspaces-docs.md), [Projects](./projects-docs.md), [Board configuration](./board-docs.md), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R03, R04, R38.
 
 This document is the single reference for who may do what in Sprintory. If the code and this file disagree, fix one of them in the same PR.
 
@@ -53,7 +53,7 @@ The creator of a workspace is its first admin; people who accept an invitation j
 | `ARCHIVE_PROJECT` | Complete and archive the project | R30 | ✓ | | | | | ✓ |
 | `MANAGE_MEMBERS` | Add people or a team, remove people | R02 | ✓ | | | | | ✓ |
 | `MANAGE_ROLES` | Change members' project roles | R03 | ✓ | | | | | ✓ |
-| `CONFIGURE_BOARD` | Board columns and WIP limits | R16 | ✓ | | | | | |
+| `CONFIGURE_BOARD` | Board columns, categories and WIP limits | R16 / PMP-125 | ✓ | | | | | ✓ |
 | `MANAGE_BACKLOG` | Order and prioritize the backlog | R13 | | ✓ | | | | |
 | `MANAGE_SPRINTS` | Plan, start and close sprints | R14, R15 | | | ✓ | | | |
 | `EDIT_TASKS` | Create, edit and delete tasks | Story 9 | ✓ | ✓ | ✓ | ✓ | | |
@@ -62,7 +62,7 @@ The creator of a workspace is its first admin; people who accept an invitation j
 
 - **WS Admin** is what a workspace admin gets in **every** project of their workspace, whether or not they are a member of it. They manage the project but **do not see its work** unless they are a member (story 7). An admin who is also a project member gets the admin column plus their project roles combined.
 - **Strict Scrum roles:** only the Product Owner orders the backlog and only the Scrum Master runs sprints. A Project Manager who should do either gives themselves that role too.
-- **Enforced today:** the R02 and R03 permissions, `VIEW_WORK` (the board and every task read), `EDIT_SETTINGS` (`PATCH /projects/{id}`), `EDIT_TASKS` (task create, edit, delete, board moves) and `MANAGE_BACKLOG` (backlog reordering), see [tasks-docs.md](./tasks-docs.md). The others are defined ahead of their features; each feature checks its permission when it is built.
+- **Enforced today:** the R02 and R03 permissions, `VIEW_WORK` (tasks/history and normal board reads), `EDIT_SETTINGS` (`PATCH /projects/{id}`), `CONFIGURE_BOARD` (PMP-125 board mutations and admin configuration read), `EDIT_TASKS` (task create, edit, delete, board moves) and `MANAGE_BACKLOG` (backlog reordering). See [board-docs.md](./board-docs.md) and [tasks-docs.md](./tasks-docs.md). The others are defined ahead of their features; each feature checks its permission when it is built.
 - The matrix is fixed in code (`ProjectRole`), not configurable per workspace.
 
 ### Examples
@@ -74,7 +74,7 @@ The creator of a workspace is its first admin; people who accept an invitation j
 | Product Owner | create and edit tasks | start a sprint |
 | Developer only | create and edit tasks | start or close a sprint |
 | Viewer only | see the project and its work | create, edit or delete a task, comment |
-| Workspace admin, not in the project | add people, change roles, edit settings | see the project's tasks |
+| Workspace admin, not in the project | add people, change roles, edit settings, configure/read board columns | see the project's tasks or task status history |
 
 ---
 
@@ -245,7 +245,7 @@ As of 24 Oct 2026, on branch `features/roles`:
 
 | Part | Status |
 | --- | --- |
-| `ProjectPermission`, `ProjectRole` (matrix), `ProjectTemplate` | Implemented |
+| `ProjectPermission`, `ProjectRole` (matrix), `ProjectTemplate` | Implemented; PMP-125 grants `CONFIGURE_BOARD` to workspace Admin and retains it for PM |
 | `Project.template`, required on create | Implemented |
 | `ProjectMember.roles`, `project_member_roles` table | Implemented |
 | `ProjectAccess` and `ProjectAccessResult` | Implemented |
@@ -270,6 +270,7 @@ As of 24 Oct 2026, on branch `features/roles`:
 | 24 Oct 2026 | Member and Developer are one value, `MEMBER`; the frontend shows "Developer" in Scrum. |
 | 24 Oct 2026 | A member's project roles are replaced as a whole set. |
 | 24 Oct 2026 | Project creators become Project Manager; people added to a project get Member. |
+| 1 Nov 2026 | `CONFIGURE_BOARD` is for Project Managers and workspace Admins; board reads for admins expose configuration/counts, not task details. Member and Viewer cannot mutate board columns. |
 | 24 Oct 2026 | Project Managers manage their project's members and roles, as do workspace admins. Workspace admins do not see project work unless they are members. |
 | 24 Oct 2026 | Members may leave a workspace. The last admin cannot leave, and the only Project Manager of a project cannot leave until replaced. Other sole role holders may. |
 | 24 Oct 2026 | Leaving or being removed takes the person out of the workspace's teams and projects. |
