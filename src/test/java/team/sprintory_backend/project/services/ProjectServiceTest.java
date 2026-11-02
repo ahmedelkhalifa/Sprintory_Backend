@@ -9,6 +9,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
@@ -71,6 +75,7 @@ class ProjectServiceTest {
     private ProjectService service;
     private ProjectBoardService boardService;
     private TaskRepository taskRepository;
+    private AuditLogService auditLog;
 
     private Workspace workspace;
     private Project project;
@@ -87,10 +92,11 @@ class ProjectServiceTest {
         WorkspaceAccess workspaceAccess = new WorkspaceAccess(workspaceMemberRepository);
         boardService = mock(ProjectBoardService.class);
         taskRepository = mock(TaskRepository.class);
+        auditLog = mock(AuditLogService.class);
         service = new ProjectService(projectRepository, projectMemberRepository, workspaceMemberRepository,
                 teamRepository, teamMemberRepository, workspaceAccess,
                 new ProjectAccess(projectRepository, projectMemberRepository, workspaceAccess), boardService,
-                taskRepository);
+                taskRepository, auditLog);
 
         workspace = Workspace.builder().id(WORKSPACE_ID).name("Acme").slug("acme").build();
         project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App").key("MOB")
@@ -709,6 +715,196 @@ class ProjectServiceTest {
         var order = inOrder(projectRepository, projectMemberRepository);
         order.verify(projectRepository).lockById(PROJECT_ID);
         order.verify(projectMemberRepository).save(any(ProjectMember.class));
+    }
+
+    // --- audit log ---
+
+    @Test
+    void createWritesTheNameKeyAndTemplateToTheAuditLog() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        when(projectRepository.save(any(Project.class))).thenAnswer(call -> {
+            Project saved = call.getArgument(0);
+            saved.setId(PROJECT_ID);
+            return saved;
+        });
+
+        service.create(member, WORKSPACE_ID, new CreateProjectRequest(" Mobile App ", "mob", ProjectTemplate.KANBAN, null));
+
+        ArgumentCaptor<Project> saved = ArgumentCaptor.forClass(Project.class);
+        verify(projectRepository).save(saved.capture());
+        verify(auditLog).record(same(workspace), same(member), eq(AuditAction.PROJECT_CREATED),
+                eq(AuditTarget.project(saved.getValue())), same(saved.getValue()),
+                eq(AuditChange.of("name", null, "Mobile App")),
+                eq(AuditChange.of("key", null, "MOB")),
+                eq(AuditChange.of("template", null, "KANBAN")));
+    }
+
+    @Test
+    void createRefusedForADuplicateKeyWritesNoAuditEntry() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        when(projectRepository.existsByWorkspaceIdAndKey(WORKSPACE_ID, "MOB")).thenReturn(true);
+
+        assertThrows(ProjectKeyTakenException.class, () -> service.create(member, WORKSPACE_ID,
+                new CreateProjectRequest("Mobile App", "MOB", ProjectTemplate.SCRUM, null)));
+        verifyNoInteractions(auditLog);
+    }
+
+    @Test
+    void updateLogsOnlyTheFieldsThatActuallyChanged() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        project.setDescription("Ship it");
+
+        service.update(member, PROJECT_ID, new UpdateProjectRequest(" Mobile App v2 ", " Ship it "));
+
+        verify(auditLog).record(same(workspace), same(member), eq(AuditAction.PROJECT_SETTINGS_CHANGED),
+                eq(AuditTarget.project(project)), same(project),
+                eq(AuditChange.of("name", "Mobile App", "Mobile App v2")));
+    }
+
+    @Test
+    void updateLogsAClearedDescriptionAsNull() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        project.setDescription("Old");
+
+        service.update(member, PROJECT_ID, new UpdateProjectRequest(null, "  "));
+
+        verify(auditLog).record(same(workspace), same(member), eq(AuditAction.PROJECT_SETTINGS_CHANGED),
+                eq(AuditTarget.project(project)), same(project), eq(AuditChange.of("description", "Old", null)));
+    }
+
+    @Test
+    void updateThatChangesNothingWritesNoAuditEntry() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+
+        service.update(member, PROJECT_ID, new UpdateProjectRequest(null, null));
+        service.update(member, PROJECT_ID, new UpdateProjectRequest(" Mobile App ", null));
+
+        verifyNoInteractions(auditLog);
+    }
+
+    @Test
+    void updateRefusedWritesNoAuditEntry() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.MEMBER);
+
+        assertThrows(AccessDeniedException.class,
+                () -> service.update(member, PROJECT_ID, new UpdateProjectRequest("Renamed", null)));
+        verifyNoInteractions(auditLog);
+    }
+
+    @Test
+    void addMembersLogsOnlyThePeopleActuallyAdded() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        User linus = user(12L, "linus@example.com");
+        when(workspaceMemberRepository.findAllByWorkspaceIdAndUserIdIn(WORKSPACE_ID, Set.of(8L, 12L)))
+                .thenReturn(List.of(membership(member, Role.WORKSPACE_MEMBER), membership(linus, Role.WORKSPACE_MEMBER)));
+        givenInProject(member);
+
+        service.addMembers(admin, PROJECT_ID, new AddProjectMembersRequest(List.of(8L, 12L)));
+
+        verify(auditLog).record(same(workspace), same(admin), eq(AuditAction.PROJECT_MEMBER_ADDED),
+                eq(AuditTarget.user(linus)), same(project), eq(AuditChange.of("roles", null, "MEMBER")));
+        verifyNoMoreInteractions(auditLog);
+    }
+
+    @Test
+    void addMembersRefusedWritesNoAuditEntry() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        when(workspaceMemberRepository.findAllByWorkspaceIdAndUserIdIn(eq(WORKSPACE_ID), any()))
+                .thenReturn(List.of(membership(member, Role.WORKSPACE_MEMBER)));
+
+        assertThrows(BadRequestException.class,
+                () -> service.addMembers(admin, PROJECT_ID, new AddProjectMembersRequest(List.of(8L, 99L))));
+        verifyNoInteractions(auditLog);
+    }
+
+    @Test
+    void addTeamLogsEachAddedPersonWithTheTeamName() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenTeam(workspace);
+        User linus = user(12L, "linus@example.com");
+        when(teamMemberRepository.findUsersByTeamId(TEAM_ID)).thenReturn(List.of(member, linus));
+        givenInProject(member);
+
+        service.addTeam(admin, PROJECT_ID, new AddTeamToProjectRequest(TEAM_ID));
+
+        verify(auditLog).record(same(workspace), same(admin), eq(AuditAction.PROJECT_MEMBER_ADDED),
+                eq(AuditTarget.user(linus)), same(project), eq(AuditChange.of("roles", null, "MEMBER")),
+                eq(AuditChange.of("viaTeam", null, "Backend")));
+        verifyNoMoreInteractions(auditLog);
+    }
+
+    @Test
+    void removeMemberLogsTheRolesThePersonHad() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.MEMBER, ProjectRole.PROJECT_MANAGER);
+        givenManagerCount(2);
+        when(projectMemberRepository.deleteByProjectIdAndUserId(PROJECT_ID, member.getId())).thenReturn(1);
+
+        service.removeMember(admin, PROJECT_ID, member.getId());
+
+        verify(auditLog).record(same(workspace), same(admin), eq(AuditAction.PROJECT_MEMBER_REMOVED),
+                eq(AuditTarget.user(member)), same(project),
+                eq(AuditChange.of("roles", "PROJECT_MANAGER, MEMBER", null)));
+    }
+
+    @Test
+    void removingSomeoneWhoIsNotInTheProjectWritesNoAuditEntry() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        when(projectMemberRepository.deleteByProjectIdAndUserId(PROJECT_ID, 12L)).thenReturn(0);
+
+        service.removeMember(admin, PROJECT_ID, 12L);
+
+        verifyNoInteractions(auditLog);
+    }
+
+    @Test
+    void removingTheLastProjectManagerWritesNoAuditEntry() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        givenManagerCount(1);
+
+        assertThrows(LastProjectManagerException.class, () -> service.removeMember(admin, PROJECT_ID, member.getId()));
+        verifyNoInteractions(auditLog);
+    }
+
+    @Test
+    void setRolesLogsTheOldAndNewRolesInAFixedOrder() {
+        givenWorkspaceRole(member, Role.WORKSPACE_MEMBER);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER);
+        User linus = user(12L, "linus@example.com");
+        givenInProject(linus, ProjectRole.MEMBER);
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenAnswer(call -> call.getArgument(0));
+
+        service.setRoles(member, PROJECT_ID, 12L, Set.of(ProjectRole.SCRUM_MASTER, ProjectRole.PRODUCT_OWNER));
+
+        verify(auditLog).record(same(workspace), same(member), eq(AuditAction.PROJECT_ROLES_CHANGED),
+                eq(AuditTarget.user(linus)), same(project),
+                eq(AuditChange.of("roles", "MEMBER", "PRODUCT_OWNER, SCRUM_MASTER")));
+    }
+
+    @Test
+    void setRolesToTheSameSetWritesNoAuditEntry() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.PROJECT_MANAGER, ProjectRole.PRODUCT_OWNER);
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenAnswer(call -> call.getArgument(0));
+
+        service.setRoles(admin, PROJECT_ID, member.getId(), Set.of(ProjectRole.PRODUCT_OWNER, ProjectRole.PROJECT_MANAGER));
+
+        verifyNoInteractions(auditLog);
+    }
+
+    @Test
+    void setRolesRefusedWritesNoAuditEntry() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        givenInProject(member, ProjectRole.MEMBER);
+
+        assertThrows(InvalidProjectRolesException.class, () -> service.setRoles(admin, PROJECT_ID, member.getId(),
+                Set.of(ProjectRole.VIEWER, ProjectRole.MEMBER)));
+        verifyNoInteractions(auditLog);
     }
 
     // --- fixtures ---

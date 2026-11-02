@@ -4,22 +4,32 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.audit.dto.AuditActorResponse;
+import team.sprintory_backend.audit.dto.AuditLogEntryResponse;
+import team.sprintory_backend.audit.dto.AuditLogFilters;
 import team.sprintory_backend.audit.models.AuditAction;
 import team.sprintory_backend.audit.models.AuditChange;
 import team.sprintory_backend.audit.models.AuditLogEntry;
 import team.sprintory_backend.audit.models.AuditTarget;
 import team.sprintory_backend.audit.repositories.AuditLogRepository;
+import team.sprintory_backend.audit.repositories.AuditLogSpecifications;
+import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.workspace.models.Workspace;
 import team.sprintory_backend.workspace.models.WorkspaceMember;
 import team.sprintory_backend.workspace.repositories.WorkspaceMemberRepository;
+import team.sprintory_backend.workspace.services.WorkspaceAccess;
 
 /**
- * Writes the workspace audit log (R05, docs/audit-log-docs.md §10).
+ * The workspace audit log (R05): reads it for workspace admins, and writes it for every other
+ * service (docs/audit-log-docs.md §10).
  *
  * <p>Call it from the service method that performs the action, after the change succeeded.
  * Both methods are {@code MANDATORY}: they join the action's transaction, so a rollback removes
@@ -30,8 +40,33 @@ import team.sprintory_backend.workspace.repositories.WorkspaceMemberRepository;
 @RequiredArgsConstructor
 public class AuditLogService {
 
+    /** Newest first; the id breaks ties so pages never overlap. Clients cannot change it. */
+    private static final Sort NEWEST_FIRST = Sort.by(Sort.Order.desc("occurredAt"), Sort.Order.desc("id"));
+
     private final AuditLogRepository auditLogRepository;
     private final WorkspaceMemberRepository workspaceMemberRepository;
+    private final WorkspaceAccess workspaceAccess;
+
+    /**
+     * One page of the workspace's log, newest first. Workspace admins only: a member gets 403,
+     * anyone else 404. Archived workspaces stay readable.
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<AuditLogEntryResponse> list(User user, Long workspaceId, AuditLogFilters filters,
+                                                    Pageable pageable) {
+        workspaceAccess.requireAdmin(workspaceId, user);
+        Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), NEWEST_FIRST);
+        return PageResponse.from(auditLogRepository
+                .findAll(AuditLogSpecifications.matching(workspaceId, filters), sorted)
+                .map(AuditLogEntryResponse::from));
+    }
+
+    /** Everyone who appears as an actor in the log, people who left included. Admins only. */
+    @Transactional(readOnly = true)
+    public List<AuditActorResponse> actors(User user, Long workspaceId) {
+        workspaceAccess.requireAdmin(workspaceId, user);
+        return auditLogRepository.findActors(workspaceId);
+    }
 
     /**
      * Writes one entry. {@code actor} is null when the system acted; {@code project} is null for

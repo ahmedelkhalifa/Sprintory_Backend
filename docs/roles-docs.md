@@ -2,7 +2,8 @@
 
 **Status:** role permissions and service rules implemented; the three role-management HTTP endpoints, request DTOs and caller-specific response fields are implemented. See [§3 Endpoints](#3-endpoints) and [§10 Implementation status](#10-implementation-status).
 **Applies to:** workspace roles on `workspace_members`, project roles on `project_members`, and every permission check inside a project.
-**Related:** [Workspaces](./workspaces-docs.md), [Projects](./projects-docs.md), [Board configuration](./board-docs.md), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R03, R04, R38.
+**Related:** [Workspaces](./workspaces-docs.md), [Projects](./projects-docs.md), [Board configuration](./board-docs.md), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R03, R04, R38.
+**Audit log:** workspace role changes and project role changes write an entry to the workspace's audit log, with the old and new role(s) ([audit-log-docs.md §4](./audit-log-docs.md#4-action-catalogue)). Reading the log needs the workspace admin role, not a project permission.
 
 This document is the single reference for who may do what in Sprintory. If the code and this file disagree, fix one of them in the same PR.
 

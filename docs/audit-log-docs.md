@@ -1,6 +1,6 @@
 # Sprintory — Audit log API contract (R05, PMP-24)
 
-**Status:** contract agreed, backend not built yet (PMP-128, branch `features/audit-log`). See [§12 Implementation status](#12-implementation-status).
+**Status:** backend implemented and unit-tested (PMP-128, branch `features/audit-log`). Not yet run against PostgreSQL: the integration test and the full `clean verify` are still open. See [§12 Implementation status](#12-implementation-status).
 **Applies to:** backend `/api/v1/workspaces/{workspaceId}/audit-log/**`, and the actions in [§4](#4-action-catalogue) that write entries.
 **Related:** [Workspaces](./workspaces-docs.md), [Teams](./teams-docs.md), [Projects](./projects-docs.md), [Roles and permissions](./roles-docs.md), [Tasks](./tasks-docs.md), [Authentication](./auth-endpoints.md), [API and Git Conventions](./api-conventions.md) (error shape, visibility), [Requirements](./requirements.md) R05.
 
@@ -329,7 +329,7 @@ What the endpoints reveal, and to whom:
 | `audit_log_changes` | `entry_id`, `sort_order`, `field`, `old_value`, `new_value` | Primary key `(entry_id, sort_order)`; `entry_id` → `audit_log_entries` on delete cascade. |
 
 - **Migration:** `V8__audit_log.sql`. Adding an `action` value later needs a new migration that changes the check constraint.
-- **Code:** `audit/{models,repositories,services,controllers,dto}`. The entity is Hibernate `@Immutable`, and the repository has no update path.
+- **Code:** `audit/{models,repositories,services,controllers,dto}`, plus `security/auth/services/LoginFailureTracker`. The entity is Hibernate `@Immutable` with every column `updatable = false`, and no code path updates or deletes an entry. Changes are batch-loaded (`@BatchSize`), so a page costs two queries.
 
 ---
 
@@ -343,9 +343,29 @@ Rules:
 3. Never pass a token, a password or a link into `changes`.
 4. Pick an existing `AuditAction`. A new value needs a migration for the check constraint, a row in [§4](#4-action-catalogue), and a line in [§13](#13-decisions).
 
-**PMP-131 (task restore, Damir):** `TASK_RESTORED` already exists. After restoring, call `record` with the restoring user, `TASK_RESTORED`, the task as target (`"<KEY> <title>"`), and the project, with no changes.
+The signature is `record(workspace, actor, action, target, project, changes...)`:
+- `actor` is the `User` who acted (null only for the system); `project` is null outside projects.
+- Build `target` with the `AuditTarget` factories (`user`, `team`, `project`, `task`, `workspace`, `invitation`) so names look the same everywhere.
+- Each change is `AuditChange.of(field, oldValue, newValue)`, with display strings.
 
-**Security events** use `recordInAllWorkspacesOf(user, ...)`, which writes one entry per workspace the user is a member of.
+```java
+// TaskApiService.delete, after the soft delete:
+auditLog.record(project.getWorkspace(), user, AuditAction.TASK_DELETED, AuditTarget.task(task), project);
+
+// ProjectService.setRoles, after saving:
+auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_ROLES_CHANGED,
+        AuditTarget.user(target.getUser()), project, AuditChange.of("roles", oldRoles, newRoles));
+```
+
+**PMP-131 (task restore, Damir):** `TASK_RESTORED` already exists. In the restore method, after the task is restored and inside its `@Transactional`:
+
+```java
+auditLog.record(project.getWorkspace(), user, AuditAction.TASK_RESTORED, AuditTarget.task(task), project);
+```
+
+Restored subtasks need no entries of their own; the parent's entry covers them.
+
+**Security events** use `recordInAllWorkspacesOf(subject, actor, action, changes...)`, which writes one entry per workspace the subject is a member of. Failed logins go through `LoginFailureTracker` (`security/auth/services`), which writes in its own transaction because the login it counts has none.
 
 ---
 
@@ -366,17 +386,20 @@ As of 2 Nov 2026, on branch `features/audit-log`:
 | Part | Status |
 | --- | --- |
 | This contract | Written, agreed with the backend owner |
-| Migration `V8__audit_log.sql`, entities, repository | Planned |
-| `AuditLogService.record` | Planned |
-| Workspace and invitation entries | Planned |
-| Team entries | Planned |
-| Project entries | Planned |
-| Task delete entry (`TASK_RESTORED` waits for PMP-131) | Planned |
-| `PASSWORD_RESET` and `LOGIN_FAILED_REPEATED` | Planned |
-| `GET /audit-log` and `GET /audit-log/actors` with filters | Planned |
-| Unit tests, including the access-denied test the DoD requires | Planned |
-| PostgreSQL integration test (rollback, filters, snapshots, cascade) | Planned |
+| Migration `V8__audit_log.sql`, entities, repository | Written; compiles. **Not yet applied to PostgreSQL** (needs the integration test or `clean verify` with Docker) |
+| `AuditLogService.record` / `recordInAllWorkspacesOf` | Done; `AuditLogServiceTest` |
+| Workspace and invitation entries | Done; `WorkspaceServiceTest` (42), `InvitationServiceTest` (18) |
+| Team entries | Done; `TeamServiceTest` (27) |
+| Project entries | Done; `ProjectServiceTest` (66) |
+| Task delete entry | Done; `TaskApiServiceTest` (26). `TASK_RESTORED` is written by PMP-131 when it ships |
+| `PASSWORD_RESET` and `LOGIN_FAILED_REPEATED` | Done; `AuthServiceTest` (20), `LoginFailureTrackerTest` (7) |
+| `GET /audit-log` and `GET /audit-log/actors` with filters | Done; `AuditLogServiceTest` (14 in total), `AuditLogFiltersTest` (6), `AuditLogControllerTest` (3) |
+| Access-denied test required by the DoD | Done: `AuditLogServiceTest.aMemberIsDeniedTheLogAndNothingIsQueried` |
+| Mocked test suite | **403 passed, 0 failed** (2 Nov 2026; Testcontainers tests excluded, Docker not running) |
+| PostgreSQL integration test (rollback, filters, snapshots, cascade) | **Not written**: skipped on 2 Nov 2026 by the backend owner's decision. Run `clean verify` with Docker before merging |
 | Frontend page (PMP-129) and acceptance test (PMP-130) | Not started |
+
+Every service test also checks that a refused or no-op action writes no entry (acceptance criterion "an action fails or is refused, then no entry is created").
 
 ---
 

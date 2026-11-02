@@ -2,7 +2,8 @@
 
 **Status:** implemented. See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/workspaces/{workspaceId}/teams` and `/api/v1/teams/**`.
-**Related:** [Workspaces](./workspaces-docs.md) (roles, archiving, pagination), [Projects](./projects-docs.md) (adding a team to a project), [API and Git Conventions](./api-conventions.md) (error shape §4, private resources §5), [Authentication](./auth-endpoints.md), [Requirements](./requirements.md) R02, R04.
+**Related:** [Workspaces](./workspaces-docs.md) (roles, archiving, pagination), [Projects](./projects-docs.md) (adding a team to a project), [API and Git Conventions](./api-conventions.md) (error shape §4, private resources §5), [Authentication](./auth-endpoints.md), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R02, R04.
+**Audit log:** creating, renaming and deleting a team, and adding or removing its members, each write an entry to the workspace's audit log ([audit-log-docs.md §4.2](./audit-log-docs.md#4-action-catalogue)).
 
 This document is the single reference for how teams work end to end. If the code and this file disagree, fix one of them in the same PR.
 

@@ -137,13 +137,17 @@ Random generation and hashing live in one place, `OpaqueTokens`, shared by `Refr
 
 ## Projects and boards (R06)
 
-The contract is `docs/projects-docs.md` (§3.1 create, §3.8 board, §3.9 settings).
+The contract is `docs/projects-docs.md` (§3.1 create, §3.8 board, §3.9 settings); column configuration and WIP limits (R16, PMP-28) are in `docs/board-docs.md`.
 
 - **The board is created with the project**, in `ProjectService.create`'s transaction, by `ProjectBoardService.initialize` (`Propagation.MANDATORY`). Default columns and the backlog/sprints/WIP flags come from one strategy per template in `project/strategy/`; `ProjectBoardStrategies` fails at startup if a template has no strategy or two. The flags are not stored: the template never changes.
 - A new `ProjectTemplate` value needs a strategy class, a migration for `ck_projects_template`, and its roles in `ProjectRole`.
 - **The project key never changes** (`updatable = false`): task keys are built from it. It is stored upper-case (`Locale.ROOT`) and unique per workspace (`uk_projects_workspace_key`); the service checks first for a clean 409 `PROJECT_KEY_TAKEN`, the constraint catches races. The column is `project_key` because `key` is an SQL keyword.
-- The board is project *work*: `GET /board` needs `VIEW_WORK`, so a workspace admin who is not in the project gets 403. Settings need `EDIT_SETTINGS`.
+- `GET /board` needs `VIEW_WORK` **or** `CONFIGURE_BOARD`. A workspace admin who is not in the project (they hold `CONFIGURE_BOARD` through `ProjectPermission.WORKSPACE_ADMIN`) therefore sees the columns and their task counts, but every task endpoint still answers them 403. Adding, renaming, reordering, recategorizing and deleting columns need `CONFIGURE_BOARD` (Project Managers and workspace admins). Settings need `EDIT_SETTINGS`.
+- **Columns have a category** (`TODO` / `IN_PROGRESS` / `DONE`), independent of the name. "Done" means a `DONE`-category column, never a name or the rightmost position. A board always keeps at least one `TODO` and one `DONE` column, and 2–10 columns in total. Kanban's Backlog is fixed at position 0 and stays `TODO`.
+- **Columns are soft-deleted** (`deleted_at`, `@SQLRestriction`). Names and positions are unique only among live columns (partial unique indexes in V7). Deleting a column that holds tasks needs a target column; the tasks move there and each move gets a `task_status_history` row.
+- **WIP limits are soft**, Kanban only, never on Backlog or `DONE` columns: a move past the limit succeeds and returns a warning. Counts must exclude subtasks once they exist (see the comment on `TaskRepository.countByProjectIdAndStatusId`).
 - Board columns keep their ids. Change default columns of existing boards by renaming rows in a migration, not by deleting and recreating them, once tasks point at columns.
+- V7 backfills categories and swaps the position constraint for partial indexes; dev's `ddl-auto=update` does neither, so a dev database created before V7 must be recreated.
 
 ## Tasks (R09) and universal search
 
@@ -155,6 +159,19 @@ Contracts: `docs/tasks-docs.md` and `docs/search-docs.md`. Damir built the contr
 - **Order:** `board_position` and `backlog_rank` are sparse (`TaskRanks.GAP`, 1,000,000 apart); a move takes the midpoint and renumbers the list only when there is no room. Every create and move runs under the project row lock (`incrementTaskNumber` or `ProjectRepository.lockById`). Read a column's max **before** the moving task joins it, or the auto-flush counts the task itself.
 - **Universal search** is one native `UNION ALL` in `search/repositories/UniversalSearchRepository`. Every part must alias all its columns (a UNION takes its names from whichever part comes first). Its visibility rules duplicate `ProjectAccess` and the team rules: change both together.
 - `JpaSpecificationExecutor` adds `delete(Specification)`, so Mockito's `delete(any())` on `TaskRepository` is ambiguous; use `any(Task.class)`.
+
+## Audit log (R05)
+
+**`docs/audit-log-docs.md` is the audit log contract** (endpoints, the action catalogue, frontend flows, decisions). Change the code and that file in the same PR.
+
+- **Entries are written by a direct call, inside the action's own transaction:** `AuditLogService.record(workspace, actor, action, target, project, changes...)`, after the change succeeded. It is `Propagation.MANDATORY`, so a rollback removes the entry and a call outside a transaction fails. Refused actions therefore leave nothing.
+- **Log only real changes.** Return before `record` on a no-op (same name, same roles, someone already a member). Every service test checks both "entry written" and "no entry when refused or unchanged".
+- **Take snapshots before deleting or renaming.** Names are stored on the entry (`AuditTarget.user/team/project/task/...` builds them); `actor_id` and `project_id` have no foreign key on purpose, so entries outlive people and projects. Only `workspace_id` cascades.
+- **Never put a token, password or link into an `AuditChange`.**
+- The log is append-only: `AuditLogEntry` is `@Immutable`, and there is no update or delete endpoint. Reading needs `WorkspaceAccess.requireAdmin` (workspace admins only; archived workspaces stay readable).
+- **A new `AuditAction` needs a migration** changing `ck_audit_log_entries_action`, plus a row in the doc's §4. `TASK_RESTORED` already exists for PMP-131.
+- Security events have no workspace: `recordInAllWorkspacesOf(subject, ...)` writes one entry per workspace of the person. Repeated failed logins are counted in memory by `security/auth/services/LoginFailureTracker`, which writes in its own transaction (`REQUIRES_NEW`) because `login` has none; any failure there is swallowed so the 401 never changes.
+- Cascaded removals are not logged separately (leaving a workspace writes one `MEMBER_LEFT`, not one entry per team and project).
 
 ## Error response contract
 
@@ -168,7 +185,7 @@ Services should let their exceptions propagate; the advice maps them.
 
 ## Conventions in this codebase
 
-- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `team/{models,repositories,services,controllers,dto}`, `project/{models,repositories,services,controllers,dto,exceptions,strategy}`, `task/{models,repositories,services,controllers,dto,api}`, `search/{controllers,dto,services,repositories}`, `common/` for cross-feature helpers (`PageResponse`, `Pageables`), `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
+- Packages are grouped by feature, then by kind: `user/{models,repositories}`, `workspace/{models,repositories,services,controllers,dto,exceptions}`, `team/{models,repositories,services,controllers,dto}`, `project/{models,repositories,services,controllers,dto,exceptions,strategy}`, `task/{models,repositories,services,controllers,dto,api}`, `search/{controllers,dto,services,repositories}`, `audit/{models,repositories,services,controllers,dto}` (plus `BaseEntity`/`AuditorProvider` at its root), `common/` for cross-feature helpers (`PageResponse`, `Pageables`), `security/auth/{models,repositories,services}`, `security/{config,handlers,jwt,oauth2,userdetails,exceptions}`. Put a new class in the matching subfolder rather than at the package root.
 - **Edit the existing class rather than adding a parallel one.** Do not create `GlobalExceptionHandler` next to `ExceptionHandler`, or a `*V2`.
 - Entities extend `audit/BaseEntity` for the four audit columns. `AuditorProvider` stamps `system` for anonymous and unauthenticated writes.
 - `@Value` on a **`final`** field combined with `@RequiredArgsConstructor` silently produces a constructor with no parameter annotation and fails at startup. Use a non-final field or write the constructor explicitly.

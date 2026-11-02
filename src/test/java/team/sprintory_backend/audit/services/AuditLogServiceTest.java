@@ -5,8 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyIterable;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -16,9 +18,24 @@ import java.lang.reflect.Method;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.security.access.AccessDeniedException;
+import team.sprintory_backend.audit.dto.AuditActorResponse;
+import team.sprintory_backend.audit.dto.AuditLogEntryResponse;
+import team.sprintory_backend.audit.dto.AuditLogFilters;
+import team.sprintory_backend.common.dto.PageResponse;
+import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.user.models.Role;
+import team.sprintory_backend.workspace.services.WorkspaceAccess;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import team.sprintory_backend.audit.models.AuditAction;
@@ -51,7 +68,9 @@ class AuditLogServiceTest {
     void setUp() {
         auditLogRepository = mock(AuditLogRepository.class);
         workspaceMemberRepository = mock(WorkspaceMemberRepository.class);
-        service = new AuditLogService(auditLogRepository, workspaceMemberRepository);
+        service = new AuditLogService(auditLogRepository, workspaceMemberRepository,
+                new WorkspaceAccess(workspaceMemberRepository));
+        when(workspaceMemberRepository.findByWorkspaceIdAndUserId(anyLong(), anyLong())).thenReturn(Optional.empty());
 
         workspace = Workspace.builder().id(4L).name("Acme").slug("acme").build();
         ada = User.builder().id(17L).firstName("Ada").lastName("Lovelace").email("ada@example.com").build();
@@ -183,6 +202,100 @@ class AuditLogServiceTest {
         assertEquals(AuditArea.TASK, AuditAction.TASK_RESTORED.area());
         assertEquals(AuditArea.SECURITY, AuditAction.LOGIN_FAILED_REPEATED.area());
         assertEquals(20, AuditAction.values().length, "a new action needs a migration and a row in the docs");
+    }
+
+    // --- reading the log ---
+
+    @Test
+    void aMemberIsDeniedTheLogAndNothingIsQueried() {
+        givenWorkspaceRole(linus, Role.WORKSPACE_MEMBER);
+
+        assertThrows(AccessDeniedException.class,
+                () -> service.list(linus, 4L, AuditLogFilters.none(), PageRequest.of(0, 20)));
+        assertThrows(AccessDeniedException.class, () -> service.actors(linus, 4L));
+        verify(auditLogRepository, never()).findAll(anySpecification(), any(Pageable.class));
+        verify(auditLogRepository, never()).findActors(anyLong());
+    }
+
+    @Test
+    void someoneOutsideTheWorkspaceGetsNotFound() {
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.list(linus, 4L, AuditLogFilters.none(), PageRequest.of(0, 20)));
+        assertThrows(ResourceNotFoundException.class, () -> service.actors(linus, 4L));
+    }
+
+    @Test
+    void anAdminReadsTheLogNewestFirstWhateverSortTheClientAsked() {
+        givenWorkspaceRole(ada, Role.WORKSPACE_ADMIN);
+        AuditLogEntry entry = AuditLogEntry.builder().id(412L).workspace(workspace)
+                .occurredAt(Instant.parse("2026-11-02T14:05:31Z")).action(AuditAction.PROJECT_ROLES_CHANGED)
+                .actorId(17L).actorName("Ada Lovelace").actorEmail("ada@example.com")
+                .targetType(AuditTargetType.USER).targetId(23L).targetName("Linus Torvalds")
+                .projectId(15L).projectName("Mobile App")
+                .changes(List.of(AuditChange.of("roles", "MEMBER", "PROJECT_MANAGER, MEMBER"))).build();
+        when(auditLogRepository.findAll(anySpecification(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(entry), PageRequest.of(2, 5), 11));
+
+        PageResponse<AuditLogEntryResponse> page = service.list(ada, 4L, AuditLogFilters.none(),
+                PageRequest.of(2, 5, Sort.by("actorName")));
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(auditLogRepository).findAll(anySpecification(), pageable.capture());
+        assertEquals(2, pageable.getValue().getPageNumber());
+        assertEquals(5, pageable.getValue().getPageSize());
+        assertEquals(Sort.by(Sort.Order.desc("occurredAt"), Sort.Order.desc("id")), pageable.getValue().getSort());
+        assertEquals(11, page.totalElements());
+        assertEquals(new AuditLogEntryResponse(412L, Instant.parse("2026-11-02T14:05:31Z"),
+                AuditAction.PROJECT_ROLES_CHANGED, AuditArea.PROJECT,
+                new AuditLogEntryResponse.Actor(17L, "Ada Lovelace", "ada@example.com"),
+                new AuditLogEntryResponse.Target(AuditTargetType.USER, 23L, "Linus Torvalds"),
+                new AuditLogEntryResponse.ProjectRef(15L, "Mobile App"),
+                List.of(new AuditLogEntryResponse.Change("roles", "MEMBER", "PROJECT_MANAGER, MEMBER"))),
+                page.content().get(0));
+    }
+
+    @Test
+    void aSystemEntryHasNoActorAndAWorkspaceEntryNoProject() {
+        AuditLogEntry entry = AuditLogEntry.builder().id(9L).workspace(workspace).occurredAt(Instant.now())
+                .action(AuditAction.LOGIN_FAILED_REPEATED).targetType(AuditTargetType.USER).targetId(23L)
+                .targetName("Linus Torvalds").build();
+
+        AuditLogEntryResponse response = AuditLogEntryResponse.from(entry);
+
+        assertNull(response.actor());
+        assertNull(response.project());
+        assertEquals(AuditArea.SECURITY, response.area());
+        assertEquals(List.of(), response.changes());
+    }
+
+    @Test
+    void anAdminOfAnArchivedWorkspaceCanStillReadTheLog() {
+        workspace.setArchivedAt(Instant.parse("2026-10-20T10:00:00Z"));
+        givenWorkspaceRole(ada, Role.WORKSPACE_ADMIN);
+        when(auditLogRepository.findAll(anySpecification(), any(Pageable.class))).thenReturn(Page.empty());
+        when(auditLogRepository.findActors(4L)).thenReturn(List.of());
+
+        assertEquals(0, service.list(ada, 4L, AuditLogFilters.none(), PageRequest.of(0, 20)).totalElements());
+        assertEquals(List.of(), service.actors(ada, 4L));
+    }
+
+    @Test
+    void actorsComeStraightFromTheRepositoryForAnAdmin() {
+        givenWorkspaceRole(ada, Role.WORKSPACE_ADMIN);
+        List<AuditActorResponse> actors = List.of(new AuditActorResponse(17L, "Ada Lovelace", "ada@example.com"));
+        when(auditLogRepository.findActors(4L)).thenReturn(actors);
+
+        assertEquals(actors, service.actors(ada, 4L));
+    }
+
+    private void givenWorkspaceRole(User user, Role role) {
+        when(workspaceMemberRepository.findByWorkspaceIdAndUserId(4L, user.getId()))
+                .thenReturn(Optional.of(WorkspaceMember.builder().workspace(workspace).user(user).role(role).build()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Specification<AuditLogEntry> anySpecification() {
+        return any(Specification.class);
     }
 
     private AuditLogEntry savedEntry() {

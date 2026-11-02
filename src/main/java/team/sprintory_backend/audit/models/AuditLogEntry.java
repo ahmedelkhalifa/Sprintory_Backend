@@ -22,6 +22,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
@@ -86,8 +87,10 @@ public class AuditLogEntry {
     @Column(name = "project_name", updatable = false, length = 100)
     private String projectName;
 
+    /** Batch-loaded: a page of entries reads all their changes in one extra query. */
     @Builder.Default
     @ElementCollection
+    @BatchSize(size = 100)
     @CollectionTable(name = "audit_log_changes", joinColumns = @JoinColumn(name = "entry_id"))
     @OrderColumn(name = "sort_order")
     @OnDelete(action = OnDeleteAction.CASCADE)

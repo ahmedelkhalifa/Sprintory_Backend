@@ -2,7 +2,8 @@
 
 **Status:** workspaces and invitations implemented. See [§10 Implementation status](#10-implementation-status).
 **Applies to:** backend `/api/v1/workspaces/**` and `/api/v1/invitations/**`, plus the rules every feature inside a workspace builds on (roles, archiving, pagination).
-**Related:** [Roles and permissions](./roles-docs.md), [Teams](./teams-docs.md), [Projects](./projects-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private resources §5), [Authentication](./auth-endpoints.md), [Email service](./email-service.md), [Requirements](./requirements.md) R02, R04.
+**Related:** [Roles and permissions](./roles-docs.md), [Teams](./teams-docs.md), [Projects](./projects-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private resources §5), [Authentication](./auth-endpoints.md), [Email service](./email-service.md), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R02, R04.
+**Audit log:** renaming the workspace, inviting, joining, removing or leaving, and changing a workspace role each write an entry to the workspace's audit log ([audit-log-docs.md §4.1](./audit-log-docs.md#4-action-catalogue)); the log itself is read through `GET /workspaces/{workspaceId}/audit-log`.
 
 This document is the single reference for how workspaces work end to end. If the code and this file disagree, fix one of them in the same PR.
 

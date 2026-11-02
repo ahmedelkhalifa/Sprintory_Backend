@@ -3,11 +3,16 @@ package team.sprintory_backend.security.auth.services;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.notification.email.EmailDeliveryException;
 import team.sprintory_backend.notification.email.EmailService;
 import team.sprintory_backend.security.auth.dto.AuthUserResponse;
@@ -46,6 +51,8 @@ class AuthServiceTest {
     private RefreshTokenService refreshTokenService;
     private OneTimeTokenService oneTimeTokenService;
     private EmailService emailService;
+    private AuditLogService auditLog;
+    private LoginFailureTracker loginFailureTracker;
     private AuthService service;
 
     @BeforeEach
@@ -57,8 +64,10 @@ class AuthServiceTest {
         refreshTokenService = mock(RefreshTokenService.class);
         oneTimeTokenService = mock(OneTimeTokenService.class);
         emailService = mock(EmailService.class);
+        auditLog = mock(AuditLogService.class);
+        loginFailureTracker = mock(LoginFailureTracker.class);
         service = new AuthService(userRepository, authenticationManager, passwordEncoder, jwtService,
-                refreshTokenService, oneTimeTokenService, emailService);
+                refreshTokenService, oneTimeTokenService, emailService, auditLog, loginFailureTracker);
         ReflectionTestUtils.setField(service, "frontendUrl", "http://front");
         ReflectionTestUtils.setField(service, "verifyEmailPath", "/verify-email");
         ReflectionTestUtils.setField(service, "resetPasswordPath", "/reset-password");
@@ -94,6 +103,42 @@ class AuthServiceTest {
         assertEquals("refresh", session.refreshToken());
         assertFalse(session.rememberMe());
         assertEquals(7L, session.user().id());
+        verify(loginFailureTracker).reset("ada@example.com");
+        verify(loginFailureTracker, never()).recordFailure(anyString());
+    }
+
+    @Test
+    void loginWithAWrongPasswordCountsTheFailureAndRethrowsTheSameException() {
+        BadCredentialsException wrong = new BadCredentialsException("Bad credentials");
+        when(authenticationManager.authenticate(any())).thenThrow(wrong);
+
+        BadCredentialsException thrown = assertThrows(BadCredentialsException.class,
+                () -> service.login(new LoginRequest(" Ada@Example.com ", "nope", false)));
+
+        assertSame(wrong, thrown, "the 401 must not change");
+        verify(loginFailureTracker).recordFailure("ada@example.com");
+        verify(loginFailureTracker, never()).reset(anyString());
+    }
+
+    @Test
+    void aFailingTrackerNeverChangesTheLoginAnswer() {
+        BadCredentialsException wrong = new BadCredentialsException("Bad credentials");
+        when(authenticationManager.authenticate(any())).thenThrow(wrong);
+        doThrow(new DataAccessResourceFailureException("db down")).when(loginFailureTracker).recordFailure(anyString());
+
+        BadCredentialsException thrown = assertThrows(BadCredentialsException.class,
+                () -> service.login(new LoginRequest("ada@example.com", "nope", false)));
+
+        assertSame(wrong, thrown);
+    }
+
+    @Test
+    void anUnverifiedAccountWithTheRightPasswordIsNotCountedAsAFailure() {
+        when(authenticationManager.authenticate(any())).thenThrow(new DisabledException("disabled"));
+
+        assertThrows(DisabledException.class,
+                () -> service.login(new LoginRequest("ada@example.com", "password123", false)));
+        verifyNoInteractions(loginFailureTracker);
     }
 
     // --- register ---
@@ -251,6 +296,25 @@ class AuthServiceTest {
         assertEquals("hashed:newpassword1", user.getPassword());
         verify(userRepository).save(user);
         verify(refreshTokenService).revokeAll(user);
+    }
+
+    @Test
+    void resetPasswordWritesAnAuditEntryWithoutAnyChanges() {
+        User user = localUser(true);
+        when(oneTimeTokenService.consume("reset", RESET_PASSWORD)).thenReturn(user);
+
+        service.resetPassword("reset", "newpassword1");
+
+        // No change values at all: the token and the password cannot reach the log.
+        verify(auditLog).recordInAllWorkspacesOf(user, user, AuditAction.PASSWORD_RESET);
+    }
+
+    @Test
+    void resetPasswordWithAnInvalidLinkWritesNoAuditEntry() {
+        when(oneTimeTokenService.consume("bad", RESET_PASSWORD)).thenThrow(new InvalidTokenException("invalid"));
+
+        assertThrows(InvalidTokenException.class, () -> service.resetPassword("bad", "newpassword1"));
+        verifyNoInteractions(auditLog);
     }
 
     // --- fixtures ---

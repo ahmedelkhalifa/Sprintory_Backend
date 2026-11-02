@@ -2,7 +2,8 @@
 
 **Status:** tasks with keys, story 9 fields, soft delete, filters/search and board/backlog ordering. PMP-125 adds status-change history and soft Kanban WIP warnings to task moves. See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/projects/{projectId}/tasks/**`.
-**Related:** [Projects](./projects-docs.md) (keys, board, columns), [Board configuration](./board-docs.md), [Roles and permissions](./roles-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R09, R13, R16.
+**Related:** [Projects](./projects-docs.md) (keys, board, columns), [Board configuration](./board-docs.md), [Roles and permissions](./roles-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R09, R13, R16.
+**Audit log:** deleting a task (and, from PMP-131, restoring one) writes an entry to the workspace's audit log ([audit-log-docs.md §4.4](./audit-log-docs.md#4-action-catalogue)). Other task edits are not audit-logged; they belong to the task's own history.
 
 This document is the single reference for tasks end to end. If the code and this file disagree, fix one of them in the same PR.
 
