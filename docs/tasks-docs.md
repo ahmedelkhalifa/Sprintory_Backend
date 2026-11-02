@@ -1,8 +1,8 @@
 # Sprintory — Tasks API contract (R09)
 
-**Status:** tasks with keys, all story 9 fields, soft delete, filters and search, and the task order on the board and in the backlog. See [§9 Implementation status](#9-implementation-status).
+**Status:** tasks with keys, story 9 fields, soft delete, filters/search and board/backlog ordering. PMP-125 adds status-change history and soft Kanban WIP warnings to task moves. See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/projects/{projectId}/tasks/**`.
-**Related:** [Projects](./projects-docs.md) (keys, board, columns), [Roles and permissions](./roles-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R09, R13, R16.
+**Related:** [Projects](./projects-docs.md) (keys, board, columns), [Board configuration](./board-docs.md), [Roles and permissions](./roles-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R09, R13, R16.
 
 This document is the single reference for tasks end to end. If the code and this file disagree, fix one of them in the same PR.
 
@@ -37,7 +37,7 @@ This document is the single reference for tasks end to end. If the code and this
 
 | Action | Not in the workspace, or not in the project | Workspace admin, not in the project | Viewer | Member/Developer, Scrum Master | Product Owner | Project Manager |
 | --- | --- | --- | --- | --- | --- | --- |
-| Read, list, search tasks | 404 | 403 | allowed | allowed | allowed | allowed |
+| Read, list, search tasks and status history | 404 | 403 | allowed | allowed | allowed | allowed |
 | Create, edit, delete, move on the board | 404 | 403 | 403 | allowed | allowed | allowed |
 | Reorder the backlog (Scrum) | 404 | 403 | 403 | 403 | allowed | 403 |
 
@@ -58,6 +58,7 @@ All paths are under `/api/v1/projects/{projectId}/tasks`. Bodies are JSON in `ca
 | 3.5 | DELETE | `/{taskId}` | none | `204` | `EDIT_TASKS` |
 | 3.6 | PUT | `/{taskId}/position` | `MoveTaskRequest` | `200` + `TaskResponse` | `EDIT_TASKS` |
 | 3.7 | PUT | `/{taskId}/backlog-rank` | `ReorderBacklogRequest` | `200` + `TaskResponse` | `MANAGE_BACKLOG` |
+| 3.8 | GET | `/{taskId}/history` | none | `200` + `TaskStatusHistoryResponse[]` | `VIEW_WORK` |
 
 A `{taskId}` is always looked up **inside** `{projectId}`: a task of another project gives the same `404` as a missing one.
 
@@ -82,13 +83,15 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
   "type": "BUG", "priority": "HIGH", "statusId": 12, "statusName": "To Do",
   "assigneeId": 7, "estimate": 3, "labels": ["R09", "backend"],
   "description": "Steps to reproduce: ...", "sprintId": null,
-  "createdAt": "2026-10-26T09:30:00Z", "updatedAt": "2026-10-26T09:30:00Z" }
+  "createdAt": "2026-10-26T09:30:00Z", "updatedAt": "2026-10-26T09:30:00Z",
+  "wipWarning": null }
 ```
 
 - `labels` come back sorted. Labels are trimmed, and duplicates that differ only in case collapse into the first spelling (`["backend", "Backend"]` stores `backend`).
 - `assigneeId` is a user id; show the name from `GET /projects/{projectId}/members`.
 - `sprintId` stays `null` until sprints exist (R14).
 - The board positions and backlog ranks are internal and never sent; lists come back already sorted (§3.2).
+- `wipWarning` is `null` normally. On a move into a Kanban column above its WIP limit, the *move succeeds* and `wipWarning` contains `{ "columnId", "count", "limit", "message" }`. See [board-docs §3.6](./board-docs.md#36-soft-wip-warning-on-task-move).
 
 ---
 
@@ -160,7 +163,7 @@ A `statusId` or `assigneeId` that does not belong to the project simply finds no
   - A field that is left out or `null` **stays as it is**. `{}` changes nothing.
   - To empty a field, send its flag: `clearAssignee`, `clearEstimate`, `clearDescription` (`true`). The flags are optional; left out or `null` means `false`. Sending a value **and** its clear flag is a `400`.
   - `labels` replaces all labels; `"labels": []` removes them all.
-  - `statusId` must be a column of this project's board. Changing it puts the task **last** in the new column. To drop it at a particular place, use 3.6 instead.
+  - `statusId` must be an active column of this project's board. Changing it puts the task **last** in the new column. To drop it at a particular place, use 3.6 instead. A changed status records one history event (§3.8) and can return a nonblocking Kanban `wipWarning`.
   - `assigneeId` must be a project member.
   - The key, the project and the sprint cannot be changed here.
 - **Response `200`:** the updated `TaskResponse`.
@@ -192,7 +195,7 @@ One drag and drop: puts the task in column `statusId`, right **after** `afterTas
 
 - **Who:** members with `EDIT_TASKS`. The workspace must be active.
 - **Request:** `{ "statusId": 13, "afterTaskId": 41 }`.
-- **Response `200`:** the moved `TaskResponse`. Reload the board with `?order=board` to show everyone's current order.
+- **Response `200`:** the moved `TaskResponse`. Reload the board with `?order=board` to show everyone's current order. Moving across columns records one history event; moving within a column does not. Kanban WIP limits never block a valid move: over-limit destinations return `wipWarning`, and `GET /board` exposes the persistent `wipExceeded` flag. See [board-docs §3.6](./board-docs.md#36-soft-wip-warning-on-task-move).
 - **Errors:**
 
   | Status | Code | When |
@@ -214,6 +217,15 @@ One drag and drop in the Scrum product backlog (R13): puts the task right after 
 - **Request:** `{ "afterTaskId": 41 }` or `{ "afterTaskId": null }`.
 - **Response `200`:** the moved `TaskResponse`. Reload with `?order=backlog`.
 - **Errors:** `400 BAD_REQUEST` "This project has no backlog to reorder; move the task on the board." (Kanban); the `afterTaskId` errors of 3.6 (except the column one); `401`; `403` for everyone but the Product Owner; `404`; `409`.
+
+### 3.8 Read task status-change history
+
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/history`
+
+- **Who:** project members with `VIEW_WORK`, including Viewers. Workspace admins not in the project cannot read tasks or task history.
+- **Response `200`:** chronological array of `{ id, fromColumnId, fromColumnName, toColumnId, toColumnName, actorId, changedAt }` events, or `[]` when no status changes occurred.
+- Events record task changes to another column via PATCH or board drag, and rehoming when a board column is soft-deleted. A rename or same-column reorder does not produce an event. Column names are recorded as historical snapshots.
+- **Errors:** `401`, `403`, `404` as in §3.3. See [board-docs §3.7](./board-docs.md#37-read-a-tasks-status-history) for an example.
 
 ### How the order is stored
 
@@ -273,6 +285,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 | --- | --- | --- |
 | `tasks` | `id`, `project_id`, `task_number`, `task_key` (≤ 21), `title` (≤ 255), `type`, `priority`, `status_column_id`, `assignee_id` (nullable), `estimate` (nullable), `description` (`text`), `board_position`, `backlog_rank`, `deleted_at` (nullable), audit columns | unique on (`project_id`, `task_number`); checks on `type`, `priority`, `estimate >= 0` |
 | `task_labels` | `task_id`, `label` (≤ 50) | primary key on both |
+| `task_status_history` | `task_id`, from/to column IDs and names, `actor_id`, `changed_at` | append-only status-change events, created by V7; `task_id` has `ON DELETE CASCADE` |
 | `projects.last_task_number` | the latest task number of the project | starts at 0, only ever increases |
 
 - **Foreign keys:**
@@ -284,7 +297,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 - **Keys:** `ProjectRepository.incrementTaskNumber` (an UPDATE, which locks the project row) then `findLastTaskNumber`. `Project.lastTaskNumber` is mapped `updatable = false`, so saving a project never writes back a stale number.
 - **Soft delete:** `Task` carries `@SQLRestriction("deleted_at is null")`, so no JPA query ever returns a deleted task. **Native SQL must add `deleted_at is null` itself** (universal search does).
 - **Indexes:** (`project_id`, `deleted_at`), `status_column_id`, `assignee_id`, (`project_id`, `status_column_id`, `board_position`), (`project_id`, `backlog_rank`).
-- **Migration:** `V6__tasks.sql`.
+- **Migrations:** `V6__tasks.sql` (task storage), `V7__board_configuration_and_status_history.sql` (status history and board configuration).
 - **Code:** `task/{models,repositories,services,controllers,dto,api}`. `TaskApiService` holds the rules, `TaskSpecifications` the list query, `TaskRanks` the order arithmetic.
 
 ---
@@ -304,8 +317,8 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 
 - **No undelete** and no list of deleted tasks.
 - **Sprints (R14, R15):** `sprintId` is always `null`; the Scrum board shows no tasks until sprints exist. They will reuse `backlog_rank` and `board_position`.
-- **Columns (R16):** adding, renaming, reordering columns and WIP limits are not built. Removing a column will have to move or refuse its tasks (no cascade).
-- **Subtasks, comments, history (R10), attachments (R25)** are later stories; their tables must cascade from `tasks`.
+- **Columns (R16 / PMP-125):** board configuration and soft WIP warnings are implemented in the backend. See [board-docs.md](./board-docs.md).
+- **Subtasks, comments, broader activity history (R10), attachments (R25)** are later stories. PMP-125 implements **status-change history only**, not history of every task-field change; future dependent tables must cascade from `tasks`.
 
 ---
 
@@ -321,6 +334,7 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: contro
 | Unit tests: `TaskApiServiceTest` (24), `TaskControllerTest` (4), `TaskRequestValidationTest` (6), `TaskSearchFiltersTest` (11), `TaskListOrderTest` (4), `TaskRanksTest` (3) | Implemented, all passing |
 | Unassigning on leaving a project or the workspace (`ProjectServiceTest`, `WorkspaceServiceTest`) | Implemented, all passing |
 | `TaskIntegrationTest` (12) against PostgreSQL: keys, soft delete, defaults, filters, board and backlog order, renumbering, unassigning on leave, cascades | Implemented, all passing |
+| PMP-125 status history and soft WIP responses | Implemented; clean verify passed 381 tests and V7 applied on PostgreSQL Testcontainers (1 Nov 2026); final regression re-run and frontend acceptance pending |
 
 ---
 
@@ -335,3 +349,4 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: contro
 | 26 Oct 2026 | Reordering the backlog needs `MANAGE_BACKLOG` (Product Owner), per the roles matrix's strict Scrum roles; a Project Manager adds the Product Owner role to do it. |
 | 26 Oct 2026 | Labels: at most 20, each at most 50 characters, collapsed case-insensitively. Description: rich text, no limit. |
 | 26 Oct 2026 | Someone who leaves a project (or the workspace) is unassigned from its tasks, so the assignee is always a project member. |
+| 1 Nov 2026 | A task status change records from/to column snapshots and actor; over-limit Kanban task moves succeed with a warning, never a validation failure. |

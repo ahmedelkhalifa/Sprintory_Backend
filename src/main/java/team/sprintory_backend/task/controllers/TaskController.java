@@ -16,6 +16,8 @@ import team.sprintory_backend.task.dto.CreateTaskRequest;
 import team.sprintory_backend.task.dto.MoveTaskRequest;
 import team.sprintory_backend.task.dto.ReorderBacklogRequest;
 import team.sprintory_backend.task.dto.TaskResponse;
+import team.sprintory_backend.task.dto.TaskStatusHistoryResponse;
+import java.util.List;
 import team.sprintory_backend.task.dto.UpdateTaskRequest;
 import team.sprintory_backend.task.services.TaskApiService;
 
@@ -78,6 +80,12 @@ public class TaskController {
                                       @PathVariable Long projectId, @PathVariable Long taskId,
                                       @Valid @RequestBody ReorderBacklogRequest request) {
         return taskApiService.moveInBacklog(principal.getUser(), projectId, taskId, request);
+    }
+
+    @GetMapping("/{taskId}/history")
+    public List<TaskStatusHistoryResponse> history(@AuthenticationPrincipal AppUserDetails principal,
+                                                   @PathVariable Long projectId, @PathVariable Long taskId) {
+        return taskApiService.history(principal.getUser(), projectId, taskId);
     }
 
     @DeleteMapping("/{taskId}")

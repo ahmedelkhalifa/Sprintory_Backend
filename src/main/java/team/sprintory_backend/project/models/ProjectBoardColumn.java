@@ -2,6 +2,10 @@ package team.sprintory_backend.project.models;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import org.hibernate.annotations.SQLRestriction;
+import java.time.Instant;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -19,6 +23,7 @@ import team.sprintory_backend.audit.BaseEntity;
 /** Persisted, ordered workflow column. WIP is optional and initially unset. */
 @Entity
 @Table(name = "project_board_columns")
+@SQLRestriction("deleted_at is null")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -38,6 +43,13 @@ public class ProjectBoardColumn extends BaseEntity {
     @Column(name = "sort_order", nullable = false)
     private int position;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private BoardColumnCategory category;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
     @Column(name = "wip_limit")
     private Integer wipLimit;
 
@@ -46,6 +58,9 @@ public class ProjectBoardColumn extends BaseEntity {
         this.name = name;
         this.position = position;
         this.wipLimit = null;
+        this.category = name.equals("Done") ? BoardColumnCategory.DONE
+                : name.equals("In Progress") || name.equals("In Review")
+                        ? BoardColumnCategory.IN_PROGRESS : BoardColumnCategory.TODO;
     }
 
     @Override

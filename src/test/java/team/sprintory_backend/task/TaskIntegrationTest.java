@@ -10,6 +10,11 @@ import org.springframework.transaction.annotation.Transactional;
 import team.sprintory_backend.AbstractIntegrationTest;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
+import team.sprintory_backend.project.dto.CreateBoardColumnRequest;
+import team.sprintory_backend.project.dto.UpdateBoardColumnRequest;
+import team.sprintory_backend.project.dto.DeleteBoardColumnRequest;
+import team.sprintory_backend.project.models.BoardColumnCategory;
+import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.project.dto.ProjectResponse;
 import team.sprintory_backend.project.dto.UpdateProjectRequest;
 import team.sprintory_backend.project.models.ProjectMember;
@@ -88,6 +93,99 @@ class TaskIntegrationTest extends AbstractIntegrationTest {
         entityManager.persist(ProjectMember.builder().project(projectRepository.getReferenceById(scrum.id()))
                 .user(grace).roles(new HashSet<>(Set.of(ProjectRole.PRODUCT_OWNER))).build());
         entityManager.flush();
+    }
+
+    // --- Sprint 2: PMP-125 persistent column editing and WIP ---
+
+    @Test
+    void kanbanColumnManagementAndWipWarningsPersistAcrossReloads() {
+        Map<String, Long> ids = columns(kanban);
+        boards.add(owner, kanban.id(), new CreateBoardColumnRequest("QA", BoardColumnCategory.IN_PROGRESS,
+                ids.get("In Progress")));
+        assertEquals(List.of("Backlog", "To Do", "In Progress", "QA", "Done"),
+                boards.get(owner, kanban.id()).columns().stream().map(c -> c.name()).toList());
+        boards.update(owner, kanban.id(), ids.get("In Progress"),
+                new UpdateBoardColumnRequest(null, null, 1, false));
+        var qa = columns(kanban).get("QA");
+        var a = create(kanban, "A");
+        var b = create(kanban, "B");
+        tasks.moveOnBoard(owner, kanban.id(), a.id(), new MoveTaskRequest(ids.get("In Progress"), null));
+        var warning = tasks.moveOnBoard(owner, kanban.id(), b.id(),
+                new MoveTaskRequest(ids.get("In Progress"), a.id()));
+        assertNotNull(warning.wipWarning());
+        assertEquals(2, warning.wipWarning().count());
+        assertEquals(1, warning.wipWarning().limit());
+        assertTrue(boards.get(owner, kanban.id()).columns().stream()
+                .filter(c -> c.name().equals("In Progress")).findFirst().orElseThrow().wipExceeded());
+
+        tasks.moveOnBoard(owner, kanban.id(), a.id(), new MoveTaskRequest(qa, null));
+        assertFalse(boards.get(owner, kanban.id()).columns().stream()
+                .filter(c -> c.name().equals("In Progress")).findFirst().orElseThrow().wipExceeded());
+        boards.delete(owner, kanban.id(), qa, new DeleteBoardColumnRequest(ids.get("To Do")));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertFalse(columns(kanban).containsKey("QA"));
+        assertEquals(1, count("select count(*) from project_board_columns where id = :id "
+                + "and deleted_at is not null", qa));
+        assertEquals("To Do", tasks.get(owner, kanban.id(), a.id()).statusName());
+        assertEquals(List.of("Backlog", "In Progress", "QA"),
+                tasks.history(owner, kanban.id(), a.id()).stream()
+                        .map(event -> event.fromColumnName()).toList());
+        assertEquals(List.of("In Progress", "QA", "To Do"),
+                tasks.history(owner, kanban.id(), a.id()).stream()
+                        .map(event -> event.toColumnName()).toList());
+    }
+
+    @Test
+    void deletingAnOccupiedColumnMovesAllFiveTasksAndPreservesHistory() {
+        Map<String, Long> ids = columns(kanban);
+        boards.add(owner, kanban.id(), new CreateBoardColumnRequest("Review",
+                BoardColumnCategory.IN_PROGRESS, ids.get("In Progress")));
+        Long review = columns(kanban).get("Review");
+
+        List<TaskResponse> moved = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            TaskResponse task = create(kanban, "Review task " + i);
+            tasks.moveOnBoard(owner, kanban.id(), task.id(), new MoveTaskRequest(review, null));
+            moved.add(task);
+        }
+        boards.delete(owner, kanban.id(), review, new DeleteBoardColumnRequest(ids.get("To Do")));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertEquals(5, count("select count(*) from task_status_history where from_column_id = :id", review));
+        for (TaskResponse task : moved) {
+            assertEquals("To Do", tasks.get(owner, kanban.id(), task.id()).statusName());
+            var events = tasks.history(owner, kanban.id(), task.id());
+            assertEquals(2, events.size());
+            assertEquals("Review", events.get(1).fromColumnName());
+            assertEquals("To Do", events.get(1).toColumnName());
+        }
+    }
+
+    @Test
+    void columnCategoriesRemainStableAfterRenamingAndProtectLastDone() {
+        var done = columns(kanban).get("Done");
+        boards.update(owner, kanban.id(), done,
+                new UpdateBoardColumnRequest("Completed", null, null, null));
+        var saved = boards.get(owner, kanban.id()).columns().stream()
+                .filter(c -> c.id().equals(done)).findFirst().orElseThrow();
+        assertEquals(BoardColumnCategory.DONE, saved.category());
+        assertThrows(BadRequestException.class, () -> boards.delete(owner, kanban.id(), done, null));
+        assertThrows(BadRequestException.class, () -> boards.update(owner, kanban.id(), done,
+                new UpdateBoardColumnRequest(null, BoardColumnCategory.IN_PROGRESS, null, null)));
+    }
+
+    @Test
+    void scrumRefusesWipLimitsAndMemberCannotConfigureBoard() {
+        var inProgress = columns(scrum).get("In Progress");
+        assertThrows(BadRequestException.class,
+                () -> boards.update(owner, scrum.id(), inProgress,
+                        new UpdateBoardColumnRequest(null, null, 2, null)));
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> boards.update(grace, scrum.id(), inProgress,
+                        new UpdateBoardColumnRequest("Renamed", null, null, null)));
     }
 
     // --- keys and soft delete ---

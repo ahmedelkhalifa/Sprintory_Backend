@@ -75,7 +75,8 @@ class TaskApiServiceTest {
         userRepository = mock(UserRepository.class);
         service = new TaskApiService(access, taskRepository, projectRepository, projectMemberRepository,
                 columnRepository, userRepository,
-                new ProjectBoardStrategies(List.of(new ScrumBoardStrategy(), new KanbanBoardStrategy())));
+                new ProjectBoardStrategies(List.of(new ScrumBoardStrategy(), new KanbanBoardStrategy())),
+                mock(team.sprintory_backend.task.services.TaskStatusHistoryService.class));
         user = User.builder().id(42L).firstName("Ada").lastName("Lovelace")
                 .email("ada@example.com").build();
 
@@ -105,9 +106,11 @@ class TaskApiServiceTest {
                 new CreateTaskRequest("  Fix login  ", null, null, null, null,
                         List.of(" backend ", "Backend", "R09"), "  "));
 
-        // The counter UPDATE takes the project lock before the ranks are read.
-        InOrder order = inOrder(projectRepository, taskRepository);
+        // Project lock must precede the initial column lookup, otherwise a concurrent
+        // column deletion could attach a new task to a soft-deleted column.
+        InOrder order = inOrder(projectRepository, columnRepository, taskRepository);
         order.verify(projectRepository).incrementTaskNumber(PROJECT_ID);
+        order.verify(columnRepository).findByBoardProjectIdOrderByPositionAscIdAsc(PROJECT_ID);
         order.verify(projectRepository).findLastTaskNumber(PROJECT_ID);
         order.verify(taskRepository).findMaxBoardPosition(PROJECT_ID, 11L);
         assertEquals(4 * TaskRanks.GAP, savedTask().getBoardPosition(), "last in its column");

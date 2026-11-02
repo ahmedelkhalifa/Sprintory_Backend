@@ -31,6 +31,10 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
     @EntityGraph(attributePaths = {"status", "assignee"})
     Page<Task> findAll(Specification<Task> spec, Pageable pageable);
 
+    /** Count only live tasks. Current task model has no parent/subtask relationship, so all
+     *  current tasks are top-level. When subtasks are added this query must filter parent=null. */
+    long countByProjectIdAndStatusId(Long projectId, Long statusId);
+
     // --- assignees who leave ---
 
     /**
