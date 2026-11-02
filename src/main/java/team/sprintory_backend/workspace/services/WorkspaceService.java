@@ -5,6 +5,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.Pageables;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
@@ -49,6 +53,7 @@ public class WorkspaceService {
     private final ProjectMemberRepository projectMemberRepository;
     private final TeamMemberRepository teamMemberRepository;
     private final TaskRepository taskRepository;
+    private final AuditLogService auditLog;
 
     /** Creates an empty workspace and makes the caller its admin. */
     @Transactional
@@ -92,8 +97,14 @@ public class WorkspaceService {
     public WorkspaceResponse rename(User user, Long workspaceId, UpdateWorkspaceRequest request) {
         WorkspaceMember admin = workspaceAccess.requireActiveAdmin(workspaceId, user);
         Workspace workspace = admin.getWorkspace();
-        workspace.setName(request.name().trim());
+        String oldName = workspace.getName();
+        String newName = request.name().trim();
+        workspace.setName(newName);
         workspaceRepository.save(workspace);
+        if (!newName.equals(oldName)) {
+            auditLog.record(workspace, user, AuditAction.WORKSPACE_RENAMED, AuditTarget.workspace(workspace),
+                    null, AuditChange.of("name", oldName, newName));
+        }
         return WorkspaceResponse.from(admin);
     }
 
@@ -131,13 +142,20 @@ public class WorkspaceService {
             throw new BadRequestException("A role is required.");
         }
         workspaceRepository.lockById(workspaceId);
-        workspaceAccess.requireActiveAdmin(workspaceId, user);
+        WorkspaceMember admin = workspaceAccess.requireActiveAdmin(workspaceId, user);
         WorkspaceMember target = requireTarget(workspaceId, userId);
         if (target.isAdmin() && role != Role.WORKSPACE_ADMIN) {
             requireAnotherAdmin(workspaceId);
         }
+        Role oldRole = target.getRole();
         target.setRole(role);
-        return WorkspaceMemberResponse.from(workspaceMemberRepository.save(target));
+        WorkspaceMember saved = workspaceMemberRepository.save(target);
+        if (oldRole != role) {
+            auditLog.record(admin.getWorkspace(), user, AuditAction.WORKSPACE_ROLE_CHANGED,
+                    AuditTarget.user(target.getUser()), null,
+                    AuditChange.of("role", oldRole.name(), role.name()));
+        }
+        return WorkspaceMemberResponse.from(saved);
     }
 
     /**
@@ -169,8 +187,14 @@ public class WorkspaceService {
         projectMemberRepository.deleteByWorkspaceIdAndUserId(workspaceId, userId);
         teamMemberRepository.deleteByWorkspaceIdAndUserId(workspaceId, userId);
         // They are in none of the workspace's projects any more, so they cannot stay assignees.
+        // Snapshot before the delete. One entry covers the team and project memberships too.
+        AuditTarget removed = AuditTarget.user(leaving ? user : target.getUser());
+        String oldRole = target.getRole().name();
         taskRepository.unassignInWorkspace(workspaceId, userId);
         workspaceMemberRepository.delete(target);
+        auditLog.record(caller.getWorkspace(), user,
+                leaving ? AuditAction.MEMBER_LEFT : AuditAction.MEMBER_REMOVED,
+                removed, null, AuditChange.of("role", oldRole, null));
     }
 
     private WorkspaceMember requireTarget(Long workspaceId, Long userId) {

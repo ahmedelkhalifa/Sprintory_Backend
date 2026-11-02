@@ -6,6 +6,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.util.ReflectionTestUtils;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.notification.email.EmailDeliveryException;
 import team.sprintory_backend.notification.email.EmailService;
@@ -48,6 +52,7 @@ class InvitationServiceTest {
     private WorkspaceMemberRepository workspaceMemberRepository;
     private UserRepository userRepository;
     private EmailService emailService;
+    private AuditLogService auditLog;
     private InvitationService service;
     private User admin;
 
@@ -57,8 +62,9 @@ class InvitationServiceTest {
         workspaceMemberRepository = mock(WorkspaceMemberRepository.class);
         userRepository = mock(UserRepository.class);
         emailService = mock(EmailService.class);
+        auditLog = mock(AuditLogService.class);
         service = new InvitationService(invitationRepository, workspaceMemberRepository, userRepository,
-                new WorkspaceAccess(workspaceMemberRepository), emailService);
+                new WorkspaceAccess(workspaceMemberRepository), emailService, auditLog);
         ReflectionTestUtils.setField(service, "frontendUrl", "http://front");
         ReflectionTestUtils.setField(service, "invitePath", "/accept-invite");
         ReflectionTestUtils.setField(service, "inviteTtlMs", SEVEN_DAYS_MS);
@@ -76,7 +82,7 @@ class InvitationServiceTest {
         givenMembership(admin, Role.WORKSPACE_MEMBER, false);
 
         assertThrows(AccessDeniedException.class, () -> invite("grace@example.com"));
-        verifyNoInteractions(emailService);
+        verifyNoInteractions(emailService, auditLog);
     }
 
     @Test
@@ -84,7 +90,24 @@ class InvitationServiceTest {
         givenMembership(admin, Role.WORKSPACE_ADMIN, true);
 
         assertThrows(WorkspaceArchivedException.class, () -> invite("grace@example.com"));
-        verifyNoInteractions(emailService);
+        verifyNoInteractions(emailService, auditLog);
+    }
+
+    @Test
+    void inviteWritesOneAuditEntryPerInvitedEmailWithoutTheToken() {
+        givenMembership(admin, Role.WORKSPACE_ADMIN, false);
+        when(userRepository.findByEmail("linus@example.com")).thenReturn(Optional.of(user(9L, "linus@example.com")));
+        when(workspaceMemberRepository.existsByWorkspaceIdAndUserId(WORKSPACE_ID, 9L)).thenReturn(true);
+
+        invite("grace@example.com", "linus@example.com", "bob@example.com");
+
+        AuditChange role = AuditChange.of("role", null, "WORKSPACE_MEMBER");
+        verify(auditLog).record(argThat(w -> w.getId().equals(WORKSPACE_ID)), same(admin),
+                eq(AuditAction.MEMBER_INVITED), eq(AuditTarget.invitation("grace@example.com")), isNull(), eq(role));
+        verify(auditLog).record(argThat(w -> w.getId().equals(WORKSPACE_ID)), same(admin),
+                eq(AuditAction.MEMBER_INVITED), eq(AuditTarget.invitation("bob@example.com")), isNull(), eq(role));
+        // Linus is already a member, so he is not invited and not logged.
+        verifyNoMoreInteractions(auditLog);
     }
 
     @Test
@@ -203,6 +226,7 @@ class InvitationServiceTest {
         assertThrows(AccessDeniedException.class, () -> service.accept(admin, "tok"));
         verify(workspaceMemberRepository, never()).save(any());
         verify(invitationRepository, never()).delete(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -212,6 +236,7 @@ class InvitationServiceTest {
 
         assertThrows(WorkspaceArchivedException.class, () -> service.accept(grace, "tok"));
         verify(workspaceMemberRepository, never()).save(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -238,6 +263,8 @@ class InvitationServiceTest {
         verify(invitationRepository).delete(invitation);
         assertEquals(Role.WORKSPACE_MEMBER, response.role());
         assertEquals(WORKSPACE_ID, response.id());
+        verify(auditLog).record(same(invitation.getWorkspace()), same(grace), eq(AuditAction.MEMBER_JOINED),
+                eq(AuditTarget.user(grace)), isNull(), eq(AuditChange.of("role", null, "WORKSPACE_MEMBER")));
     }
 
     @Test
@@ -252,6 +279,8 @@ class InvitationServiceTest {
         verify(workspaceMemberRepository, never()).save(any());
         verify(invitationRepository).delete(invitation);
         assertEquals(Role.WORKSPACE_ADMIN, response.role());
+        // Nobody joined, so nothing is logged.
+        verifyNoInteractions(auditLog);
     }
 
     // --- cleanup ---

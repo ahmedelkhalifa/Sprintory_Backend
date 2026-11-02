@@ -8,6 +8,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.notification.email.EmailService;
 import team.sprintory_backend.security.auth.services.OpaqueTokens;
@@ -49,6 +53,7 @@ public class InvitationService {
     private final UserRepository userRepository;
     private final WorkspaceAccess workspaceAccess;
     private final EmailService emailService;
+    private final AuditLogService auditLog;
 
     // Not final: @Value on a final field with @RequiredArgsConstructor fails at startup.
     @Value("${app.frontend-url}")
@@ -80,6 +85,9 @@ public class InvitationService {
             String token = issue(workspace, email);
             emailService.sendWorkspaceInvitation(email, displayName(admin), workspace.getName(),
                     frontendUrl + invitePath + "?token=" + token);
+            // The token and link never reach the log.
+            auditLog.record(workspace, admin, AuditAction.MEMBER_INVITED, AuditTarget.invitation(email), null,
+                    AuditChange.of("role", null, Role.WORKSPACE_MEMBER.name()));
             invited.add(email);
         }
         return new InvitationsSentResponse(invited, alreadyMembers);
@@ -103,13 +111,20 @@ public class InvitationService {
             throw new WorkspaceArchivedException("Workspace is archived.");
         }
 
-        WorkspaceMember membership = workspaceMemberRepository
-                .findByWorkspaceIdAndUserId(workspace.getId(), user.getId())
-                .orElseGet(() -> workspaceMemberRepository.save(WorkspaceMember.builder()
-                        .workspace(workspace)
-                        .user(user)
-                        .role(Role.WORKSPACE_MEMBER)
-                        .build()));
+        Optional<WorkspaceMember> existing = workspaceMemberRepository
+                .findByWorkspaceIdAndUserId(workspace.getId(), user.getId());
+        WorkspaceMember membership;
+        if (existing.isPresent()) {
+            membership = existing.get();
+        } else {
+            membership = workspaceMemberRepository.save(WorkspaceMember.builder()
+                    .workspace(workspace)
+                    .user(user)
+                    .role(Role.WORKSPACE_MEMBER)
+                    .build());
+            auditLog.record(workspace, user, AuditAction.MEMBER_JOINED, AuditTarget.user(user), null,
+                    AuditChange.of("role", null, Role.WORKSPACE_MEMBER.name()));
+        }
         invitationRepository.delete(invitation);
         return WorkspaceResponse.from(membership);
     }
