@@ -6,6 +6,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.Pageables;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
@@ -20,6 +24,7 @@ import team.sprintory_backend.team.models.TeamMember;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.team.repositories.TeamRepository;
 import team.sprintory_backend.user.models.User;
+import team.sprintory_backend.user.repositories.UserRepository;
 import team.sprintory_backend.workspace.models.Workspace;
 import team.sprintory_backend.workspace.models.WorkspaceMember;
 import team.sprintory_backend.workspace.repositories.WorkspaceMemberRepository;
@@ -41,6 +46,8 @@ public class TeamService {
     private final TeamMemberRepository teamMemberRepository;
     private final WorkspaceMemberRepository workspaceMemberRepository;
     private final WorkspaceAccess workspaceAccess;
+    private final UserRepository userRepository;
+    private final AuditLogService auditLog;
 
     @Transactional
     public TeamResponse create(User user, Long workspaceId, CreateTeamRequest request) {
@@ -50,6 +57,8 @@ public class TeamService {
                 .workspace(workspace)
                 .name(request.name().trim())
                 .build());
+        auditLog.record(workspace, user, AuditAction.TEAM_CREATED, AuditTarget.team(team), null,
+                AuditChange.of("name", null, team.getName()));
         return TeamResponse.from(team);
     }
 
@@ -78,16 +87,27 @@ public class TeamService {
     @Transactional
     public TeamResponse rename(User user, Long teamId, UpdateTeamRequest request) {
         Team team = requireActiveAdmin(teamId, user);
-        team.setName(request.name().trim());
+        String oldName = team.getName();
+        String newName = request.name().trim();
+        team.setName(newName);
         // Flush now: a duplicate name in this workspace fails here with 409.
         teamRepository.saveAndFlush(team);
+        if (!newName.equals(oldName)) {
+            auditLog.record(team.getWorkspace(), user, AuditAction.TEAM_RENAMED, AuditTarget.team(team), null,
+                    AuditChange.of("name", oldName, newName));
+        }
         return TeamResponse.from(team);
     }
 
     /** Removes the team and its member rows; nobody loses workspace or project access. */
     @Transactional
     public void delete(User user, Long teamId) {
-        teamRepository.delete(requireActiveAdmin(teamId, user));
+        Team team = requireActiveAdmin(teamId, user);
+        // Snapshot before the delete, so the entry keeps the team's id and name.
+        AuditTarget deleted = AuditTarget.team(team);
+        teamRepository.delete(team);
+        auditLog.record(team.getWorkspace(), user, AuditAction.TEAM_DELETED, deleted, null,
+                AuditChange.of("name", deleted.name(), null));
     }
 
     /**
@@ -106,6 +126,8 @@ public class TeamService {
         for (WorkspaceMember member : members) {
             if (!teamMemberRepository.existsByTeamIdAndUserId(team.getId(), member.getUser().getId())) {
                 teamMemberRepository.save(TeamMember.builder().team(team).user(member.getUser()).build());
+                auditLog.record(team.getWorkspace(), user, AuditAction.TEAM_MEMBER_ADDED,
+                        AuditTarget.user(member.getUser()), null, AuditChange.of("team", null, team.getName()));
             }
         }
     }
@@ -114,7 +136,11 @@ public class TeamService {
     @Transactional
     public void removeMember(User user, Long teamId, Long userId) {
         Team team = requireActiveAdmin(teamId, user);
-        teamMemberRepository.deleteByTeamIdAndUserId(team.getId(), userId);
+        if (teamMemberRepository.deleteByTeamIdAndUserId(team.getId(), userId) > 0) {
+            userRepository.findById(userId).ifPresent(removed -> auditLog.record(team.getWorkspace(), user,
+                    AuditAction.TEAM_MEMBER_REMOVED, AuditTarget.user(removed), null,
+                    AuditChange.of("team", team.getName(), null)));
+        }
     }
 
     private record TeamAccess(Team team, WorkspaceMember membership) {}
