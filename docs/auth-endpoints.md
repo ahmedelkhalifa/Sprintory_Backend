@@ -2,7 +2,8 @@
 
 **Status:** contract agreed, implementation in progress. See [§10 Implementation status](#10-implementation-status) for which parts are live.
 **Applies to:** backend `/api/v1/auth/**`, Google sign-in, and every frontend call that depends on being logged in.
-**Related:** [API and Git Conventions](./api-conventions.md) (error shape §4), [Email service](./email-service.md), [Workspaces](./workspaces-docs.md) (roles), [Requirements](./requirements.md) R01.
+**Related:** [API and Git Conventions](./api-conventions.md) (error shape §4), [Email service](./email-service.md), [Workspaces](./workspaces-docs.md) (roles), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R01.
+**Audit log:** a successful password reset, and 5 wrong passwords within 15 minutes for one verified email-and-password account, each write an entry into every workspace of that person ([audit-log-docs.md §4.5](./audit-log-docs.md#4-action-catalogue)). Neither changes any response of these endpoints: the login answer stays the same 401.
 
 This document is the single reference for how authentication works end to end. If the code and this file disagree, fix one of them in the same PR.
 

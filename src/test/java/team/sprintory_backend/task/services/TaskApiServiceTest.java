@@ -9,6 +9,11 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.AccessDeniedException;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.models.AuditTargetType;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
@@ -38,6 +43,7 @@ import team.sprintory_backend.task.models.TaskType;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
+import team.sprintory_backend.workspace.models.Workspace;
 
 import java.util.HashSet;
 import java.util.List;
@@ -60,8 +66,10 @@ class TaskApiServiceTest {
     private ProjectMemberRepository projectMemberRepository;
     private ProjectBoardColumnRepository columnRepository;
     private UserRepository userRepository;
+    private AuditLogService auditLog;
     private TaskApiService service;
     private User user;
+    private Workspace workspace;
     private Project project;
     private ProjectBoardColumn firstColumn;
 
@@ -73,14 +81,16 @@ class TaskApiServiceTest {
         projectMemberRepository = mock(ProjectMemberRepository.class);
         columnRepository = mock(ProjectBoardColumnRepository.class);
         userRepository = mock(UserRepository.class);
+        auditLog = mock(AuditLogService.class);
         service = new TaskApiService(access, taskRepository, projectRepository, projectMemberRepository,
                 columnRepository, userRepository,
                 new ProjectBoardStrategies(List.of(new ScrumBoardStrategy(), new KanbanBoardStrategy())),
-                mock(team.sprintory_backend.task.services.TaskStatusHistoryService.class));
+                mock(team.sprintory_backend.task.services.TaskStatusHistoryService.class), auditLog);
         user = User.builder().id(42L).firstName("Ada").lastName("Lovelace")
                 .email("ada@example.com").build();
 
-        project = Project.builder().id(PROJECT_ID).name("Mobile App").key("MOB")
+        workspace = Workspace.builder().id(9L).name("Acme").slug("acme").build();
+        project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App").key("MOB")
                 .template(ProjectTemplate.KANBAN).build();
         ProjectBoard board = new ProjectBoard(project);
         firstColumn = column(board, 11L, "Backlog", 0);
@@ -278,10 +288,34 @@ class TaskApiServiceTest {
     }
 
     @Test
+    void deleteWritesTheTaskKeyAndTitleToTheAuditLog() {
+        Task task = givenTask();
+
+        service.delete(user, PROJECT_ID, 5L);
+
+        // The fixture's save stub assigns id 500, hence task.getId() rather than 5.
+        verify(auditLog).record(same(workspace), same(user), eq(AuditAction.TASK_DELETED),
+                eq(new AuditTarget(AuditTargetType.TASK, task.getId(), "MOB-5 Old title")), same(project));
+    }
+
+    @Test
     void deleteGivesNotFoundForATaskThatIsAlreadyDeleted() {
         when(taskRepository.findByIdAndProjectId(5L, PROJECT_ID)).thenReturn(Optional.empty());
 
         assertThrows(ResourceNotFoundException.class, () -> service.delete(user, PROJECT_ID, 5L));
+        verifyNoInteractions(auditLog);
+    }
+
+    @Test
+    void deleteRefusedByTheAccessCheckWritesNoAuditEntry() {
+        givenTask();
+        // Stands for every refusal ProjectAccess makes: 404 non-member, 403 Viewer, 409 archived.
+        when(access.requireActive(PROJECT_ID, user, ProjectPermission.EDIT_TASKS))
+                .thenThrow(new AccessDeniedException("EDIT_TASKS required."));
+
+        assertThrows(AccessDeniedException.class, () -> service.delete(user, PROJECT_ID, 5L));
+        verify(taskRepository, never()).save(any(Task.class));
+        verifyNoInteractions(auditLog);
     }
 
     // --- order on the board ---

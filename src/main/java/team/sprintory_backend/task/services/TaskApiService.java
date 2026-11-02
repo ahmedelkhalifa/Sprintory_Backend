@@ -5,6 +5,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
@@ -62,6 +65,7 @@ public class TaskApiService {
     private final UserRepository userRepository;
     private final ProjectBoardStrategies boardStrategies;
     private final TaskStatusHistoryService statusHistory;
+    private final AuditLogService auditLog;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -176,11 +180,12 @@ public class TaskApiService {
     /** Soft delete: the row stays, the key is never handed out again, and every read hides it. */
     @Transactional
     public void delete(User user, Long projectId, Long taskId) {
-        projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS);
+        Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
         projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
         task.setDeletedAt(Instant.now());
         taskRepository.save(task);
+        auditLog.record(project.getWorkspace(), user, AuditAction.TASK_DELETED, AuditTarget.task(task), project);
     }
 
     /**

@@ -8,6 +8,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
@@ -59,6 +63,7 @@ class WorkspaceServiceTest {
     private ProjectMemberRepository projectMemberRepository;
     private TeamMemberRepository teamMemberRepository;
     private TaskRepository taskRepository;
+    private AuditLogService auditLog;
     private WorkspaceService service;
     private User user;
     private final User grace = User.builder().id(OTHER_ID).firstName("Grace").lastName("Hopper")
@@ -73,9 +78,10 @@ class WorkspaceServiceTest {
         projectMemberRepository = mock(ProjectMemberRepository.class);
         teamMemberRepository = mock(TeamMemberRepository.class);
         taskRepository = mock(TaskRepository.class);
+        auditLog = mock(AuditLogService.class);
         service = new WorkspaceService(workspaceRepository, workspaceMemberRepository,
                 new WorkspaceAccess(workspaceMemberRepository), slugGenerator,
-                projectRepository, projectMemberRepository, teamMemberRepository, taskRepository);
+                projectRepository, projectMemberRepository, teamMemberRepository, taskRepository, auditLog);
         user = User.builder().id(7L).firstName("Ada").lastName("Lovelace").email("ada@example.com").build();
         when(workspaceMemberRepository.findByWorkspaceIdAndUserId(anyLong(), anyLong())).thenReturn(Optional.empty());
         when(workspaceMemberRepository.save(any(WorkspaceMember.class))).thenAnswer(call -> call.getArgument(0));
@@ -188,6 +194,7 @@ class WorkspaceServiceTest {
         assertThrows(AccessDeniedException.class,
                 () -> service.rename(user, WORKSPACE_ID, new UpdateWorkspaceRequest("New")));
         verify(workspaceRepository, never()).save(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -197,6 +204,7 @@ class WorkspaceServiceTest {
         assertThrows(WorkspaceArchivedException.class,
                 () -> service.rename(user, WORKSPACE_ID, new UpdateWorkspaceRequest("New")));
         verify(workspaceRepository, never()).save(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -208,6 +216,26 @@ class WorkspaceServiceTest {
         verify(workspaceRepository).save(admin.getWorkspace());
         assertEquals("Acme Labs", response.name());
         assertEquals("acme", response.slug());
+    }
+
+    @Test
+    void renameWritesTheOldAndNewNameToTheAuditLog() {
+        WorkspaceMember admin = givenMembership(Role.WORKSPACE_ADMIN, false);
+        Workspace workspace = admin.getWorkspace();
+
+        service.rename(user, WORKSPACE_ID, new UpdateWorkspaceRequest(" Acme Labs "));
+
+        verify(auditLog).record(same(workspace), same(user), eq(AuditAction.WORKSPACE_RENAMED),
+                eq(AuditTarget.workspace(workspace)), isNull(), eq(AuditChange.of("name", "Acme", "Acme Labs")));
+    }
+
+    @Test
+    void renamingToTheSameNameWritesNoAuditEntry() {
+        givenMembership(Role.WORKSPACE_ADMIN, false);
+
+        service.rename(user, WORKSPACE_ID, new UpdateWorkspaceRequest(" Acme "));
+
+        verifyNoInteractions(auditLog);
     }
 
     // --- archive / restore ---
@@ -304,6 +332,9 @@ class WorkspaceServiceTest {
         verify(workspaceMemberRepository).save(other);
         assertEquals(new WorkspaceMemberResponse(OTHER_ID, "Grace", "Hopper", "grace@example.com",
                 Role.WORKSPACE_ADMIN), response);
+        verify(auditLog).record(same(admin.getWorkspace()), same(user), eq(AuditAction.WORKSPACE_ROLE_CHANGED),
+                eq(AuditTarget.user(grace)), isNull(),
+                eq(AuditChange.of("role", "WORKSPACE_MEMBER", "WORKSPACE_ADMIN")));
     }
 
     @Test
@@ -337,6 +368,7 @@ class WorkspaceServiceTest {
         assertEquals("A workspace must have at least one admin.", e.getMessage());
         assertEquals(Role.WORKSPACE_ADMIN, admin.getRole());
         verify(workspaceMemberRepository, never()).save(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -345,6 +377,7 @@ class WorkspaceServiceTest {
 
         assertDoesNotThrow(() -> service.changeRole(user, WORKSPACE_ID, 7L, Role.WORKSPACE_ADMIN));
         verify(workspaceMemberRepository, never()).countByWorkspaceIdAndRole(anyLong(), any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -355,6 +388,7 @@ class WorkspaceServiceTest {
         assertThrows(AccessDeniedException.class,
                 () -> service.changeRole(user, WORKSPACE_ID, OTHER_ID, Role.WORKSPACE_ADMIN));
         verify(workspaceMemberRepository, never()).save(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -406,6 +440,8 @@ class WorkspaceServiceTest {
         verify(teamMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, OTHER_ID);
         verify(taskRepository).unassignInWorkspace(WORKSPACE_ID, OTHER_ID);
         verify(workspaceMemberRepository).delete(other);
+        verify(auditLog).record(same(admin.getWorkspace()), same(user), eq(AuditAction.MEMBER_REMOVED),
+                eq(AuditTarget.user(grace)), isNull(), eq(AuditChange.of("role", "WORKSPACE_MEMBER", null)));
     }
 
     @Test
@@ -418,6 +454,8 @@ class WorkspaceServiceTest {
         verify(teamMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, 7L);
         verify(taskRepository).unassignInWorkspace(WORKSPACE_ID, 7L);
         verify(workspaceMemberRepository).delete(member);
+        verify(auditLog).record(same(member.getWorkspace()), same(user), eq(AuditAction.MEMBER_LEFT),
+                eq(AuditTarget.user(user)), isNull(), eq(AuditChange.of("role", "WORKSPACE_MEMBER", null)));
     }
 
     @Test
@@ -524,6 +562,7 @@ class WorkspaceServiceTest {
         verify(teamMemberRepository, never()).deleteByWorkspaceIdAndUserId(anyLong(), anyLong());
         verify(taskRepository, never()).unassignInWorkspace(anyLong(), anyLong());
         verify(workspaceMemberRepository, never()).delete(any());
+        verifyNoInteractions(auditLog);
     }
 
     private WorkspaceMember givenMembership(Role role, boolean archived) {

@@ -5,6 +5,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.Pageables;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
@@ -34,6 +38,7 @@ import team.sprintory_backend.workspace.models.WorkspaceMember;
 import team.sprintory_backend.workspace.repositories.WorkspaceMemberRepository;
 import team.sprintory_backend.workspace.services.WorkspaceAccess;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -43,6 +48,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -64,6 +70,7 @@ public class ProjectService {
     private final ProjectAccess projectAccess;
     private final ProjectBoardService projectBoardService;
     private final TaskRepository taskRepository;
+    private final AuditLogService auditLog;
 
     /** Any member of an active workspace can create a project, and becomes its Project Manager. */
     @Transactional
@@ -84,6 +91,10 @@ public class ProjectService {
                 .build());
         projectMemberRepository.save(newMember(project, user, ProjectRole.PROJECT_MANAGER));
         projectBoardService.initialize(project);
+        auditLog.record(workspace, user, AuditAction.PROJECT_CREATED, AuditTarget.project(project), project,
+                AuditChange.of("name", null, project.getName()),
+                AuditChange.of("key", null, project.getKey()),
+                AuditChange.of("template", null, project.getTemplate().name()));
         return responseFor(project, Set.of(ProjectRole.PROJECT_MANAGER), creator.isAdmin());
     }
 
@@ -119,11 +130,24 @@ public class ProjectService {
     public ProjectResponse update(User user, Long projectId, UpdateProjectRequest request) {
         ProjectAccessResult access = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_SETTINGS);
         Project project = access.project();
+        List<AuditChange> changes = new ArrayList<>();
         if (request.name() != null) {
+            String oldName = project.getName();
             project.setName(request.name().trim());
+            if (!project.getName().equals(oldName)) {
+                changes.add(AuditChange.of("name", oldName, project.getName()));
+            }
         }
         if (request.description() != null) {
+            String oldDescription = project.getDescription();
             project.setDescription(normalizeDescription(request.description()));
+            if (!Objects.equals(oldDescription, project.getDescription())) {
+                changes.add(AuditChange.of("description", oldDescription, project.getDescription()));
+            }
+        }
+        if (!changes.isEmpty()) {
+            auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_SETTINGS_CHANGED,
+                    AuditTarget.project(project), project, changes.toArray(AuditChange[]::new));
         }
         return ProjectResponse.from(project, rolesOf(access), access.permissions());
     }
@@ -149,7 +173,13 @@ public class ProjectService {
         if (members.size() != userIds.size()) {
             throw new BadRequestException("Some users are not members of this workspace.");
         }
-        members.forEach(member -> addIfAbsent(project, member.getUser()));
+        for (WorkspaceMember member : members) {
+            if (addIfAbsent(project, member.getUser())) {
+                auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_MEMBER_ADDED,
+                        AuditTarget.user(member.getUser()), project,
+                        AuditChange.of("roles", null, ProjectRole.MEMBER.name()));
+            }
+        }
     }
 
     /**
@@ -163,8 +193,14 @@ public class ProjectService {
         Team team = teamRepository.findById(request.teamId())
                 .filter(found -> found.getWorkspace().getId().equals(project.getWorkspace().getId()))
                 .orElseThrow(() -> new BadRequestException("Team not found in this workspace."));
-        teamMemberRepository.findUsersByTeamId(team.getId())
-                .forEach(teamMember -> addIfAbsent(project, teamMember));
+        for (User teamMember : teamMemberRepository.findUsersByTeamId(team.getId())) {
+            if (addIfAbsent(project, teamMember)) {
+                auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_MEMBER_ADDED,
+                        AuditTarget.user(teamMember), project,
+                        AuditChange.of("roles", null, ProjectRole.MEMBER.name()),
+                        AuditChange.of("viaTeam", null, team.getName()));
+            }
+        }
     }
 
     /**
@@ -175,12 +211,20 @@ public class ProjectService {
     public void removeMember(User user, Long projectId, Long userId) {
         projectRepository.lockById(projectId);
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.MANAGE_MEMBERS).project();
-        projectMemberRepository.findWithRolesByProjectIdAndUserId(project.getId(), userId)
-                .filter(target -> target.hasRole(ProjectRole.PROJECT_MANAGER))
-                .ifPresent(target -> requireAnotherManager(project));
-        projectMemberRepository.deleteByProjectIdAndUserId(project.getId(), userId);
+        Optional<ProjectMember> target = projectMemberRepository.findWithRolesByProjectIdAndUserId(project.getId(), userId);
+        if (target.isPresent() && target.get().hasRole(ProjectRole.PROJECT_MANAGER)) {
+            requireAnotherManager(project);
+        }
+        // Snapshot before the bulk delete, which bypasses the loaded entity.
+        AuditTarget removed = target.map(member -> AuditTarget.user(member.getUser())).orElse(null);
+        String oldRoles = target.map(member -> rolesText(member.getRoles())).orElse(null);
+        int deleted = projectMemberRepository.deleteByProjectIdAndUserId(project.getId(), userId);
         // Only project members may be assignees (story 9).
         taskRepository.unassignInProject(project.getId(), userId);
+        if (deleted > 0 && removed != null) {
+            auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_MEMBER_REMOVED, removed, project,
+                    AuditChange.of("roles", oldRoles, null));
+        }
     }
 
     /**
@@ -199,9 +243,22 @@ public class ProjectService {
         if (target.hasRole(ProjectRole.PROJECT_MANAGER) && !wanted.contains(ProjectRole.PROJECT_MANAGER)) {
             requireAnotherManager(project);
         }
+        // Copy first: clear() below changes the same set in place.
+        String oldRoles = rolesText(target.getRoles());
         target.getRoles().clear();
         target.getRoles().addAll(wanted);
-        return ProjectMemberResponse.from(projectMemberRepository.save(target));
+        ProjectMember saved = projectMemberRepository.save(target);
+        String newRoles = rolesText(wanted);
+        if (!newRoles.equals(oldRoles)) {
+            auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_ROLES_CHANGED,
+                    AuditTarget.user(target.getUser()), project, AuditChange.of("roles", oldRoles, newRoles));
+        }
+        return ProjectMemberResponse.from(saved);
+    }
+
+    /** "PROJECT_MANAGER, MEMBER": declaration order, so the same set always gives the same text. */
+    private static String rolesText(Set<ProjectRole> roles) {
+        return roles.stream().sorted().map(Enum::name).collect(Collectors.joining(", "));
     }
 
     /** The caller's own project roles; empty for a workspace admin who is not in the project. */
@@ -226,10 +283,13 @@ public class ProjectService {
         return ProjectResponse.from(project, roles, permissions);
     }
 
-    private void addIfAbsent(Project project, User user) {
-        if (!projectMemberRepository.existsByProjectIdAndUserId(project.getId(), user.getId())) {
-            projectMemberRepository.save(newMember(project, user, ProjectRole.MEMBER));
+    /** True when the person was added, false when they were already in the project. */
+    private boolean addIfAbsent(Project project, User user) {
+        if (projectMemberRepository.existsByProjectIdAndUserId(project.getId(), user.getId())) {
+            return false;
         }
+        projectMemberRepository.save(newMember(project, user, ProjectRole.MEMBER));
+        return true;
     }
 
     private static ProjectMember newMember(Project project, User user, ProjectRole role) {

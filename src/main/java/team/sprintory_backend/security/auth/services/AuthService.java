@@ -5,11 +5,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.security.auth.dto.AuthUserResponse;
 import team.sprintory_backend.security.auth.dto.LoginRequest;
 import team.sprintory_backend.security.auth.dto.RegisterRequest;
@@ -45,6 +48,8 @@ public class AuthService {
     private final RefreshTokenService refreshTokenService;
     private final OneTimeTokenService oneTimeTokenService;
     private final EmailService emailService;
+    private final AuditLogService auditLog;
+    private final LoginFailureTracker loginFailureTracker;
 
     // Not final: @Value on a final field with @RequiredArgsConstructor fails at startup.
     @Value("${app.frontend-url}")
@@ -104,10 +109,29 @@ public class AuthService {
                     throw new ProviderMismatchException("Account uses Google sign-in.");
                 });
 
-        Authentication authentication = authenticationManager.authenticate(
-                UsernamePasswordAuthenticationToken.unauthenticated(email, request.password()));
+        Authentication authentication;
+        try {
+            authentication = authenticationManager.authenticate(
+                    UsernamePasswordAuthenticationToken.unauthenticated(email, request.password()));
+        } catch (BadCredentialsException e) {
+            countFailure(email);
+            throw e;
+        }
+        loginFailureTracker.reset(email);
         User user = ((AppUserDetails) authentication.getPrincipal()).getUser();
         return issueSession(user, request.rememberMe());
+    }
+
+    /**
+     * Feeds the audit log's repeated-failure detection. Never allowed to change the login's
+     * answer: any error here is logged and the caller still gets the same 401.
+     */
+    private void countFailure(String email) {
+        try {
+            loginFailureTracker.recordFailure(email);
+        } catch (RuntimeException e) {
+            log.warn("Could not record a failed login for the audit log", e);
+        }
     }
 
     /**
@@ -148,6 +172,8 @@ public class AuthService {
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
         refreshTokenService.revokeAll(user);
+        // No changes on purpose: the token and the password never reach the log.
+        auditLog.recordInAllWorkspacesOf(user, user, AuditAction.PASSWORD_RESET);
     }
 
     private void sendPasswordReset(User user) {

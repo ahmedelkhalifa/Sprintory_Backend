@@ -2,7 +2,8 @@
 
 **Status:** projects with key, description and immutable Scrum/Kanban template; board and default columns; settings (name, description); membership and roles. Board configuration and WIP limits are implemented under PMP-125 ([board-docs.md](./board-docs.md)); sprint lifecycle (R14, R15) remains later work. See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/workspaces/{workspaceId}/projects` and `/api/v1/projects/**`.
-**Related:** [Roles and permissions](./roles-docs.md), [Board configuration](./board-docs.md), [Tasks](./tasks-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Authentication](./auth-endpoints.md), [Requirements](./requirements.md) R02, R04, R06.
+**Related:** [Roles and permissions](./roles-docs.md), [Board configuration](./board-docs.md), [Tasks](./tasks-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Authentication](./auth-endpoints.md), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R02, R04, R06.
+**Audit log:** creating a project, changing its settings, adding or removing members (directly or through a team) and changing project roles each write an entry to the workspace's audit log ([audit-log-docs.md §4.3](./audit-log-docs.md#4-action-catalogue)). Board column changes are not logged.
 
 This document is the single reference for how projects and their membership work end to end. If the code and this file disagree, fix one of them in the same PR.
 

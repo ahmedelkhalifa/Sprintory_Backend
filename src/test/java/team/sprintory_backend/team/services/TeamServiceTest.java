@@ -9,6 +9,11 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.models.AuditTargetType;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
@@ -22,6 +27,7 @@ import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.team.repositories.TeamRepository;
 import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
+import team.sprintory_backend.user.repositories.UserRepository;
 import team.sprintory_backend.workspace.exceptions.WorkspaceArchivedException;
 import team.sprintory_backend.workspace.models.Workspace;
 import team.sprintory_backend.workspace.models.WorkspaceMember;
@@ -51,6 +57,8 @@ class TeamServiceTest {
     private TeamRepository teamRepository;
     private TeamMemberRepository teamMemberRepository;
     private WorkspaceMemberRepository workspaceMemberRepository;
+    private UserRepository userRepository;
+    private AuditLogService auditLog;
     private TeamService service;
 
     private Workspace workspace;
@@ -63,8 +71,10 @@ class TeamServiceTest {
         teamRepository = mock(TeamRepository.class);
         teamMemberRepository = mock(TeamMemberRepository.class);
         workspaceMemberRepository = mock(WorkspaceMemberRepository.class);
+        userRepository = mock(UserRepository.class);
+        auditLog = mock(AuditLogService.class);
         service = new TeamService(teamRepository, teamMemberRepository, workspaceMemberRepository,
-                new WorkspaceAccess(workspaceMemberRepository));
+                new WorkspaceAccess(workspaceMemberRepository), userRepository, auditLog);
 
         workspace = Workspace.builder().id(WORKSPACE_ID).name("Acme").slug("acme").build();
         team = Team.builder().id(TEAM_ID).workspace(workspace).name("Backend").build();
@@ -90,6 +100,7 @@ class TeamServiceTest {
         assertThrows(AccessDeniedException.class,
                 () -> service.create(member, WORKSPACE_ID, new CreateTeamRequest("Backend")));
         verify(teamRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -100,6 +111,7 @@ class TeamServiceTest {
         assertThrows(WorkspaceArchivedException.class,
                 () -> service.create(admin, WORKSPACE_ID, new CreateTeamRequest("Backend")));
         verify(teamRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -117,6 +129,9 @@ class TeamServiceTest {
         verify(teamRepository).saveAndFlush(saved.capture());
         assertSame(workspace, saved.getValue().getWorkspace());
         assertEquals(new TeamResponse(TEAM_ID, WORKSPACE_ID, "Backend"), response);
+        verify(auditLog).record(same(workspace), same(admin), eq(AuditAction.TEAM_CREATED),
+                eq(new AuditTarget(AuditTargetType.TEAM, TEAM_ID, "Backend")), isNull(),
+                eq(AuditChange.of("name", null, "Backend")));
     }
 
     // --- list ---
@@ -231,6 +246,7 @@ class TeamServiceTest {
         assertThrows(AccessDeniedException.class,
                 () -> service.rename(member, TEAM_ID, new UpdateTeamRequest("Platform")));
         verify(teamRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -241,6 +257,7 @@ class TeamServiceTest {
         assertThrows(WorkspaceArchivedException.class,
                 () -> service.rename(admin, TEAM_ID, new UpdateTeamRequest("Platform")));
         verify(teamRepository, never()).saveAndFlush(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -251,6 +268,18 @@ class TeamServiceTest {
 
         verify(teamRepository).saveAndFlush(team);
         assertEquals("Platform", response.name());
+        verify(auditLog).record(same(workspace), same(admin), eq(AuditAction.TEAM_RENAMED),
+                eq(new AuditTarget(AuditTargetType.TEAM, TEAM_ID, "Platform")), isNull(),
+                eq(AuditChange.of("name", "Backend", "Platform")));
+    }
+
+    @Test
+    void renamingToTheSameNameWritesNoAuditEntry() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+
+        service.rename(admin, TEAM_ID, new UpdateTeamRequest(" Backend "));
+
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -259,15 +288,19 @@ class TeamServiceTest {
 
         assertTeamNotFound(() -> service.delete(member, TEAM_ID));
         verify(teamRepository, never()).delete(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
-    void deleteRemovesTheTeam() {
+    void deleteRemovesTheTeamAndLogsItsNameAsItWas() {
         givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
 
         service.delete(admin, TEAM_ID);
 
         verify(teamRepository).delete(team);
+        verify(auditLog).record(same(workspace), same(admin), eq(AuditAction.TEAM_DELETED),
+                eq(new AuditTarget(AuditTargetType.TEAM, TEAM_ID, "Backend")), isNull(),
+                eq(AuditChange.of("name", "Backend", null)));
     }
 
     // --- add / remove members ---
@@ -282,6 +315,7 @@ class TeamServiceTest {
         assertThrows(BadRequestException.class,
                 () -> service.addMembers(admin, TEAM_ID, new AddTeamMembersRequest(List.of(8L, 99L))));
         verify(teamMemberRepository, never()).save(any());
+        verifyNoInteractions(auditLog);
     }
 
     @Test
@@ -298,6 +332,10 @@ class TeamServiceTest {
         verify(teamMemberRepository, times(1)).save(saved.capture());
         assertSame(linus, saved.getValue().getUser());
         assertSame(team, saved.getValue().getTeam());
+        // Only Linus was actually added, so only he is logged.
+        verify(auditLog).record(same(workspace), same(admin), eq(AuditAction.TEAM_MEMBER_ADDED),
+                eq(AuditTarget.user(linus)), isNull(), eq(AuditChange.of("team", null, "Backend")));
+        verifyNoMoreInteractions(auditLog);
     }
 
     @Test
@@ -316,6 +354,21 @@ class TeamServiceTest {
 
         assertDoesNotThrow(() -> service.removeMember(admin, TEAM_ID, 12L));
         verify(teamMemberRepository).deleteByTeamIdAndUserId(TEAM_ID, 12L);
+        // Nobody was removed, so nothing is logged.
+        verifyNoInteractions(auditLog);
+    }
+
+    @Test
+    void removeMemberLogsThePersonWhoWasRemoved() {
+        givenWorkspaceRole(admin, Role.WORKSPACE_ADMIN);
+        User linus = user(12L, "linus@example.com");
+        when(teamMemberRepository.deleteByTeamIdAndUserId(TEAM_ID, 12L)).thenReturn(1);
+        when(userRepository.findById(12L)).thenReturn(Optional.of(linus));
+
+        service.removeMember(admin, TEAM_ID, 12L);
+
+        verify(auditLog).record(same(workspace), same(admin), eq(AuditAction.TEAM_MEMBER_REMOVED),
+                eq(AuditTarget.user(linus)), isNull(), eq(AuditChange.of("team", "Backend", null)));
     }
 
     @Test
@@ -325,6 +378,7 @@ class TeamServiceTest {
 
         assertThrows(AccessDeniedException.class, () -> service.removeMember(member, TEAM_ID, 12L));
         verify(teamMemberRepository, never()).deleteByTeamIdAndUserId(anyLong(), anyLong());
+        verifyNoInteractions(auditLog);
     }
 
     // --- fixtures ---
