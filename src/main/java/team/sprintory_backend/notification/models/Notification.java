@@ -96,6 +96,17 @@ public class Notification {
     @Column(name = "read_at")
     private Instant readAt;
 
+    /** Marks it read; a second call keeps the first time. */
+    public void markRead(Instant when) {
+        if (readAt == null) {
+            readAt = when;
+        }
+    }
+
+    public boolean isRead() {
+        return readAt != null;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

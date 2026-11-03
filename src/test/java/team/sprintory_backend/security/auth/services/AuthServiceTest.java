@@ -3,6 +3,7 @@ package team.sprintory_backend.security.auth.services;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -15,6 +16,7 @@ import team.sprintory_backend.audit.models.AuditAction;
 import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.notification.email.EmailDeliveryException;
 import team.sprintory_backend.notification.email.EmailService;
+import team.sprintory_backend.notification.events.PasswordReset;
 import team.sprintory_backend.security.auth.dto.AuthUserResponse;
 import team.sprintory_backend.security.auth.dto.LoginRequest;
 import team.sprintory_backend.security.auth.dto.RegisterRequest;
@@ -53,6 +55,7 @@ class AuthServiceTest {
     private EmailService emailService;
     private AuditLogService auditLog;
     private LoginFailureTracker loginFailureTracker;
+    private ApplicationEventPublisher events;
     private AuthService service;
 
     @BeforeEach
@@ -66,8 +69,9 @@ class AuthServiceTest {
         emailService = mock(EmailService.class);
         auditLog = mock(AuditLogService.class);
         loginFailureTracker = mock(LoginFailureTracker.class);
+        events = mock(ApplicationEventPublisher.class);
         service = new AuthService(userRepository, authenticationManager, passwordEncoder, jwtService,
-                refreshTokenService, oneTimeTokenService, emailService, auditLog, loginFailureTracker);
+                refreshTokenService, oneTimeTokenService, emailService, auditLog, loginFailureTracker, events);
         ReflectionTestUtils.setField(service, "frontendUrl", "http://front");
         ReflectionTestUtils.setField(service, "verifyEmailPath", "/verify-email");
         ReflectionTestUtils.setField(service, "resetPasswordPath", "/reset-password");
@@ -310,11 +314,21 @@ class AuthServiceTest {
     }
 
     @Test
+    void resetPasswordTellsThePersonTheirPasswordChanged() {
+        User user = localUser(true);
+        when(oneTimeTokenService.consume("reset", RESET_PASSWORD)).thenReturn(user);
+
+        service.resetPassword("reset", "newpassword1");
+
+        verify(events).publishEvent(new PasswordReset(user));
+    }
+
+    @Test
     void resetPasswordWithAnInvalidLinkWritesNoAuditEntry() {
         when(oneTimeTokenService.consume("bad", RESET_PASSWORD)).thenThrow(new InvalidTokenException("invalid"));
 
         assertThrows(InvalidTokenException.class, () -> service.resetPassword("bad", "newpassword1"));
-        verifyNoInteractions(auditLog);
+        verifyNoInteractions(auditLog, events);
     }
 
     // --- fixtures ---

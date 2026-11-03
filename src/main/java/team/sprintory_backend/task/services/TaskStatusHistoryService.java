@@ -2,8 +2,10 @@ package team.sprintory_backend.task.services;
 
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.notification.events.TaskStatusChanged;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.services.ProjectAccess;
@@ -21,10 +23,16 @@ public class TaskStatusHistoryService {
     private final TaskStatusHistoryRepository historyRepository;
     private final ProjectAccess projectAccess;
     private final TaskRepository taskRepository;
+    private final ApplicationEventPublisher events;
 
+    /**
+     * Records a move to another column and tells the task's watchers (R27). Every status change
+     * comes through here: task update, board move and column delete.
+     */
     public void record(Task task, ProjectBoardColumn from, ProjectBoardColumn to, User actor) {
         if (!from.getId().equals(to.getId())) {
             historyRepository.save(new TaskStatusHistory(task, from, to, actor.getId()));
+            events.publishEvent(new TaskStatusChanged(task, actor, from.getName(), to.getName()));
         }
     }
 

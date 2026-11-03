@@ -1,6 +1,7 @@
 package team.sprintory_backend.task.services;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -11,6 +12,8 @@ import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.notification.events.TaskAssigned;
+import team.sprintory_backend.notification.events.TaskCreated;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
 import team.sprintory_backend.project.models.ProjectPermission;
@@ -66,6 +69,7 @@ public class TaskApiService {
     private final ProjectBoardStrategies boardStrategies;
     private final TaskStatusHistoryService statusHistory;
     private final AuditLogService auditLog;
+    private final ApplicationEventPublisher events;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -99,6 +103,10 @@ public class TaskApiService {
                 .boardPosition(boardPosition)
                 .backlogRank(backlogRank)
                 .build());
+        events.publishEvent(new TaskCreated(task, user));
+        if (assignee != null) {
+            events.publishEvent(new TaskAssigned(task, user, assignee));
+        }
         return TaskResponse.from(task);
     }
 
@@ -153,10 +161,17 @@ public class TaskApiService {
                 task.setBoardPosition(position);
             }
         }
+        // Only a change to another person notifies; clearing or re-setting the same one does not.
+        User newAssignee = null;
         if (request.clearAssignee()) {
             task.setAssignee(null);
         } else if (request.assigneeId() != null) {
-            task.setAssignee(requireAssignee(projectId, request.assigneeId()));
+            Long oldAssigneeId = (task.getAssignee() == null) ? null : task.getAssignee().getId();
+            User assignee = requireAssignee(projectId, request.assigneeId());
+            if (!assignee.getId().equals(oldAssigneeId)) {
+                newAssignee = assignee;
+            }
+            task.setAssignee(assignee);
         }
         if (request.clearEstimate()) {
             task.setEstimate(null);
@@ -174,6 +189,9 @@ public class TaskApiService {
         }
         // Flush now so the response carries the new updatedAt.
         TaskResponse saved = TaskResponse.from(taskRepository.saveAndFlush(task));
+        if (newAssignee != null) {
+            events.publishEvent(new TaskAssigned(task, user, newAssignee));
+        }
         return changedColumn ? saved.withWipWarning(wipWarning(projectId, task.getStatus())) : saved;
     }
 
