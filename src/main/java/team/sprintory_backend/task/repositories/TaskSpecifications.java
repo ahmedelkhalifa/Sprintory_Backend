@@ -31,6 +31,7 @@ public final class TaskSpecifications {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             predicates.add(cb.equal(root.get("project").get("id"), projectId));
+            predicates.add(cb.isNull(root.get("parent")));
             if (filters.type() != null) {
                 predicates.add(cb.equal(root.get("type"), TaskType.valueOf(filters.type())));
             }

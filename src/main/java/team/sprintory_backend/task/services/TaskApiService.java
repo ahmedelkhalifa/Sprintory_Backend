@@ -30,6 +30,8 @@ import team.sprintory_backend.task.dto.TaskStatusHistoryResponse;
 import team.sprintory_backend.task.dto.UpdateTaskRequest;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.models.TaskPriority;
+import team.sprintory_backend.project.models.BoardColumnCategory;
+import team.sprintory_backend.task.exceptions.OpenSubtasksConfirmationRequiredException;
 import team.sprintory_backend.task.models.TaskType;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.task.repositories.TaskSpecifications;
@@ -42,6 +44,8 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.Set;
 import java.util.function.ObjLongConsumer;
 
@@ -111,14 +115,19 @@ public class TaskApiService {
                                            TaskListOrder order, Pageable pageable) {
         projectAccess.require(projectId, user, ProjectPermission.VIEW_WORK);
         Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), order.sort());
-        return PageResponse.from(taskRepository.findAll(TaskSpecifications.matching(projectId, filters), sorted)
-                .map(TaskResponse::from));
+        var page = taskRepository.findAll(TaskSpecifications.matching(projectId, filters), sorted);
+        Map<Long, int[]> progress = progressByParentIds(page.getContent().stream()
+                .map(Task::getId).toList());
+        return PageResponse.from(page.map(task -> {
+            int[] counts = progress.getOrDefault(task.getId(), new int[]{0, 0});
+            return TaskResponse.from(task).withProgress(counts[0], counts[1]);
+        }));
     }
 
     @Transactional(readOnly = true)
     public TaskResponse get(User user, Long projectId, Long taskId) {
         projectAccess.require(projectId, user, ProjectPermission.VIEW_WORK);
-        return TaskResponse.from(requireTask(projectId, taskId));
+        return responseWithProgress(requireTask(projectId, taskId));
     }
 
     /**
@@ -131,6 +140,9 @@ public class TaskApiService {
         // Board configuration and moves lock the project; do the same before loading status.
         if (request.statusId() != null) projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
+        if (task.getParent() != null) {
+            throw new BadRequestException("Use the subtask endpoint to edit a subtask.");
+        }
         boolean changedColumn = false;
 
         if (request.title() != null) {
@@ -145,6 +157,7 @@ public class TaskApiService {
         if (request.statusId() != null) {
             ProjectBoardColumn status = requireColumn(projectId, request.statusId());
             if (!status.getId().equals(task.getStatus().getId())) {
+                requireCompletionConfirmation(task, status, request.confirmOpenSubtasks());
                 // Last in the new column. Read the column before the task joins it, under the lock.
                 long position = TaskRanks.last(taskRepository.findMaxBoardPosition(projectId, status.getId()));
                 statusHistory.record(task, task.getStatus(), status, user);
@@ -173,7 +186,7 @@ public class TaskApiService {
             task.getLabels().addAll(normalizeLabels(request.labels()));
         }
         // Flush now so the response carries the new updatedAt.
-        TaskResponse saved = TaskResponse.from(taskRepository.saveAndFlush(task));
+        TaskResponse saved = responseWithProgress(taskRepository.saveAndFlush(task));
         return changedColumn ? saved.withWipWarning(wipWarning(projectId, task.getStatus())) : saved;
     }
 
@@ -183,9 +196,39 @@ public class TaskApiService {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
         projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
-        task.setDeletedAt(Instant.now());
+        Instant deletedAt = Instant.now();
+        if (task.getParent() == null) {
+            // Only currently live children are cascade-deleted. A child deleted earlier by its
+            // author retains its independent tombstone and must not be revived with the parent.
+            List<Task> children = taskRepository.findByParentIdOrderByIdAsc(taskId);
+            for (Task child : children) {
+                child.setDeletedAt(deletedAt);
+                child.setDeletedWithParentId(taskId);
+            }
+            taskRepository.saveAll(children);
+        } else {
+            task.setDeletedWithParentId(null); // explicit child deletion
+        }
+        task.setDeletedAt(deletedAt);
         taskRepository.save(task);
         auditLog.record(project.getWorkspace(), user, AuditAction.TASK_DELETED, AuditTarget.task(task), project);
+    }
+
+    /** Restore a deleted task; only cascade-deleted children follow their parent back. */
+    @Transactional
+    public TaskResponse restore(User user, Long projectId, Long taskId) {
+        Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
+        projectRepository.lockById(projectId);
+        Long fallbackColumnId = firstColumn(projectId).getId();
+        int restored = taskRepository.restoreOne(projectId, taskId, fallbackColumnId, user.getEmail());
+        if (restored == 0) throw new ResourceNotFoundException("Task not found.");
+        // A child cannot itself have children. If this is a parent, revive only the children
+        // marked by its cascade; the query is harmless (0 affected) for an individual child.
+        taskRepository.restoreCascadedChildren(projectId, taskId, fallbackColumnId, user.getEmail());
+        Task task = requireTask(projectId, taskId);
+        auditLog.record(project.getWorkspace(), user, AuditAction.TASK_RESTORED,
+                AuditTarget.task(task), project);
+        return responseWithProgress(task);
     }
 
     /**
@@ -198,7 +241,11 @@ public class TaskApiService {
         // One move at a time per project, so two drags cannot take the same rank.
         projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
+        if (task.getParent() != null) {
+            throw new BadRequestException("Subtasks cannot appear as separate board cards.");
+        }
         ProjectBoardColumn target = requireColumn(projectId, request.statusId());
+        requireCompletionConfirmation(task, target, request.confirmOpenSubtasks());
         Task after = requirePlaceAfter(projectId, task, request.afterTaskId());
         if (after != null && !after.getStatus().getId().equals(target.getId())) {
             throw new BadRequestException("The task to place it after must be in the target column.");
@@ -218,7 +265,7 @@ public class TaskApiService {
             renumber(taskRepository.findColumnInBoardOrder(projectId, target.getId()), task, after,
                     Task::setBoardPosition);
         }
-        TaskResponse saved = TaskResponse.from(taskRepository.saveAndFlush(task));
+        TaskResponse saved = responseWithProgress(taskRepository.saveAndFlush(task));
         return saved.withWipWarning(wipWarning(projectId, target));
     }
 
@@ -234,6 +281,9 @@ public class TaskApiService {
         }
         projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
+        if (task.getParent() != null) {
+            throw new BadRequestException("Subtasks cannot be reordered in the product backlog.");
+        }
         Task after = requirePlaceAfter(projectId, task, request.afterTaskId());
 
         Long previous = (after == null) ? null : after.getBacklogRank();
@@ -247,7 +297,7 @@ public class TaskApiService {
         } else {
             renumber(taskRepository.findProjectInBacklogOrder(projectId), task, after, Task::setBacklogRank);
         }
-        return TaskResponse.from(taskRepository.saveAndFlush(task));
+        return responseWithProgress(taskRepository.saveAndFlush(task));
     }
 
     /**
@@ -271,8 +321,12 @@ public class TaskApiService {
         if (afterTaskId.equals(moving.getId())) {
             throw new BadRequestException("A task cannot be placed after itself.");
         }
-        return taskRepository.findByIdAndProjectId(afterTaskId, projectId)
+        Task after = taskRepository.findByIdAndProjectId(afterTaskId, projectId)
                 .orElseThrow(() -> new BadRequestException("The task to place it after is not in this project."));
+        if (after.getParent() != null) {
+            throw new BadRequestException("A subtask cannot be used to position a board card.");
+        }
+        return after;
     }
 
     @Transactional(readOnly = true)
@@ -282,7 +336,7 @@ public class TaskApiService {
 
     private WipWarning wipWarning(Long projectId, ProjectBoardColumn column) {
         if (column.getWipLimit() == null) return null;
-        long count = taskRepository.countByProjectIdAndStatusId(projectId, column.getId());
+        long count = taskRepository.countByProjectIdAndStatusIdAndParentIsNull(projectId, column.getId());
         return count > column.getWipLimit()
                 ? new WipWarning(column.getId(), count, column.getWipLimit(),
                         "WIP limit exceeded; the task was moved successfully.") : null;
@@ -291,6 +345,32 @@ public class TaskApiService {
     private ProjectBoardColumn requireColumn(Long projectId, Long statusId) {
         return columnRepository.findByIdAndBoardProjectId(statusId, projectId)
                 .orElseThrow(() -> new BadRequestException("The status must be a column of this project's board."));
+    }
+
+    /** Only a real transition to DONE needs confirmation, not a within-DONE reorder. */
+    private void requireCompletionConfirmation(Task task, ProjectBoardColumn target, boolean confirmed) {
+        if (task.getParent() != null || target.getCategory() != BoardColumnCategory.DONE
+                || task.getStatus().getCategory() == BoardColumnCategory.DONE || confirmed) return;
+        long open = taskRepository.countByParentIdAndStatusCategoryNot(task.getId(), BoardColumnCategory.DONE);
+        if (open > 0) throw new OpenSubtasksConfirmationRequiredException(open);
+    }
+
+    private TaskResponse responseWithProgress(Task task) {
+        TaskResponse response = TaskResponse.from(task);
+        if (task.getParent() != null) return response;
+        Map<Long, int[]> progress = progressByParentIds(List.of(task.getId()));
+        int[] counts = progress.getOrDefault(task.getId(), new int[]{0, 0});
+        return response.withProgress(counts[0], counts[1]);
+    }
+
+    private Map<Long, int[]> progressByParentIds(List<Long> parentIds) {
+        if (parentIds.isEmpty()) return Map.of();
+        Map<Long, int[]> result = new HashMap<>();
+        for (Object[] row : taskRepository.findSubtaskProgress(parentIds)) {
+            result.put(((Number) row[0]).longValue(), new int[]{
+                    ((Number) row[1]).intValue(), ((Number) row[2]).intValue()});
+        }
+        return result;
     }
 
     /** Missing, deleted and other projects' tasks all give the same 404. */

@@ -26,28 +26,51 @@ public record TaskResponse(
         Long sprintId,
         Instant createdAt,
         Instant updatedAt,
-        WipWarning wipWarning
+        WipWarning wipWarning,
+        Long parentTaskId,
+        Integer estimateMinutes,
+        int subtaskTotal,
+        int subtaskDone
 ) {
     public TaskResponse(Long id, Long projectId, String key, String title, TaskType type,
                         TaskPriority priority, Long statusId, String statusName, Long assigneeId,
                         Integer estimate, List<String> labels, String description, Long sprintId,
                         Instant createdAt, Instant updatedAt) {
         this(id, projectId, key, title, type, priority, statusId, statusName, assigneeId,
-                estimate, labels, description, sprintId, createdAt, updatedAt, null);
+                estimate, labels, description, sprintId, createdAt, updatedAt, null, null, null, 0, 0);
+    }
+
+    /** Preserve the PMP-125 16-argument constructor for existing callers. */
+    public TaskResponse(Long id, Long projectId, String key, String title, TaskType type,
+                        TaskPriority priority, Long statusId, String statusName, Long assigneeId,
+                        Integer estimate, List<String> labels, String description, Long sprintId,
+                        Instant createdAt, Instant updatedAt, WipWarning wipWarning) {
+        this(id, projectId, key, title, type, priority, statusId, statusName, assigneeId,
+                estimate, labels, description, sprintId, createdAt, updatedAt, wipWarning,
+                null, null, 0, 0);
+    }
+
+    public TaskResponse withProgress(int total, int done) {
+        return new TaskResponse(id, projectId, key, title, type, priority, statusId, statusName,
+                assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt,
+                wipWarning, parentTaskId, estimateMinutes, total, done);
     }
 
     public TaskResponse withWipWarning(WipWarning warning) {
         return new TaskResponse(id, projectId, key, title, type, priority, statusId, statusName,
-                assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt, warning);
+                assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt, warning,
+                parentTaskId, estimateMinutes, subtaskTotal, subtaskDone);
     }
 
     /** Labels sorted for a stable order. {@code sprintId} stays null until sprints exist (R14). */
     public static TaskResponse from(Task task) {
         return new TaskResponse(task.getId(), task.getProject().getId(), task.getKey(), task.getTitle(),
                 task.getType(), task.getPriority(), task.getStatus().getId(), task.getStatus().getName(),
-                task.getAssignee() == null ? null : task.getAssignee().getId(), task.getEstimate(),
+                task.getAssignee() == null ? null : task.getAssignee().getId(),
+                task.getParent() == null ? task.getEstimate() : null,
                 task.getLabels().stream().sorted().toList(), task.getDescription(), null,
-                toInstant(task.getCreatedAt()), toInstant(task.getUpdatedAt()));
+                toInstant(task.getCreatedAt()), toInstant(task.getUpdatedAt()), null,
+                task.getParent() == null ? null : task.getParent().getId(), task.getEstimateMinutes(), 0, 0);
     }
 
     /** The audit columns are local date-times written in the server's zone. */

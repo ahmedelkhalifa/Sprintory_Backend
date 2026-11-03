@@ -60,7 +60,8 @@ public class ProjectBoardService {
         ProjectBoardTemplateStrategy strategy = strategies.forTemplate(project.getTemplate());
         List<ProjectBoardColumnResponse> columns = active(projectId).stream()
                 .map(c -> ProjectBoardColumnResponse.from(c,
-                        taskRepository.countByProjectIdAndStatusId(projectId, c.getId())))
+                        taskRepository.countByProjectIdAndStatusIdAndParentIsNull(projectId, c.getId()),
+                        taskRepository.countByProjectIdAndStatusIdAndParentIsNotNull(projectId, c.getId())))
                 .toList();
         return new ProjectBoardResponse(projectId, project.getTemplate(), strategy.backlogEnabled(),
                 strategy.sprintsEnabled(), strategy.wipLimitsEnabled(), null, columns);
@@ -170,7 +171,7 @@ public class ProjectBoardService {
                 && countCategory(columns, BoardColumnCategory.TODO) <= 1) {
             throw new BadRequestException("At least one TODO column must remain.");
         }
-        List<Task> tasks = taskRepository.findColumnInBoardOrder(projectId, columnId);
+        List<Task> tasks = taskRepository.findAllInColumnForDeletion(projectId, columnId);
         Long targetId = request == null ? null : request.targetColumnId();
         if (!tasks.isEmpty() && targetId == null) {
             throw new BadRequestException("Choose a target column for the tasks before deleting.");
