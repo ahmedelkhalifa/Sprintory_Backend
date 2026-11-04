@@ -1,6 +1,7 @@
 package team.sprintory_backend.project.services;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -12,6 +13,9 @@ import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.Pageables;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
+import team.sprintory_backend.notification.events.ProjectMemberAdded;
+import team.sprintory_backend.notification.events.ProjectRolesChanged;
+import team.sprintory_backend.notification.repositories.TaskWatcherRepository;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.project.dto.AddProjectMembersRequest;
 import team.sprintory_backend.project.dto.AddTeamToProjectRequest;
@@ -70,7 +74,9 @@ public class ProjectService {
     private final ProjectAccess projectAccess;
     private final ProjectBoardService projectBoardService;
     private final TaskRepository taskRepository;
+    private final TaskWatcherRepository taskWatcherRepository;
     private final AuditLogService auditLog;
+    private final ApplicationEventPublisher events;
 
     /** Any member of an active workspace can create a project, and becomes its Project Manager. */
     @Transactional
@@ -178,6 +184,7 @@ public class ProjectService {
                 auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_MEMBER_ADDED,
                         AuditTarget.user(member.getUser()), project,
                         AuditChange.of("roles", null, ProjectRole.MEMBER.name()));
+                events.publishEvent(new ProjectMemberAdded(project, user, member.getUser()));
             }
         }
     }
@@ -199,6 +206,7 @@ public class ProjectService {
                         AuditTarget.user(teamMember), project,
                         AuditChange.of("roles", null, ProjectRole.MEMBER.name()),
                         AuditChange.of("viaTeam", null, team.getName()));
+                events.publishEvent(new ProjectMemberAdded(project, user, teamMember));
             }
         }
     }
@@ -221,6 +229,8 @@ public class ProjectService {
         int deleted = projectMemberRepository.deleteByProjectIdAndUserId(project.getId(), userId);
         // Only project members may be assignees (story 9).
         taskRepository.unassignInProject(project.getId(), userId);
+        // Nothing more from this project reaches them (docs/notifications-docs.md §7).
+        taskWatcherRepository.deleteInProject(project.getId(), userId);
         if (deleted > 0 && removed != null) {
             auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_MEMBER_REMOVED, removed, project,
                     AuditChange.of("roles", oldRoles, null));
@@ -252,6 +262,7 @@ public class ProjectService {
         if (!newRoles.equals(oldRoles)) {
             auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_ROLES_CHANGED,
                     AuditTarget.user(target.getUser()), project, AuditChange.of("roles", oldRoles, newRoles));
+            events.publishEvent(new ProjectRolesChanged(project, user, target.getUser(), wanted));
         }
         return ProjectMemberResponse.from(saved);
     }

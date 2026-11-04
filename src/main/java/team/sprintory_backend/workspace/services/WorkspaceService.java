@@ -13,6 +13,7 @@ import team.sprintory_backend.common.Pageables;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.notification.repositories.TaskWatcherRepository;
 import team.sprintory_backend.project.exceptions.LastProjectManagerException;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectRole;
@@ -53,6 +54,7 @@ public class WorkspaceService {
     private final ProjectMemberRepository projectMemberRepository;
     private final TeamMemberRepository teamMemberRepository;
     private final TaskRepository taskRepository;
+    private final TaskWatcherRepository taskWatcherRepository;
     private final AuditLogService auditLog;
 
     /** Creates an empty workspace and makes the caller its admin. */
@@ -191,6 +193,7 @@ public class WorkspaceService {
         AuditTarget removed = AuditTarget.user(leaving ? user : target.getUser());
         String oldRole = target.getRole().name();
         taskRepository.unassignInWorkspace(workspaceId, userId);
+        taskWatcherRepository.deleteInWorkspace(workspaceId, userId);
         workspaceMemberRepository.delete(target);
         auditLog.record(caller.getWorkspace(), user,
                 leaving ? AuditAction.MEMBER_LEFT : AuditAction.MEMBER_REMOVED,

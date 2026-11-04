@@ -8,6 +8,7 @@ import java.util.Deque;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -15,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import team.sprintory_backend.audit.models.AuditAction;
 import team.sprintory_backend.audit.models.AuditChange;
 import team.sprintory_backend.audit.services.AuditLogService;
+import team.sprintory_backend.notification.events.RepeatedLoginFailures;
 import team.sprintory_backend.user.models.Provider;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
@@ -36,17 +38,21 @@ public class LoginFailureTracker {
 
     private final UserRepository userRepository;
     private final AuditLogService auditLog;
+    private final ApplicationEventPublisher events;
     private final Clock clock;
     private final Map<String, Deque<Instant>> failures = new ConcurrentHashMap<>();
 
     @Autowired
-    public LoginFailureTracker(UserRepository userRepository, AuditLogService auditLog) {
-        this(userRepository, auditLog, Clock.systemUTC());
+    public LoginFailureTracker(UserRepository userRepository, AuditLogService auditLog,
+                               ApplicationEventPublisher events) {
+        this(userRepository, auditLog, events, Clock.systemUTC());
     }
 
-    LoginFailureTracker(UserRepository userRepository, AuditLogService auditLog, Clock clock) {
+    LoginFailureTracker(UserRepository userRepository, AuditLogService auditLog,
+                        ApplicationEventPublisher events, Clock clock) {
         this.userRepository = userRepository;
         this.auditLog = auditLog;
+        this.events = events;
         this.clock = clock;
     }
 
@@ -67,6 +73,8 @@ public class LoginFailureTracker {
         if (burst) {
             auditLog.recordInAllWorkspacesOf(user, null, AuditAction.LOGIN_FAILED_REPEATED,
                     AuditChange.of("failedAttempts", null, String.valueOf(THRESHOLD)));
+            // The account owner is told too, always (docs/notifications-docs.md §5).
+            events.publishEvent(new RepeatedLoginFailures(user, THRESHOLD));
         }
     }
 

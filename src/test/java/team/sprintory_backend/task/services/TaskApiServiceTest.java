@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -17,6 +18,8 @@ import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.notification.events.TaskAssigned;
+import team.sprintory_backend.notification.events.TaskCreated;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectBoard;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
@@ -67,6 +70,7 @@ class TaskApiServiceTest {
     private ProjectBoardColumnRepository columnRepository;
     private UserRepository userRepository;
     private AuditLogService auditLog;
+    private ApplicationEventPublisher events;
     private TaskApiService service;
     private User user;
     private Workspace workspace;
@@ -82,10 +86,11 @@ class TaskApiServiceTest {
         columnRepository = mock(ProjectBoardColumnRepository.class);
         userRepository = mock(UserRepository.class);
         auditLog = mock(AuditLogService.class);
+        events = mock(ApplicationEventPublisher.class);
         service = new TaskApiService(access, taskRepository, projectRepository, projectMemberRepository,
                 columnRepository, userRepository,
                 new ProjectBoardStrategies(List.of(new ScrumBoardStrategy(), new KanbanBoardStrategy())),
-                mock(team.sprintory_backend.task.services.TaskStatusHistoryService.class), auditLog);
+                mock(team.sprintory_backend.task.services.TaskStatusHistoryService.class), auditLog, events);
         user = User.builder().id(42L).firstName("Ada").lastName("Lovelace")
                 .email("ada@example.com").build();
 
@@ -137,6 +142,10 @@ class TaskApiServiceTest {
         assertNull(response.description());
         assertEquals(List.of("R09", "backend"), response.labels());
         assertEquals(PROJECT_ID, response.projectId());
+        // Without an assignee only the creator's auto-watch event goes out.
+        Task created = savedTask();
+        verify(events).publishEvent(new TaskCreated(created, user));
+        verify(events, never()).publishEvent(any(TaskAssigned.class));
     }
 
     @Test
@@ -154,6 +163,9 @@ class TaskApiServiceTest {
         assertEquals(3, response.estimate());
         assertEquals("Steps to reproduce", response.description());
         assertEquals(List.of(), response.labels());
+        Task created = savedTask();
+        verify(events).publishEvent(new TaskCreated(created, user));
+        verify(events).publishEvent(new TaskAssigned(created, user, assignee));
     }
 
     @Test
@@ -166,6 +178,7 @@ class TaskApiServiceTest {
         assertEquals("The assignee must be a member of this project.", e.getMessage());
         verify(projectRepository, never()).incrementTaskNumber(anyLong());
         verify(taskRepository, never()).save(any());
+        verifyNoInteractions(events);
     }
 
     @Test
@@ -177,6 +190,7 @@ class TaskApiServiceTest {
                 new CreateTaskRequest("Fix bug", null, null, null, null, null, null)));
         verify(projectRepository, never()).incrementTaskNumber(anyLong());
         verify(taskRepository, never()).save(any());
+        verifyNoInteractions(events);
     }
 
     // --- get ---
@@ -271,6 +285,57 @@ class TaskApiServiceTest {
 
         assertThrows(BadRequestException.class, () -> service.update(user, PROJECT_ID, 5L,
                 new UpdateTaskRequest(null, null, null, null, 9L, null, null, null, false, false, false)));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    void updateToAnotherAssigneePublishesTheAssignment() {
+        Task task = givenTask();
+        User grace = User.builder().id(9L).build();
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, 9L)).thenReturn(true);
+        when(userRepository.getReferenceById(9L)).thenReturn(grace);
+
+        service.update(user, PROJECT_ID, 5L,
+                new UpdateTaskRequest(null, null, null, null, 9L, null, null, null, false, false, false));
+
+        assertSame(grace, task.getAssignee());
+        verify(events).publishEvent(new TaskAssigned(task, user, grace));
+    }
+
+    @Test
+    void updateToTheSameAssigneePublishesNothing() {
+        givenTask();
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, 7L)).thenReturn(true);
+        when(userRepository.getReferenceById(7L)).thenReturn(User.builder().id(7L).build());
+
+        service.update(user, PROJECT_ID, 5L,
+                new UpdateTaskRequest(null, null, null, null, 7L, null, null, null, false, false, false));
+
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    void anUnassignedTaskGettingAnAssigneePublishesTheAssignment() {
+        Task task = givenTask();
+        task.setAssignee(null);
+        User grace = User.builder().id(9L).build();
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, 9L)).thenReturn(true);
+        when(userRepository.getReferenceById(9L)).thenReturn(grace);
+
+        service.update(user, PROJECT_ID, 5L,
+                new UpdateTaskRequest(null, null, null, null, 9L, null, null, null, false, false, false));
+
+        verify(events).publishEvent(new TaskAssigned(task, user, grace));
+    }
+
+    @Test
+    void clearingTheAssigneePublishesNothing() {
+        givenTask();
+
+        service.update(user, PROJECT_ID, 5L,
+                new UpdateTaskRequest(null, null, null, null, null, null, null, null, true, false, false));
+
+        verifyNoInteractions(events);
     }
 
     // --- delete ---

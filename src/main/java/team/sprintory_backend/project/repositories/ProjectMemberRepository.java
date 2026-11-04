@@ -35,6 +35,10 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
 
     boolean existsByProjectIdAndUserId(Long projectId, Long userId);
 
+    /** Everyone in the project right now: the recipients of sprint notifications, and the filter for the rest. */
+    @Query("select pm.user.id from ProjectMember pm where pm.project.id = :projectId")
+    List<Long> findUserIdsByProjectId(@Param("projectId") Long projectId);
+
     /** The user's membership in the project with its roles loaded, or empty if they are not in it. */
     @Query("select pm from ProjectMember pm left join fetch pm.roles "
             + "where pm.project.id = :projectId and pm.user.id = :userId")

@@ -21,9 +21,11 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 import team.sprintory_backend.audit.models.AuditAction;
 import team.sprintory_backend.audit.models.AuditChange;
 import team.sprintory_backend.audit.services.AuditLogService;
+import team.sprintory_backend.notification.events.RepeatedLoginFailures;
 import team.sprintory_backend.user.models.Provider;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
@@ -34,6 +36,7 @@ class LoginFailureTrackerTest {
 
     private UserRepository userRepository;
     private AuditLogService auditLog;
+    private ApplicationEventPublisher events;
     private MutableClock clock;
     private LoginFailureTracker tracker;
     private User bob;
@@ -42,8 +45,9 @@ class LoginFailureTrackerTest {
     void setUp() {
         userRepository = mock(UserRepository.class);
         auditLog = mock(AuditLogService.class);
+        events = mock(ApplicationEventPublisher.class);
         clock = new MutableClock(Instant.parse("2026-11-02T10:00:00Z"));
-        tracker = new LoginFailureTracker(userRepository, auditLog, clock);
+        tracker = new LoginFailureTracker(userRepository, auditLog, events, clock);
         bob = User.builder().id(23L).firstName("Bob").lastName("Smith").email(EMAIL)
                 .provider(Provider.LOCAL).enabled(true).build();
         when(userRepository.findByEmail(anyString())).thenReturn(Optional.empty());
@@ -53,12 +57,14 @@ class LoginFailureTrackerTest {
     @Test
     void fourFailuresWriteNothingAndTheFifthWritesOneEntry() {
         fail(4);
-        verifyNoInteractions(auditLog);
+        verifyNoInteractions(auditLog, events);
 
         fail(1);
 
         verify(auditLog).recordInAllWorkspacesOf(same(bob), isNull(), eq(AuditAction.LOGIN_FAILED_REPEATED),
                 eq(AuditChange.of("failedAttempts", null, "5")));
+        // The account owner is told at the same moment (R27).
+        verify(events).publishEvent(new RepeatedLoginFailures(bob, 5));
     }
 
     @Test
@@ -118,7 +124,7 @@ class LoginFailureTrackerTest {
             tracker.recordFailure("u@example.com");
         }
 
-        verifyNoInteractions(auditLog);
+        verifyNoInteractions(auditLog, events);
         assertEquals(0, tracker.trackedAccounts(), "only real accounts are kept in memory");
     }
 

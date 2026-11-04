@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.util.ReflectionTestUtils;
 import team.sprintory_backend.audit.models.AuditAction;
@@ -13,6 +14,7 @@ import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.notification.email.EmailDeliveryException;
 import team.sprintory_backend.notification.email.EmailService;
+import team.sprintory_backend.notification.events.WorkspaceInvited;
 import team.sprintory_backend.security.auth.services.OpaqueTokens;
 import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
@@ -53,6 +55,7 @@ class InvitationServiceTest {
     private UserRepository userRepository;
     private EmailService emailService;
     private AuditLogService auditLog;
+    private ApplicationEventPublisher events;
     private InvitationService service;
     private User admin;
 
@@ -63,8 +66,9 @@ class InvitationServiceTest {
         userRepository = mock(UserRepository.class);
         emailService = mock(EmailService.class);
         auditLog = mock(AuditLogService.class);
+        events = mock(ApplicationEventPublisher.class);
         service = new InvitationService(invitationRepository, workspaceMemberRepository, userRepository,
-                new WorkspaceAccess(workspaceMemberRepository), emailService, auditLog);
+                new WorkspaceAccess(workspaceMemberRepository), emailService, auditLog, events);
         ReflectionTestUtils.setField(service, "frontendUrl", "http://front");
         ReflectionTestUtils.setField(service, "invitePath", "/accept-invite");
         ReflectionTestUtils.setField(service, "inviteTtlMs", SEVEN_DAYS_MS);
@@ -82,7 +86,7 @@ class InvitationServiceTest {
         givenMembership(admin, Role.WORKSPACE_MEMBER, false);
 
         assertThrows(AccessDeniedException.class, () -> invite("grace@example.com"));
-        verifyNoInteractions(emailService, auditLog);
+        verifyNoInteractions(emailService, auditLog, events);
     }
 
     @Test
@@ -90,7 +94,7 @@ class InvitationServiceTest {
         givenMembership(admin, Role.WORKSPACE_ADMIN, true);
 
         assertThrows(WorkspaceArchivedException.class, () -> invite("grace@example.com"));
-        verifyNoInteractions(emailService, auditLog);
+        verifyNoInteractions(emailService, auditLog, events);
     }
 
     @Test
@@ -108,6 +112,23 @@ class InvitationServiceTest {
                 eq(AuditAction.MEMBER_INVITED), eq(AuditTarget.invitation("bob@example.com")), isNull(), eq(role));
         // Linus is already a member, so he is not invited and not logged.
         verifyNoMoreInteractions(auditLog);
+    }
+
+    @Test
+    void inviteAnnouncesEachInvitedEmailButNotExistingMembers() {
+        givenMembership(admin, Role.WORKSPACE_ADMIN, false);
+        when(userRepository.findByEmail("linus@example.com")).thenReturn(Optional.of(user(9L, "linus@example.com")));
+        when(workspaceMemberRepository.existsByWorkspaceIdAndUserId(WORKSPACE_ID, 9L)).thenReturn(true);
+
+        invite("grace@example.com", "linus@example.com");
+
+        // Whether grace has an account is the listener's question, not the producer's.
+        ArgumentCaptor<WorkspaceInvited> published = ArgumentCaptor.forClass(WorkspaceInvited.class);
+        verify(events).publishEvent(published.capture());
+        assertEquals("grace@example.com", published.getValue().email());
+        assertSame(admin, published.getValue().inviter());
+        assertEquals(WORKSPACE_ID, published.getValue().workspace().getId());
+        verifyNoMoreInteractions(events);
     }
 
     @Test
@@ -192,6 +213,7 @@ class InvitationServiceTest {
 
         // Propagating is what makes the transaction roll back and the advice answer 503.
         assertThrows(EmailDeliveryException.class, () -> invite("grace@example.com"));
+        verifyNoInteractions(events);
     }
 
     // --- lookup ---

@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -14,6 +15,7 @@ import team.sprintory_backend.audit.models.AuditTarget;
 import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.notification.email.EmailService;
+import team.sprintory_backend.notification.events.WorkspaceInvited;
 import team.sprintory_backend.security.auth.services.OpaqueTokens;
 import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
@@ -54,6 +56,7 @@ public class InvitationService {
     private final WorkspaceAccess workspaceAccess;
     private final EmailService emailService;
     private final AuditLogService auditLog;
+    private final ApplicationEventPublisher events;
 
     // Not final: @Value on a final field with @RequiredArgsConstructor fails at startup.
     @Value("${app.frontend-url}")
@@ -88,6 +91,8 @@ public class InvitationService {
             // The token and link never reach the log.
             auditLog.record(workspace, admin, AuditAction.MEMBER_INVITED, AuditTarget.invitation(email), null,
                     AuditChange.of("role", null, Role.WORKSPACE_MEMBER.name()));
+            // In-app only, for an existing account; the email above is the invitation itself.
+            events.publishEvent(new WorkspaceInvited(workspace, admin, email));
             invited.add(email);
         }
         return new InvitationsSentResponse(invited, alreadyMembers);

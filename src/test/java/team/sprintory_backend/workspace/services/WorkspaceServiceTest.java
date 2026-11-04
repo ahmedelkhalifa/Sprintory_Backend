@@ -20,6 +20,7 @@ import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
+import team.sprintory_backend.notification.repositories.TaskWatcherRepository;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.user.models.Role;
@@ -63,6 +64,7 @@ class WorkspaceServiceTest {
     private ProjectMemberRepository projectMemberRepository;
     private TeamMemberRepository teamMemberRepository;
     private TaskRepository taskRepository;
+    private TaskWatcherRepository taskWatcherRepository;
     private AuditLogService auditLog;
     private WorkspaceService service;
     private User user;
@@ -78,10 +80,12 @@ class WorkspaceServiceTest {
         projectMemberRepository = mock(ProjectMemberRepository.class);
         teamMemberRepository = mock(TeamMemberRepository.class);
         taskRepository = mock(TaskRepository.class);
+        taskWatcherRepository = mock(TaskWatcherRepository.class);
         auditLog = mock(AuditLogService.class);
         service = new WorkspaceService(workspaceRepository, workspaceMemberRepository,
                 new WorkspaceAccess(workspaceMemberRepository), slugGenerator,
-                projectRepository, projectMemberRepository, teamMemberRepository, taskRepository, auditLog);
+                projectRepository, projectMemberRepository, teamMemberRepository, taskRepository,
+                taskWatcherRepository, auditLog);
         user = User.builder().id(7L).firstName("Ada").lastName("Lovelace").email("ada@example.com").build();
         when(workspaceMemberRepository.findByWorkspaceIdAndUserId(anyLong(), anyLong())).thenReturn(Optional.empty());
         when(workspaceMemberRepository.save(any(WorkspaceMember.class))).thenAnswer(call -> call.getArgument(0));
@@ -439,6 +443,7 @@ class WorkspaceServiceTest {
         verify(projectMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, OTHER_ID);
         verify(teamMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, OTHER_ID);
         verify(taskRepository).unassignInWorkspace(WORKSPACE_ID, OTHER_ID);
+        verify(taskWatcherRepository).deleteInWorkspace(WORKSPACE_ID, OTHER_ID);
         verify(workspaceMemberRepository).delete(other);
         verify(auditLog).record(same(admin.getWorkspace()), same(user), eq(AuditAction.MEMBER_REMOVED),
                 eq(AuditTarget.user(grace)), isNull(), eq(AuditChange.of("role", "WORKSPACE_MEMBER", null)));
@@ -453,6 +458,7 @@ class WorkspaceServiceTest {
         verify(projectMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, 7L);
         verify(teamMemberRepository).deleteByWorkspaceIdAndUserId(WORKSPACE_ID, 7L);
         verify(taskRepository).unassignInWorkspace(WORKSPACE_ID, 7L);
+        verify(taskWatcherRepository).deleteInWorkspace(WORKSPACE_ID, 7L);
         verify(workspaceMemberRepository).delete(member);
         verify(auditLog).record(same(member.getWorkspace()), same(user), eq(AuditAction.MEMBER_LEFT),
                 eq(AuditTarget.user(user)), isNull(), eq(AuditChange.of("role", "WORKSPACE_MEMBER", null)));
@@ -561,6 +567,7 @@ class WorkspaceServiceTest {
         verify(projectMemberRepository, never()).deleteByWorkspaceIdAndUserId(anyLong(), anyLong());
         verify(teamMemberRepository, never()).deleteByWorkspaceIdAndUserId(anyLong(), anyLong());
         verify(taskRepository, never()).unassignInWorkspace(anyLong(), anyLong());
+        verify(taskWatcherRepository, never()).deleteInWorkspace(anyLong(), anyLong());
         verify(workspaceMemberRepository, never()).delete(any());
         verifyNoInteractions(auditLog);
     }
