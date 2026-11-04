@@ -395,11 +395,13 @@ Emails contain the task key, title, the excerpt if any, a link to the item, and 
 
 | Property | Default | Used for |
 | --- | --- | --- |
-| `app.notifications.task-path` | `/projects/{projectId}/tasks/{taskKey}` | task notifications |
-| `app.notifications.project-path` | `/projects/{projectId}` | project and sprint notifications |
-| `app.notifications.preferences-path` | `/settings/notifications` | the footer link of every notification email |
+| `app.notifications.task-path` | `/workspaces/{workspaceId}/projects/{projectId}/tasks/{taskId}` | task notifications |
+| `app.notifications.project-path` | `/workspaces/{workspaceId}/projects/{projectId}` | project and sprint notifications |
+| `app.notifications.preferences-path` | `/settings` | the footer link of every notification email |
 
-   All are appended to `app.frontend-url` and set in `application.properties`. If a route changes, only the property changes, not the code. The retention is `app.notifications.retention-days` (default `90`).
+   All are appended to `app.frontend-url` and set in `application.properties`. If a route changes, only the property changes, not the code. Write the placeholders exactly as above (camelCase, in braces); any other text is left as it is. For example, a task email in development links to `http://localhost:5173/workspaces/4/projects/15/tasks/230`. The retention is `app.notifications.retention-days` (default `90`).
+
+   In the app, the frontend builds the same routes from the answer of [§3.3](#33-open-a-notification), which carries `workspaceId`, `projectId` and `taskId`.
 6. **Emails that do not go through the outbox:** account verification, password reset links and workspace invitations. They are sent inline as before ([auth-endpoints.md](./auth-endpoints.md), [workspaces-docs.md](./workspaces-docs.md)), so their success and failure behaviour is unchanged.
 
 ---

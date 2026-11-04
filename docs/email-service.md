@@ -36,8 +36,8 @@ The notification template also takes an optional button and a preferences link (
 ```java
 templateFactory.notification("Alex", "[Sprintory] MOB-42 Fix login: you were assigned",
         "Damir assigned you MOB-42 \"Fix login\"",
-        "Open task", "https://app.example.com/projects/15/tasks/MOB-42",
-        "https://app.example.com/settings/notifications");
+        "Open task", "https://app.example.com/workspaces/4/projects/15/tasks/230",
+        "https://app.example.com/settings");
 ```
 
 The footer then reads "You are receiving this email because of your Sprintory notification preferences. Manage them at <link>".
