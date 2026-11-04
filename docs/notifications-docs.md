@@ -1,6 +1,6 @@
 # Sprintory — Notifications API contract (R27, PMP-32)
 
-**Status:** contract written. The backend (PMP-113, branch `features/notifications`) has not been started. See [§13 Implementation status](#13-implementation-status).
+**Status:** backend implemented and tested, including against PostgreSQL (PMP-113, branch `features/notifications`). Still open: the manual end-to-end run with Mailpit. See [§13 Implementation status](#13-implementation-status).
 **Applies to:**
 - backend `/api/v1/notifications/**`, `/api/v1/notification-preferences` and `/api/v1/projects/{projectId}/tasks/{taskId}/watch`;
 - the actions in [§5](#5-event-catalogue) that produce notifications.
@@ -244,7 +244,7 @@ es.addEventListener("notification", e => prependToList(JSON.parse(e.data)));   /
 | --- | --- | --- |
 | `unread-count` | `{ "count": n }` | Immediately after connecting, and every time the count changes. Changes come from a new notification, an open ([§3.3](#33-open-a-notification)) or read-all ([§3.4](#34-mark-all-as-read)), in this tab or in another tab or device. |
 | `notification` | a `NotificationResponse` | A new in-app notification for the caller. It is always followed by an `unread-count`. |
-| *(comment)* | none | `: keep-alive` every 25 s, so proxies do not close an idle connection. `EventSource` ignores comments. |
+| *(comment)* | none | `: connected` (together with `retry: 3000`) as the very first line, and `: keep-alive` every 25 s, so proxies do not close an idle connection. `EventSource` ignores comments. |
 
 **Rules:**
 - **Events are sent only after the action's transaction commits.** A refused or rolled-back action never pushes anything.
@@ -372,10 +372,25 @@ Emails contain the task key, title, the excerpt if any, a link to the item, and 
 2. **A background worker** checks the outbox every 15 seconds and sends due emails. In normal operation an email arrives within about 15–30 seconds of the action.
 3. **Retries.** A failed send is retried after 1 min, 5 min, 15 min, 1 h and 6 h. After the 6th failed attempt the email is marked `FAILED`, logged, and given up.
 4. **Content** uses the shared email layout ([email-service.md](./email-service.md)):
-   - subject: `[Sprintory] <short summary>`, for example `[Sprintory] MOB-42 Fix login: you were assigned`;
-   - body: the `message`, then the `excerpt` if any;
-   - a button: "Open task" or "Open project", or "Open Sprintory" for security emails;
-   - a footer with "Manage your notification preferences" and a link to the preferences page.
+   - greeting: "Hi <first name>,";
+   - body: the `message` (the same text as the bell), then the quoted `excerpt` if any;
+   - a button: "Open task" for task notifications, "Open project" for project and sprint ones, "Open Sprintory" (the app's home page) for security ones;
+   - a footer: "You are receiving this email because of your Sprintory notification preferences. Manage them at <preferences link>".
+
+   Subjects, one per type. A subject is always one line (newlines in a title become spaces) and at most 255 characters:
+
+   | `type` | Subject |
+   | --- | --- |
+   | `TASK_ASSIGNED` | `[Sprintory] MOB-42 Fix login: you were assigned` |
+   | `TASK_STATUS_CHANGED` | `[Sprintory] MOB-42 Fix login: status changed` |
+   | `TASK_COMMENTED` | `[Sprintory] MOB-42 Fix login: new comment` |
+   | `MENTIONED` | `[Sprintory] MOB-42 Fix login: you were mentioned` |
+   | `PROJECT_MEMBER_ADDED` | `[Sprintory] You were added to Mobile App` |
+   | `PROJECT_ROLES_CHANGED` | `[Sprintory] Your roles in Mobile App changed` |
+   | `SPRINT_STARTED` / `SPRINT_COMPLETED` / `SPRINT_CANCELLED` | `[Sprintory] A sprint started in Mobile App` / `… was completed in …` / `… was cancelled in …` |
+   | `PASSWORD_RESET` | `[Sprintory] Your password was changed` |
+   | `LOGIN_FAILED_REPEATED` | `[Sprintory] Failed sign-in attempts on your account` |
+   | `WORKSPACE_INVITATION` | not sent by notifications: the invitation email is the email |
 5. **Links** are built from configurable frontend routes (properties below). The placeholders `{workspaceId}`, `{projectId}`, `{taskId}` and `{taskKey}` are replaced. **Routes to confirm with the frontend (Amir):**
 
 | Property | Default | Used for |
@@ -384,7 +399,7 @@ Emails contain the task key, title, the excerpt if any, a link to the item, and 
 | `app.notifications.project-path` | `/projects/{projectId}` | project and sprint notifications |
 | `app.notifications.preferences-path` | `/settings/notifications` | the footer link of every notification email |
 
-   All are appended to `app.frontend-url`. If a route changes, only the property changes, not the code.
+   All are appended to `app.frontend-url` and set in `application.properties`. If a route changes, only the property changes, not the code. The retention is `app.notifications.retention-days` (default `90`).
 6. **Emails that do not go through the outbox:** account verification, password reset links and workspace invitations. They are sent inline as before ([auth-endpoints.md](./auth-endpoints.md), [workspaces-docs.md](./workspaces-docs.md)), so their success and failure behaviour is unchanged.
 
 ---
@@ -443,20 +458,23 @@ The frontend implementation is **PMP-114** (Amir), and acceptance testing is **P
 
 ## 13. Implementation status
 
-As of 3 Nov 2026, on branch `features/notifications`:
+As of 4 Nov 2026, on branch `features/notifications`:
 
 | Part | Status |
 | --- | --- |
 | This contract | Written, agreed with the backend owner |
-| Migration `V9__notifications.sql`, entities, repositories | Not started |
-| Preferences (defaults, locked categories, endpoints) | Not started |
-| Watching (auto-watch, endpoints, cleanup on leaving) | Not started |
-| Events and listener (every type in §5, including the future ones) | Not started |
-| Producers: task assign and status, project member and roles, invitation, password reset, repeated failed logins | Not started |
-| List, count, open, read-all | Not started |
-| SSE stream | Not started |
-| Email outbox and retries | Not started |
-| Nightly 90-day cleanup | Not started |
+| Migration `V9__notifications.sql`, entities, repositories | Done; applied to PostgreSQL by the context test (`ddl-auto=validate` passes) |
+| Preferences (defaults, locked categories, endpoints) | Done; `NotificationPreferenceServiceTest`, `NotificationPreferenceControllerTest`, `NotificationRequestValidationTest` |
+| Watching (auto-watch, endpoints, cleanup on leaving) | Done; `TaskWatcherServiceTest`, `TaskWatchControllerTest`, plus the cleanup checks in `ProjectServiceTest` and `WorkspaceServiceTest`. The native watcher queries run on PostgreSQL in `TaskIntegrationTest` |
+| Events and listener (every type in §5, including the future ones) | Done; `NotificationListenerTest`, `NotificationServiceTest`, `NotificationMessagesTest` |
+| Producers: task assign and status, project member and roles, invitation, password reset, repeated failed logins | Done; `TaskApiServiceTest`, `TaskStatusHistoryServiceTest`, `ProjectServiceTest`, `InvitationServiceTest`, `AuthServiceTest`, `LoginFailureTrackerTest` |
+| List, count, open, read-all | Done; `NotificationServiceTest`, `NotificationControllerTest` |
+| PostgreSQL integration test | Done; `NotificationIntegrationTest` (7): assignment writes the notification, email and watchers in the action's transaction and a rollback removes them; bell order, workspace filter, count and read-all; open after leaving answers 404 and stays read (fails without `noRollbackFor`); someone else's notification; outbox due query; both cleanups; security notifications without a workspace |
+| SSE stream | Done; `NotificationStreamServiceTest`, `NotificationControllerTest` |
+| Email outbox and retries | Done; `NotificationEmailsTest`, `EmailOutboxServiceTest`, `EmailOutboxWorkerTest`, `EmailTemplateFactoryTest` |
+| Nightly 90-day cleanup | Done; `NotificationServiceTest`, `EmailOutboxServiceTest` |
+| Full suite (`clean verify`) | **581 passed, 0 failed** (4 Nov 2026, with Docker, Testcontainers tests included) |
+| Manual end-to-end run with Mailpit (the acceptance criteria) | Not done yet |
 | Producers for comments (PMP-133), mentions (PMP-136), sprints (PMP-119, PMP-122) | Waiting for those features. They only publish the event ([§15](#15-notes-for-backend-developers)) |
 | Frontend (PMP-114) and acceptance test (PMP-115) | Not started |
 
@@ -506,8 +524,21 @@ Rules:
 4. **Commenting auto-watches** the commenter. This is done by the listener on `TaskCommented`, so the producer does nothing extra.
 5. **A new `type` or `category`** needs a migration for the check constraint, a row in [§5](#5-event-catalogue) or [§6](#6-preferences), and a line in [§14](#14-decisions).
 6. **Removing someone from a project or workspace** must also delete their watcher rows there. `ProjectService.removeMember` and `WorkspaceService.removeMember` already do this; a new removal path must do the same.
+7. **Notification emails go through the outbox**, never through `EmailService` directly. `NotificationEmails` builds them and `EmailOutboxService.enqueue` queues them; `EmailOutboxWorker` sends them.
+8. **The stream request must never query the database.** Spring's open-in-view keeps that request's EntityManager, and any connection it borrows, for the whole life of the stream (up to 10 minutes). One query there would pin one pooled connection per open bell. `NotificationStreamService` reads the first count on a worker thread for this reason.
+9. `NotificationCreated` and `UnreadCountChanged` are internal events of the stream; producers never publish them.
 
 Code lives in `notification/{events,models,repositories,services,controllers,dto}`. The existing `notification/email/` module renders the emails.
+
+| Class | Role |
+| --- | --- |
+| `NotificationListener` | the Observer: one `@EventListener` per event; recipients, auto-watch, preferences, both channels |
+| `NotificationService` | creates rows (`MANDATORY`), list, count, open, read-all, nightly cleanup |
+| `NotificationPreferenceService` | the matrix; `isEnabled(user, category, channel)` |
+| `TaskWatcherService` | watch, unwatch, auto-watch |
+| `NotificationStreamService` | the SSE streams; pushes after commit; keep-alive |
+| `NotificationEmails` | subject, body, links of one email; queues it |
+| `EmailOutboxService` / `EmailOutboxWorker` | the queue and its 15-second sender with retries |
 
 ---
 
@@ -534,3 +565,5 @@ Code lives in `notification/{events,models,repositories,services,controllers,dto
 - **Emails are in English only.**
 - **No browser push or mobile notifications.** Only the bell and email.
 - **A `FAILED` email is not resent automatically after its last retry.** It is visible only in the server log and the outbox table.
+- **A rare duplicate email is possible.** If the database fails in the moment between the mail server accepting an email and the outbox row being marked `SENT`, the row stays `PENDING` and the email is sent again on the next run.
+- **Changing preferences does not touch emails already queued.** They are still sent.

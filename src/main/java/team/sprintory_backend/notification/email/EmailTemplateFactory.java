@@ -49,15 +49,32 @@ public class EmailTemplateFactory {
     }
 
     public EmailTemplateModel notification(String recipientName, String subject, String message) {
+        return notification(recipientName, subject, message, null, null, null);
+    }
+
+    /**
+     * A notification email (R27, docs/notifications-docs.md §10). The button is optional (label and
+     * URL together); with a preferences URL the footer tells the reader where to change what they
+     * receive.
+     */
+    public EmailTemplateModel notification(String recipientName, String subject, String message,
+                                           String actionLabel, String actionUrl, String preferencesUrl) {
+        if ((actionLabel == null) != (actionUrl == null)) {
+            throw new IllegalArgumentException("action label and URL go together");
+        }
+        String note = (preferencesUrl == null)
+                ? "You are receiving this email because you use Sprintory."
+                : "You are receiving this email because of your Sprintory notification preferences. "
+                        + "Manage them at " + requiredHttpUrl(preferencesUrl);
         return new EmailTemplateModel(
                 EmailTemplate.NOTIFICATION,
                 requiredSubject(subject),
                 greetingName(recipientName),
                 "Sprintory notification",
                 requiredText(message, "message"),
-                null,
-                null,
-                "You are receiving this email because you use Sprintory."
+                actionLabel == null ? null : requiredText(actionLabel, "action label"),
+                actionUrl == null ? null : requiredHttpUrl(actionUrl),
+                note
         );
     }
 

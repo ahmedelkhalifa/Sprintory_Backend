@@ -21,4 +21,9 @@ public interface NotificationRepository
     @Modifying
     @Query("update Notification n set n.readAt = :now where n.recipient.id = :recipientId and n.readAt is null")
     int markAllRead(@Param("recipientId") Long recipientId, @Param("now") Instant now);
+
+    /** Retention: read or not, a notification older than the cutoff goes. */
+    @Modifying
+    @Query("delete from Notification n where n.createdAt < :cutoff")
+    int deleteCreatedBefore(@Param("cutoff") Instant cutoff);
 }

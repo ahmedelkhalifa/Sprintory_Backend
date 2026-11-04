@@ -14,6 +14,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -21,15 +22,19 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.test.util.ReflectionTestUtils;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.notification.dto.NotificationResponse;
 import team.sprintory_backend.notification.dto.NotificationTargetResponse;
+import team.sprintory_backend.notification.events.NotificationCreated;
+import team.sprintory_backend.notification.events.UnreadCountChanged;
 import team.sprintory_backend.notification.models.Notification;
 import team.sprintory_backend.notification.models.NotificationCategory;
 import team.sprintory_backend.notification.models.NotificationType;
@@ -50,6 +55,7 @@ class NotificationServiceTest {
     private UserRepository userRepository;
     private ProjectAccess projectAccess;
     private TaskRepository taskRepository;
+    private ApplicationEventPublisher events;
     private NotificationService service;
     private final User recipient = User.builder().id(17L).firstName("Ada").lastName("Lovelace").build();
     private final User actor = User.builder().id(31L).firstName("Damir").lastName("Gabaidullin").build();
@@ -63,7 +69,8 @@ class NotificationServiceTest {
         userRepository = mock(UserRepository.class);
         projectAccess = mock(ProjectAccess.class);
         taskRepository = mock(TaskRepository.class);
-        service = new NotificationService(repository, userRepository, projectAccess, taskRepository);
+        events = mock(ApplicationEventPublisher.class);
+        service = new NotificationService(repository, userRepository, projectAccess, taskRepository, events);
         when(userRepository.getReferenceById(17L)).thenReturn(recipient);
         when(repository.save(any(Notification.class))).thenAnswer(call -> call.getArgument(0));
 
@@ -94,6 +101,14 @@ class NotificationServiceTest {
         assertEquals("Looks good", n.getExcerpt());
         assertNotNull(n.getCreatedAt());
         assertNull(n.getReadAt());
+    }
+
+    @Test
+    void creatingAnnouncesTheNotificationForTheLiveStream() {
+        Notification n = service.create(17L, NotificationType.TASK_ASSIGNED, NotificationSubject.task(task, actor),
+                "assigned", null);
+
+        verify(events).publishEvent(new NotificationCreated(17L, NotificationResponse.from(n)));
     }
 
     @Test
@@ -185,6 +200,7 @@ class NotificationServiceTest {
 
         assertEquals(NotificationTargetResponse.task(4L, 15L, 230L, "MOB-42"), target);
         assertNotNull(n.getReadAt());
+        verify(events).publishEvent(new UnreadCountChanged(17L));
     }
 
     @Test
@@ -197,6 +213,7 @@ class NotificationServiceTest {
         service.open(recipient, 901L);
 
         assertEquals(first, n.getReadAt());
+        verifyNoInteractions(events);
     }
 
     @Test
@@ -206,7 +223,7 @@ class NotificationServiceTest {
         ResourceNotFoundException e = assertThrows(ResourceNotFoundException.class,
                 () -> service.open(recipient, 901L));
         assertEquals("Notification not found.", e.getMessage());
-        verifyNoInteractions(projectAccess, taskRepository);
+        verifyNoInteractions(projectAccess, taskRepository, events);
     }
 
     @Test
@@ -217,6 +234,8 @@ class NotificationServiceTest {
 
         assertThrows(ResourceNotFoundException.class, () -> service.open(recipient, 901L));
         assertNotNull(n.getReadAt());
+        // The read commits despite the 404, so the other tabs are told.
+        verify(events).publishEvent(new UnreadCountChanged(17L));
     }
 
     @Test
@@ -275,8 +294,35 @@ class NotificationServiceTest {
 
     @Test
     void readAllMarksTheCallersUnreadRowsAndAnswersZero() {
+        when(repository.markAllRead(eq(17L), any(Instant.class))).thenReturn(4);
+
         assertEquals(0L, service.readAll(recipient).count());
         verify(repository).markAllRead(eq(17L), any(Instant.class));
+        verify(events).publishEvent(new UnreadCountChanged(17L));
+    }
+
+    @Test
+    void readAllWithNothingUnreadPushesNothing() {
+        when(repository.markAllRead(eq(17L), any(Instant.class))).thenReturn(0);
+
+        assertEquals(0L, service.readAll(recipient).count());
+        verifyNoInteractions(events);
+    }
+
+    // --- retention ---
+
+    @Test
+    void theNightlyCleanupDeletesNotificationsOlderThanTheRetention() {
+        ReflectionTestUtils.setField(service, "retentionDays", 90);
+        Instant before = Instant.now();
+
+        service.deleteExpired();
+
+        ArgumentCaptor<Instant> cutoff = ArgumentCaptor.forClass(Instant.class);
+        verify(repository).deleteCreatedBefore(cutoff.capture());
+        Instant ninetyDaysAgo = before.minus(Duration.ofDays(90));
+        assertFalse(cutoff.getValue().isBefore(ninetyDaysAgo));
+        assertTrue(cutoff.getValue().isBefore(ninetyDaysAgo.plusSeconds(60)));
     }
 
     // --- fixtures ---

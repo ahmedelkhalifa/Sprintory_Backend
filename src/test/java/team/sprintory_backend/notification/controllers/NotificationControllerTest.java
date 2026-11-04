@@ -1,5 +1,6 @@
 package team.sprintory_backend.notification.controllers;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
@@ -11,12 +12,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.notification.dto.NotificationResponse;
 import team.sprintory_backend.notification.dto.NotificationTargetResponse;
 import team.sprintory_backend.notification.dto.UnreadCountResponse;
 import team.sprintory_backend.notification.services.NotificationService;
+import team.sprintory_backend.notification.services.NotificationStreamService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 import team.sprintory_backend.user.models.User;
 
@@ -24,6 +28,7 @@ import team.sprintory_backend.user.models.User;
 class NotificationControllerTest {
 
     private NotificationService service;
+    private NotificationStreamService streamService;
     private NotificationController controller;
     private User user;
     private AppUserDetails principal;
@@ -31,7 +36,8 @@ class NotificationControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(NotificationService.class);
-        controller = new NotificationController(service);
+        streamService = mock(NotificationStreamService.class);
+        controller = new NotificationController(service, streamService);
         user = User.builder().id(17L).firstName("Ada").lastName("Lovelace").email("ada@example.com").build();
         principal = new AppUserDetails(user);
     }
@@ -70,5 +76,16 @@ class NotificationControllerTest {
         assertSame(three, controller.unreadCount(principal));
         assertSame(target, controller.open(principal, 901L));
         assertSame(zero, controller.readAll(principal));
+    }
+
+    @Test
+    void theStreamIsTheCallersAndTellsProxiesNotToBufferOrCache() {
+        SseEmitter emitter = new SseEmitter();
+        when(streamService.subscribe(user)).thenReturn(emitter);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertSame(emitter, controller.stream(principal, response));
+        assertEquals("no", response.getHeader("X-Accel-Buffering"));
+        assertEquals("no-cache", response.getHeader("Cache-Control"));
     }
 }

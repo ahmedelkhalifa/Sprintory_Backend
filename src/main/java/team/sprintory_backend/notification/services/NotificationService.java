@@ -1,10 +1,16 @@
 package team.sprintory_backend.notification.services;
 
+import java.time.Duration;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -15,6 +21,8 @@ import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.notification.dto.NotificationResponse;
 import team.sprintory_backend.notification.dto.NotificationTargetResponse;
 import team.sprintory_backend.notification.dto.UnreadCountResponse;
+import team.sprintory_backend.notification.events.NotificationCreated;
+import team.sprintory_backend.notification.events.UnreadCountChanged;
 import team.sprintory_backend.notification.models.Notification;
 import team.sprintory_backend.notification.models.NotificationType;
 import team.sprintory_backend.notification.repositories.NotificationRepository;
@@ -34,6 +42,8 @@ import team.sprintory_backend.user.repositories.UserRepository;
 @RequiredArgsConstructor
 public class NotificationService {
 
+    private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
+
     /** Newest first; the id keeps notifications of the same instant in a stable order. */
     static final Sort NEWEST_FIRST = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
 
@@ -41,6 +51,11 @@ public class NotificationService {
     private final UserRepository userRepository;
     private final ProjectAccess projectAccess;
     private final TaskRepository taskRepository;
+    private final ApplicationEventPublisher events;
+
+    // Not final: @Value on a final field with @RequiredArgsConstructor fails at startup.
+    @Value("${app.notifications.retention-days}")
+    private int retentionDays;
 
     /**
      * Stores one notification with name snapshots taken from {@code subject}. MANDATORY: calling it
@@ -72,7 +87,10 @@ public class NotificationService {
             notification.actorId(subject.actor().getId())
                     .actorName(AuditTarget.displayName(subject.actor()));
         }
-        return repository.save(notification.build());
+        Notification saved = repository.save(notification.build());
+        // Pushed to the recipient's open tabs only after this transaction commits.
+        events.publishEvent(new NotificationCreated(recipientId, NotificationResponse.from(saved)));
+        return saved;
     }
 
     /**
@@ -101,7 +119,11 @@ public class NotificationService {
     public NotificationTargetResponse open(User user, Long notificationId) {
         Notification notification = repository.findByIdAndRecipientId(notificationId, user.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Notification not found."));
-        notification.markRead(Instant.now());
+        if (!notification.isRead()) {
+            notification.markRead(Instant.now());
+            // Commits even when the 404 below is thrown, so the other tabs still get the new count.
+            events.publishEvent(new UnreadCountChanged(user.getId()));
+        }
 
         Long workspaceId = (notification.getWorkspace() == null) ? null : notification.getWorkspace().getId();
         if (notification.getTaskId() != null) {
@@ -119,8 +141,23 @@ public class NotificationService {
     /** Marks every unread notification of the caller read, in all workspaces. */
     @Transactional
     public UnreadCountResponse readAll(User user) {
-        repository.markAllRead(user.getId(), Instant.now());
+        if (repository.markAllRead(user.getId(), Instant.now()) > 0) {
+            events.publishEvent(new UnreadCountChanged(user.getId()));
+        }
         return new UnreadCountResponse(0);
+    }
+
+    /**
+     * Retention (a team choice, docs/notifications-docs.md §14): notifications older than
+     * {@code app.notifications.retention-days}, read or not, are deleted once a night.
+     */
+    @Scheduled(cron = "0 50 3 * * *")
+    @Transactional
+    public void deleteExpired() {
+        int deleted = repository.deleteCreatedBefore(Instant.now().minus(Duration.ofDays(retentionDays)));
+        if (deleted > 0) {
+            log.info("Deleted {} notifications older than {} days", deleted, retentionDays);
+        }
     }
 
     /**

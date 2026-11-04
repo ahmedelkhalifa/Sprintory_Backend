@@ -1,5 +1,6 @@
 package team.sprintory_backend.security.config;
 
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -47,6 +48,10 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(auth -> auth
+                // When a notification stream (SSE) ends, the container resumes the already
+                // authenticated request internally. The JWT filter runs once per request and skips
+                // that pass, so without this the end of every stream logs a failed 401.
+                .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 // The invitation page shows the workspace before the invitee logs in or registers
                 .requestMatchers("/api/v1/invitations/lookup").permitAll()

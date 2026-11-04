@@ -34,7 +34,9 @@ import team.sprintory_backend.user.repositories.UserRepository;
  *   <li>the actor is never a recipient (security events have no actor);</li>
  *   <li>for project and task events, only people in the project right now;</li>
  *   <li>one notification per person per event: a mention replaces the comment notification;</li>
- *   <li>each recipient's preferences decide the channels.</li>
+ *   <li>each recipient's preferences decide the channels: a bell entry, a queued email, both or
+ *       neither. Emails are only queued here and sent later, so the mail server never touches
+ *       the action.</li>
  * </ol>
  */
 @Component
@@ -42,6 +44,7 @@ import team.sprintory_backend.user.repositories.UserRepository;
 public class NotificationListener {
 
     private final NotificationService notifications;
+    private final NotificationEmails emails;
     private final NotificationPreferenceService preferences;
     private final TaskWatcherService watchers;
     private final ProjectMemberRepository projectMembers;
@@ -175,6 +178,11 @@ public class NotificationListener {
         for (Long recipientId : recipients) {
             if (preferences.isEnabled(recipientId, type.category(), NotificationChannel.IN_APP)) {
                 notifications.create(recipientId, type, subject, message, excerpt);
+            }
+            // The invitation's email is the invitation itself, already sent by the invite action.
+            if (type != NotificationType.WORKSPACE_INVITATION
+                    && preferences.isEnabled(recipientId, type.category(), NotificationChannel.EMAIL)) {
+                emails.queue(recipientId, type, subject, message, excerpt);
             }
         }
     }

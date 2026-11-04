@@ -8,7 +8,8 @@ Reusable, SMTP-provider-independent **transactional email** infrastructure. Impl
 - Matching plain-text alternatives are generated from the same typed model.
 - `EmailService` is the application-facing API. Other backend features **must not call `JavaMailSender` directly**.
 - `EmailTemplateFactory` is the template constructor: it builds the subject, copy, optional action button/URL, and footer note for email verification, password reset, and generic notifications.
-- `EmailSender` and `SmtpEmailSender` separate delivery from rendering. SMTP is synchronous in this version; use an outbox/queue when reliable asynchronous delivery becomes necessary.
+- `EmailSender` and `SmtpEmailSender` separate delivery from rendering. `EmailService` sends synchronously: account verification, password reset and workspace invitation emails go out inside the request.
+- **Notification emails (R27) do not use `EmailService`.** They are rendered with the same factory and layout, stored in a persisted outbox (`email_outbox`) inside the action's transaction, and sent with retries by `EmailOutboxWorker`. See [notifications-docs.md §10](./notifications-docs.md#10-email-delivery).
 
 ## Usage from authentication services
 
@@ -29,6 +30,17 @@ Generic notifications:
 ```java
 emailService.sendNotification("alex@example.com", "Alex", "Project update", "A task was assigned to you.");
 ```
+
+The notification template also takes an optional button and a preferences link (both must be absolute `http(s)` URLs; a button needs both its label and its URL). This is the form the R27 notification emails use:
+
+```java
+templateFactory.notification("Alex", "[Sprintory] MOB-42 Fix login: you were assigned",
+        "Damir assigned you MOB-42 \"Fix login\"",
+        "Open task", "https://app.example.com/projects/15/tasks/MOB-42",
+        "https://app.example.com/settings/notifications");
+```
+
+The footer then reads "You are receiving this email because of your Sprintory notification preferences. Manage them at <link>".
 
 HTML dynamic values are escaped by Thymeleaf. Action URLs must be absolute `http` or `https` URLs (including localhost for development). Never pass user-authored HTML as executable markup.
 

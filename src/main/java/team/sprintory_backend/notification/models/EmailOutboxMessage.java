@@ -8,7 +8,9 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -63,6 +65,30 @@ public class EmailOutboxMessage {
 
     @Column(name = "sent_at")
     private Instant sentAt;
+
+    public void markSent(Instant now) {
+        status = EmailOutboxStatus.SENT;
+        sentAt = now;
+        nextAttemptAt = null;
+    }
+
+    /**
+     * Counts a failed attempt. The n-th failure waits {@code retryDelays[n - 1]}; once every delay
+     * is used up (one first try plus one per delay) the email is given up as FAILED.
+     *
+     * @return true when this failure was the last one allowed
+     */
+    public boolean recordFailure(String error, Instant now, List<Duration> retryDelays) {
+        attempts++;
+        lastError = (error == null || error.length() <= 1000) ? error : error.substring(0, 1000);
+        if (attempts > retryDelays.size()) {
+            status = EmailOutboxStatus.FAILED;
+            nextAttemptAt = null;
+            return true;
+        }
+        nextAttemptAt = now.plus(retryDelays.get(attempts - 1));
+        return false;
+    }
 
     @Override
     public boolean equals(Object o) {

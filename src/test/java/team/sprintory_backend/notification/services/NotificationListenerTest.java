@@ -47,6 +47,7 @@ class NotificationListenerTest {
     private static final Long TASK_ID = 230L;
 
     private NotificationService notifications;
+    private NotificationEmails emails;
     private NotificationPreferenceService preferences;
     private TaskWatcherService watchers;
     private ProjectMemberRepository projectMembers;
@@ -65,11 +66,12 @@ class NotificationListenerTest {
     @BeforeEach
     void setUp() {
         notifications = mock(NotificationService.class);
+        emails = mock(NotificationEmails.class);
         preferences = mock(NotificationPreferenceService.class);
         watchers = mock(TaskWatcherService.class);
         projectMembers = mock(ProjectMemberRepository.class);
         users = mock(UserRepository.class);
-        listener = new NotificationListener(notifications, preferences, watchers, projectMembers, users);
+        listener = new NotificationListener(notifications, emails, preferences, watchers, projectMembers, users);
 
         workspace = Workspace.builder().id(4L).name("Acme").slug("acme").build();
         project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App").key("MOB").build();
@@ -123,16 +125,65 @@ class NotificationListenerTest {
         listener.on(new TaskAssigned(task, ada, ada));
 
         verify(watchers).autoWatch(task, ada);
-        verifyNoInteractions(notifications);
+        verifyNoInteractions(notifications, emails);
     }
 
     @Test
-    void anAssigneeWhoTurnedOffInAppGetsNoBellEntry() {
+    void anAssigneeWhoTurnedOffInAppGetsNoBellEntryButStillTheEmail() {
         when(preferences.isEnabled(17L, NotificationCategory.ASSIGNMENT, NotificationChannel.IN_APP)).thenReturn(false);
 
         listener.on(new TaskAssigned(task, damir, ada));
 
         verifyNoInteractions(notifications);
+        verify(emails).queue(17L, NotificationType.TASK_ASSIGNED, NotificationSubject.task(task, damir),
+                "Damir Gabaidullin assigned you MOB-42 \"Fix login\"", null);
+    }
+
+    // --- the email channel ---
+
+    @Test
+    void emailOnQueuesTheEmailWithTheSameTextAsTheBell() {
+        listener.on(new TaskAssigned(task, damir, ada));
+
+        verify(emails).queue(17L, NotificationType.TASK_ASSIGNED, NotificationSubject.task(task, damir),
+                "Damir Gabaidullin assigned you MOB-42 \"Fix login\"", null);
+    }
+
+    @Test
+    void emailOffForStatusChangesGivesTheBellEntryButNoEmail() {
+        // Acceptance criterion: "I turn off email for status change ... in-app but no email".
+        when(watchers.watcherIdsOf(TASK_ID)).thenReturn(List.of(17L));
+        when(preferences.isEnabled(17L, NotificationCategory.STATUS_CHANGE, NotificationChannel.EMAIL)).thenReturn(false);
+
+        listener.on(new TaskStatusChanged(task, damir, "To Do", "Done"));
+
+        verify(notifications).create(eq(17L), eq(NotificationType.TASK_STATUS_CHANGED), any(), any(), any());
+        verifyNoInteractions(emails);
+    }
+
+    @Test
+    void aMentionEmailCarriesTheExcerpt() {
+        listener.on(new Mentioned(task, damir, Set.of(17L), "@Ada Lovelace please check"));
+
+        verify(emails).queue(eq(17L), eq(NotificationType.MENTIONED), any(), any(), eq("@Ada Lovelace please check"));
+    }
+
+    @Test
+    void anInvitationNeverQueuesAnEmailBecauseTheInvitationEmailIsAlreadySent() {
+        when(users.findByEmail("out@example.com")).thenReturn(Optional.of(outsider));
+
+        listener.on(new WorkspaceInvited(workspace, ada, "out@example.com"));
+
+        verify(notifications).create(eq(99L), eq(NotificationType.WORKSPACE_INVITATION), any(), any(), any());
+        verifyNoInteractions(emails);
+    }
+
+    @Test
+    void securityNotificationsAreAlsoEmailed() {
+        listener.on(new PasswordReset(ada));
+
+        verify(emails).queue(17L, NotificationType.PASSWORD_RESET, NotificationSubject.system(),
+                NotificationMessages.passwordReset(), null);
     }
 
     // --- status change ---
