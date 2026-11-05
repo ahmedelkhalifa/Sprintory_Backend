@@ -1,6 +1,6 @@
 # Sprintory — Task comments API contract (R10, PMP-26)
 
-**Status:** contract agreed, backend not built yet (PMP-133, branch `features/comments_history`). See [§9 Implementation status](#9-implementation-status).
+**Status:** backend implemented and tested, including against PostgreSQL (PMP-133, branch `features/comments_history`, 5 Nov 2026). Frontend (PMP-134) and acceptance testing (PMP-135) open. See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/projects/{projectId}/tasks/{taskId}/comments/**`.
 **Related:** [Mentions and rich text](./mentions-docs.md), [Task history](./task-history-docs.md), [Tasks](./tasks-docs.md), [Notifications](./notifications-docs.md) (who is told about a comment), [Roles and permissions](./roles-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R10, R26.
 
@@ -211,7 +211,7 @@ Typing `@` opens a list fed by `GET /projects/{projectId}/mentionables?q=` ([men
   - `deleted_by_id` has **no** foreign key: it is a record of who did it, like the audit log's `actor_id`.
 - **Leaving a project does not touch comments.** No cleanup is needed in `ProjectService.removeMember` or `WorkspaceService.removeMember`.
 - **Soft delete** keeps the row so the thread order and page numbers do not shift. The text stays in the database but is never returned.
-- **Migration:** `V12__task_comments.sql` (after `V10__subtasks.sql`, Damir's, and `V11__task_history.sql`).
+- **Migration:** the second part of `V11__task_history.sql`, which also creates the task history. V12 is taken by another branch.
 - **Code:** `comment/{models,repositories,services,controllers,dto}`. `CommentService` holds the rules. Rich text goes through `common/richtext/RichTextParser`, and mentions through `mention/services/MentionService`.
 
 ---
@@ -244,10 +244,11 @@ As of 4 Nov 2026, on branch `features/comments_history`:
 | Part | Status |
 | --- | --- |
 | This contract | Written, agreed with the backend owner |
-| `V12__task_comments.sql`, `TaskComment`, repository | Not started. Built after PMP-131/132 (Damir) is merged into `main` |
-| `CommentService`, `CommentController`, `MODERATE_COMMENTS` | Not started |
-| Notifications producer (`TaskCommented`, `Mentioned`) | Not started; the listener side is done (PMP-113) |
-| Unit and PostgreSQL integration tests | Not started |
+| `task_comments` table (in `V11__task_history.sql`), `TaskComment`, repository | Done; validated against PostgreSQL by the context test |
+| `CommentService` (every rule of §1–§3), `MODERATE_COMMENTS` (PM only) | Done; `CommentServiceTest` (21), `ProjectRoleTest` |
+| Notifications producer (`TaskCommented` on post, `Mentioned` for new mentions on edit) | Done in `CommentService`; the listener side is done (PMP-113) |
+| `CommentController`, the four endpoints | Done; `CommentControllerTest` (4) |
+| PostgreSQL integration test of the PMP-26 and PMP-31 criteria | Done; `CommentIntegrationTest` (8): post and read, edit and delete rules, PM moderation, Viewer and non-member, paging, watchers and mentions down to the notifications, the history entry, current mention names |
 | Frontend (PMP-134) and acceptance test (PMP-135) | Not started |
 
 ---

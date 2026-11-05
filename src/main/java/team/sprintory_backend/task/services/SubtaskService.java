@@ -50,6 +50,8 @@ public class SubtaskService {
                 .title(request.title().trim()).type(TaskType.TASK).priority(TaskPriority.MEDIUM)
                 .status(status).assignee(assignee).estimateMinutes(request.estimateMinutes())
                 .boardPosition(0).backlogRank(0).build());
+        statusHistory.recordCreated(child, user);
+        statusHistory.recordSubtaskAdded(parent, child, user);
         return TaskResponse.from(child);
     }
 
@@ -70,6 +72,7 @@ public class SubtaskService {
         Task child = taskRepository.findByIdAndProjectId(subtaskId, projectId)
                 .filter(t -> t.getParent() != null && t.getParent().getId().equals(parentId))
                 .orElseThrow(() -> new ResourceNotFoundException("Subtask not found."));
+        TaskSnapshot before = TaskSnapshot.of(child);
         if (request.title() != null) child.setTitle(request.title().trim());
         if (request.statusId() != null) {
             ProjectBoardColumn target = requireColumn(projectId, request.statusId());
@@ -80,6 +83,7 @@ public class SubtaskService {
         else if (request.assigneeId() != null) child.setAssignee(assignee(projectId, request.assigneeId()));
         if (request.clearEstimateMinutes()) child.setEstimateMinutes(null);
         else if (request.estimateMinutes() != null) child.setEstimateMinutes(request.estimateMinutes());
+        statusHistory.recordChanges(child, before, TaskSnapshot.of(child), user);
         return TaskResponse.from(taskRepository.saveAndFlush(child));
     }
 

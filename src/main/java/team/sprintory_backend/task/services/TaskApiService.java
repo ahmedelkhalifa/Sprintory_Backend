@@ -12,6 +12,11 @@ import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.common.richtext.InvalidRichTextException;
+import team.sprintory_backend.common.richtext.RichTextDocument;
+import team.sprintory_backend.common.richtext.RichTextParser;
+import team.sprintory_backend.mention.services.MentionService;
+import team.sprintory_backend.notification.events.Mentioned;
 import team.sprintory_backend.notification.events.TaskAssigned;
 import team.sprintory_backend.notification.events.TaskCreated;
 import team.sprintory_backend.project.models.Project;
@@ -29,7 +34,7 @@ import team.sprintory_backend.task.dto.MoveTaskRequest;
 import team.sprintory_backend.task.dto.ReorderBacklogRequest;
 import team.sprintory_backend.task.dto.TaskResponse;
 import team.sprintory_backend.task.dto.WipWarning;
-import team.sprintory_backend.task.dto.TaskStatusHistoryResponse;
+import team.sprintory_backend.task.dto.TaskHistoryEntryResponse;
 import team.sprintory_backend.task.dto.UpdateTaskRequest;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.models.TaskPriority;
@@ -74,6 +79,8 @@ public class TaskApiService {
     private final TaskStatusHistoryService statusHistory;
     private final AuditLogService auditLog;
     private final ApplicationEventPublisher events;
+    private final RichTextParser richText;
+    private final MentionService mentions;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -84,6 +91,10 @@ public class TaskApiService {
     public TaskResponse create(User user, Long projectId, CreateTaskRequest request) {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
         User assignee = (request.assigneeId() == null) ? null : requireAssignee(projectId, request.assigneeId());
+        // Check the description and its mentions before anything is written.
+        RichTextDocument description = parseDescription(request.description());
+        Set<Long> mentioned = (description == null) ? Set.of()
+                : mentions.newlyMentionedUserIds(project, description, null);
         // Lock before selecting a column: a concurrent board edit could soft-delete or reorder
         // the old first column. Keep the selection and insert in the same locked transaction.
         projectRepository.incrementTaskNumber(projectId);
@@ -102,15 +113,17 @@ public class TaskApiService {
                 .status(status)
                 .assignee(assignee)
                 .estimate(request.estimate())
-                .description(normalizeDescription(request.description()))
+                .description(description == null ? null : description.json())
                 .labels(normalizeLabels(request.labels()))
                 .boardPosition(boardPosition)
                 .backlogRank(backlogRank)
                 .build());
+        statusHistory.recordCreated(task, user);
         events.publishEvent(new TaskCreated(task, user));
         if (assignee != null) {
             events.publishEvent(new TaskAssigned(task, user, assignee));
         }
+        publishMentions(task, user, mentioned, description);
         return TaskResponse.from(task);
     }
 
@@ -144,13 +157,18 @@ public class TaskApiService {
      */
     @Transactional
     public TaskResponse update(User user, Long projectId, Long taskId, UpdateTaskRequest request) {
-        projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS);
+        Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
         // Board configuration and moves lock the project; do the same before loading status.
         if (request.statusId() != null) projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
         if (task.getParent() != null) {
             throw new BadRequestException("Use the subtask endpoint to edit a subtask.");
         }
+        TaskSnapshot before = TaskSnapshot.of(task);
+        // Check a new description and its newly added mentions before anything changes.
+        RichTextDocument description = request.clearDescription() ? null : parseDescription(request.description());
+        Set<Long> mentioned = (description == null) ? Set.of()
+                : mentions.newlyMentionedUserIds(project, description, storedDescription(task));
         boolean changedColumn = false;
 
         if (request.title() != null) {
@@ -194,17 +212,20 @@ public class TaskApiService {
         if (request.clearDescription()) {
             task.setDescription(null);
         } else if (request.description() != null) {
-            task.setDescription(normalizeDescription(request.description()));
+            task.setDescription(description == null ? null : description.json());
         }
         if (request.labels() != null) {
             task.getLabels().clear();
             task.getLabels().addAll(normalizeLabels(request.labels()));
         }
+        // One history entry per field that really changed; the status move was recorded above.
+        statusHistory.recordChanges(task, before, TaskSnapshot.of(task), user);
         // Flush now so the response carries the new updatedAt.
         TaskResponse saved = responseWithProgress(taskRepository.saveAndFlush(task));
         if (newAssignee != null) {
             events.publishEvent(new TaskAssigned(task, user, newAssignee));
         }
+        publishMentions(task, user, mentioned, description);
         return changedColumn ? saved.withWipWarning(wipWarning(projectId, task.getStatus())) : saved;
     }
 
@@ -226,6 +247,7 @@ public class TaskApiService {
             taskRepository.saveAll(children);
         } else {
             task.setDeletedWithParentId(null); // explicit child deletion
+            statusHistory.recordSubtaskRemoved(task.getParent(), task, user);
         }
         task.setDeletedAt(deletedAt);
         taskRepository.save(task);
@@ -244,6 +266,11 @@ public class TaskApiService {
         // marked by its cascade; the query is harmless (0 affected) for an individual child.
         taskRepository.restoreCascadedChildren(projectId, taskId, fallbackColumnId, user.getEmail());
         Task task = requireTask(projectId, taskId);
+        // One entry on the restored task; subtasks revived with their parent get none of their own.
+        statusHistory.recordRestored(task, user);
+        if (task.getParent() != null) {
+            statusHistory.recordSubtaskAdded(task.getParent(), task, user);
+        }
         auditLog.record(project.getWorkspace(), user, AuditAction.TASK_RESTORED,
                 AuditTarget.task(task), project);
         return responseWithProgress(task);
@@ -347,9 +374,10 @@ public class TaskApiService {
         return after;
     }
 
+    /** One page of the task's activity feed, oldest first (docs/task-history-docs.md §2). */
     @Transactional(readOnly = true)
-    public List<TaskStatusHistoryResponse> history(User user, Long projectId, Long taskId) {
-        return statusHistory.list(user, projectId, taskId);
+    public PageResponse<TaskHistoryEntryResponse> history(User user, Long projectId, Long taskId, Pageable pageable) {
+        return statusHistory.list(user, projectId, taskId, pageable);
     }
 
     private WipWarning wipWarning(Long projectId, ProjectBoardColumn column) {
@@ -413,8 +441,34 @@ public class TaskApiService {
     }
 
     /** Rich text is kept as sent; a blank description means none. */
-    private static String normalizeDescription(String description) {
-        return (description == null || description.isBlank()) ? null : description;
+    private RichTextDocument parseDescription(String description) {
+        if (description == null || description.isBlank()) {
+            return null;
+        }
+        RichTextDocument document = richText.parse(description);
+        return document.isEmpty() ? null : document;
+    }
+
+    /**
+     * The stored description, to tell new mentions from old ones. A description saved before
+     * 4 Nov 2026 may be plain text; it holds no mentions, so every mention in the new one is new.
+     */
+    private RichTextDocument storedDescription(Task task) {
+        if (task.getDescription() == null) {
+            return null;
+        }
+        try {
+            return richText.parse(task.getDescription());
+        } catch (InvalidRichTextException e) {
+            return null;
+        }
+    }
+
+    /** Tells the newly mentioned people (PMP-136); the listener drops the author and non-members. */
+    private void publishMentions(Task task, User user, Set<Long> mentioned, RichTextDocument description) {
+        if (!mentioned.isEmpty()) {
+            events.publishEvent(new Mentioned(task, user, mentioned, description.plainText()));
+        }
     }
 
     /** Trimmed; duplicates that differ only in case collapse into the first spelling. */

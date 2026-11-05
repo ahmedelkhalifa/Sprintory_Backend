@@ -6,7 +6,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import team.sprintory_backend.AbstractIntegrationTest;
+import team.sprintory_backend.common.richtext.InvalidRichTextException;
 import team.sprintory_backend.common.richtext.RichTextDocument;
+import team.sprintory_backend.task.dto.CreateTaskRequest;
+import team.sprintory_backend.task.dto.TaskResponse;
+import team.sprintory_backend.task.dto.UpdateTaskRequest;
+import team.sprintory_backend.task.services.TaskApiService;
 import team.sprintory_backend.common.richtext.RichTextParser;
 import team.sprintory_backend.mention.dto.MentionablesResponse;
 import team.sprintory_backend.mention.exceptions.InvalidMentionException;
@@ -50,6 +55,7 @@ class MentionIntegrationTest extends AbstractIntegrationTest {
     @Autowired private ProjectService projects;
     @Autowired private MentionService mentions;
     @Autowired private RichTextParser parser;
+    @Autowired private TaskApiService tasks;
 
     private User owner;
     private User grace;
@@ -145,7 +151,47 @@ class MentionIntegrationTest extends AbstractIntegrationTest {
                 () -> mentions.newlyMentionedUserIds(project, text(mention("team", otherWorkspaceTeam.getId())), null));
     }
 
+    // --- task descriptions, end to end (PMP-136 → R27) ---
+
+    @Test
+    void mentioningInADescriptionNotifiesEachPersonOnceAndEditingNotifiesOnlyNewOnes() {
+        String first = "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":["
+                + mention("user", grace.getId()) + "," + mention("team", backend.getId()) + "]}]}";
+        TaskResponse task = tasks.create(owner, project.getId(),
+                new CreateTaskRequest("Fix login", null, null, null, null, null, first));
+        entityManager.flush();
+
+        assertEquals(1, mentionsOf(grace), "named and through the team, still one notification");
+        assertEquals(0, mentionsOf(owner), "the author is never told");
+
+        String second = "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":["
+                + mention("user", grace.getId()) + "," + mention("user", viewer.getId()) + "]}]}";
+        tasks.update(owner, project.getId(), task.id(), new UpdateTaskRequest(null, null, null, null, null, null,
+                null, second, false, false, false));
+        entityManager.flush();
+
+        assertEquals(1, mentionsOf(grace), "already mentioned before the edit");
+        assertEquals(1, mentionsOf(viewer));
+    }
+
+    @Test
+    void aDescriptionMentioningAnOutsiderOrInPlainTextIsRefused() {
+        String outsider = "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":["
+                + mention("user", linus.getId()) + "]}]}";
+
+        assertThrows(InvalidMentionException.class, () -> tasks.create(owner, project.getId(),
+                new CreateTaskRequest("Fix login", null, null, null, null, null, outsider)));
+        assertThrows(InvalidRichTextException.class, () -> tasks.create(owner, project.getId(),
+                new CreateTaskRequest("Fix login", null, null, null, null, null, "Steps to reproduce")));
+    }
+
     // --- helpers ---
+
+    private long mentionsOf(User recipient) {
+        return ((Number) entityManager.createNativeQuery(
+                        "select count(*) from notifications where recipient_id = :id and type = 'MENTIONED'")
+                .setParameter("id", recipient.getId()).getSingleResult()).longValue();
+    }
 
     private static List<Long> userIds(MentionablesResponse response) {
         return response.users().stream().map(MentionablesResponse.UserItem::id).toList();

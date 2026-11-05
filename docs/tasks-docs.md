@@ -319,7 +319,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 - **Keys:** `ProjectRepository.incrementTaskNumber` (an UPDATE, which locks the project row) then `findLastTaskNumber`. `Project.lastTaskNumber` is mapped `updatable = false`, so saving a project never writes back a stale number.
 - **Soft delete:** `Task` carries `@SQLRestriction("deleted_at is null")`, so no JPA query ever returns a deleted task. **Native SQL must add `deleted_at is null` itself** (universal search does).
 - **Indexes:** (`project_id`, `deleted_at`), `status_column_id`, `assignee_id`, (`project_id`, `status_column_id`, `board_position`), (`project_id`, `backlog_rank`).
-- **Migrations:** `V6__tasks.sql` (task storage), `V7__board_configuration_and_status_history.sql` (status history and board configuration), `V10__subtasks.sql` (PMP-131/132, Damir), `V11__task_history.sql` (full history, replaces the V7 table), `V12__task_comments.sql` (comments).
+- **Migrations:** `V6__tasks.sql` (task storage), `V7__board_configuration_and_status_history.sql` (status history and board configuration), `V10__subtasks.sql` (PMP-131/132, Damir), `V11__task_history.sql` (full history, replacing the V7 table, and the comments table).
 - **Code:** `task/{models,repositories,services,controllers,dto,api}`. `TaskApiService` holds the rules, `TaskSpecifications` the list query, `TaskRanks` the order arithmetic.
 
 ---
@@ -357,7 +357,8 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: contro
 | Unassigning on leaving a project or the workspace (`ProjectServiceTest`, `WorkspaceServiceTest`) | Implemented, all passing |
 | `TaskIntegrationTest` (12) against PostgreSQL: keys, soft delete, defaults, filters, board and backlog order, renumbering, unassigning on leave, cascades | Implemented, all passing |
 | PMP-125 status history and soft WIP responses | Implemented; clean verify passed 381 tests and V7 applied on PostgreSQL Testcontainers (1 Nov 2026); final regression re-run and frontend acceptance pending |
-| PMP-133/PMP-136: full history, comments, TipTap descriptions with mentions | Contract written (4 Nov 2026), not started. The history and comment tables are built after PMP-131/132 is merged into `main` |
+| PMP-133/PMP-136: full history (V11) and TipTap descriptions with mentions | Done (5 Nov 2026); see [task-history-docs.md §9](./task-history-docs.md#9-implementation-status) and [mentions-docs.md §10](./mentions-docs.md#10-implementation-status) |
+| PMP-133: comments (table in V11) | Done (5 Nov 2026). See [comments-docs.md §9](./comments-docs.md#9-implementation-status) |
 
 ---
 

@@ -16,8 +16,7 @@ import team.sprintory_backend.task.dto.CreateTaskRequest;
 import team.sprintory_backend.task.dto.MoveTaskRequest;
 import team.sprintory_backend.task.dto.ReorderBacklogRequest;
 import team.sprintory_backend.task.dto.TaskResponse;
-import team.sprintory_backend.task.dto.TaskStatusHistoryResponse;
-import java.util.List;
+import team.sprintory_backend.task.dto.TaskHistoryEntryResponse;
 import team.sprintory_backend.task.dto.UpdateTaskRequest;
 import team.sprintory_backend.task.services.TaskApiService;
 
@@ -82,10 +81,12 @@ public class TaskController {
         return taskApiService.moveInBacklog(principal.getUser(), projectId, taskId, request);
     }
 
+    /** The task's activity feed, oldest first, paged (docs/task-history-docs.md §2). */
     @GetMapping("/{taskId}/history")
-    public List<TaskStatusHistoryResponse> history(@AuthenticationPrincipal AppUserDetails principal,
-                                                   @PathVariable Long projectId, @PathVariable Long taskId) {
-        return taskApiService.history(principal.getUser(), projectId, taskId);
+    public PageResponse<TaskHistoryEntryResponse> history(@AuthenticationPrincipal AppUserDetails principal,
+                                                          @PathVariable Long projectId, @PathVariable Long taskId,
+                                                          Pageable pageable) {
+        return taskApiService.history(principal.getUser(), projectId, taskId, Pageables.withoutSort(pageable));
     }
 
     @PostMapping("/{taskId}/restore")

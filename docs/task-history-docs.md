@@ -1,6 +1,6 @@
 # Sprintory — Task history API contract (R10, PMP-26)
 
-**Status:** contract agreed, backend not built yet (PMP-133, branch `features/comments_history`). It replaces the status-only history of PMP-125, and covers the subtasks and restore of PMP-131/PMP-132 (Damir, branch `features/task-restore-subtasks`, which merges first). See [§9 Implementation status](#9-implementation-status).
+**Status:** backend implemented and tested, including against PostgreSQL (PMP-133, branch `features/comments_history`, 5 Nov 2026). It replaces the status-only history of PMP-125, and covers the subtasks and restore of PMP-131/PMP-132 (Damir, branch `features/task-restore-subtasks`, which merges first). See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `GET /api/v1/projects/{projectId}/tasks/{taskId}/history`, and every action that writes an entry (§3).
 **Related:** [Tasks](./tasks-docs.md), [Comments](./comments-docs.md), [Board configuration](./board-docs.md) (column delete moves tasks), [Audit log](./audit-log-docs.md) (the workspace-level log, a different thing), [Roles and permissions](./roles-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R10.
 
@@ -184,7 +184,7 @@ Rules:
 
 - **Foreign keys:** `task_id` → `tasks`, `ON DELETE CASCADE`. A soft-deleted task keeps its history; deleting the project or workspace removes it. `actor_id` has **no** foreign key on purpose, so entries outlive their author, as in the audit log.
 - **Append-only:** `TaskHistoryEntry` is `@Immutable`, and the repository offers no update or delete.
-- **Migration:** `V11__task_history.sql`. (`V10__subtasks.sql` is Damir's PMP-131/132 migration, which merges first.)
+- **Migration:** `V11__task_history.sql`, which also creates the comments table ([comments-docs.md §6](./comments-docs.md#6-data-model)). `V10__subtasks.sql` is Damir's PMP-131/132 migration.
   - It creates `task_history` and copies every `task_status_history` row into it as `FIELD_CHANGED` / `STATUS`. The actor name is taken from `users`; an actor who no longer exists becomes "Deleted user".
   - Then it **drops `task_status_history`** (from V7). V7 itself is not edited.
 - **Dev databases** run with `ddl-auto=update`. Hibernate creates `task_history` but does not copy the old rows or drop the old table. Old status moves then do not show on a dev database, which is harmless; recreate the database to see them.
@@ -218,10 +218,11 @@ As of 4 Nov 2026, on branch `features/comments_history`:
 | Part | Status |
 | --- | --- |
 | This contract | Written, agreed with the backend owner |
-| `V11__task_history.sql`, `TaskHistoryEntry`, repository | Not started |
-| `TaskStatusHistoryService` writers and paginated list | Not started |
-| Entries from task create and edit, comment delete | Not started |
-| Entries from subtasks and restore (`SubtaskService`, `TaskApiService.delete/restore`) | Not started. Needs PMP-131/132 merged into `main` first (Damir, `features/task-restore-subtasks`); this story then adds the calls |
+| `V11__task_history.sql`, `TaskHistoryEntry`, repository | Done; `TaskHistoryMigrationIntegrationTest` migrates a V10 database with status moves to V11 on PostgreSQL and checks the copy and the drop |
+| `TaskStatusHistoryService` writers and paginated list, `GET /history` paged | Done; `TaskStatusHistoryServiceTest` (15), `TaskIntegrationTest` and `TaskRestorationSubtasksIntegrationTest` updated. Status moves are written; the other writers are not called yet (step 5) |
+| Entries from task create and edit (via `TaskSnapshot` + `recordChanges`) | Done; `TaskApiServiceTest`, `TaskStatusHistoryServiceTest`, `TaskHistoryIntegrationTest` (5) on PostgreSQL, including priority Low → High |
+| Entries from subtasks and restore (`SubtaskService`, `TaskApiService.delete/restore`) | Done; same tests. Subtask description and label entries come when subtasks get those fields |
+| Entry from comment delete | With the comments (step 6) |
 | Unit and PostgreSQL integration tests | Not started |
 | Frontend (PMP-134) and acceptance test (PMP-135) | Not started |
 

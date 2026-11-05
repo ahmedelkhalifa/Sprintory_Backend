@@ -1,6 +1,6 @@
 # Sprintory — @mentions and rich text contract (R26 part A, PMP-31)
 
-**Status:** contract agreed, backend not built yet (PMP-136, branch `features/comments_history`). See [§10 Implementation status](#10-implementation-status).
+**Status:** backend implemented and tested, including against PostgreSQL (PMP-136, branch `features/comments_history`, 5 Nov 2026). Frontend (PMP-138) and acceptance testing (PMP-140) open. See [§10 Implementation status](#10-implementation-status).
 **Applies to:**
 - the rich-text format of task comments and task descriptions (and later project chat, PMP-137);
 - backend `GET /api/v1/projects/{projectId}/mentionables`;
@@ -217,7 +217,8 @@ As of 4 Nov 2026, on branch `features/comments_history`:
 | This contract | Written, agreed with the backend owner |
 | `RichTextParser` (format, normalizing, plain text), `INVALID_RICH_TEXT` | Done; `RichTextParserTest` (23), `ExceptionHandlerTest`. Not yet called by comments or descriptions |
 | `MentionService` (rules of §4) and `/mentionables`, `INVALID_MENTION` | Done; `MentionServiceTest` (16), `MentionControllerTest`, `ExceptionHandlerTest`, and `MentionIntegrationTest` (7) on PostgreSQL for the suggestion queries and team expansion |
-| Mentions in comments and task descriptions | Not started |
+| Mentions in task descriptions (TipTap JSON required, new mentions publish `Mentioned`) | Done; `TaskApiServiceTest`, and `MentionIntegrationTest` end to end on PostgreSQL: one notification per person, editing notifies only new people, outsiders and plain text refused |
+| Mentions in comments | With the comments (step 6) |
 | Notifications listener for `MENTIONED` | Done (PMP-113) |
 | Frontend (PMP-138) and acceptance test (PMP-140) | Not started |
 
