@@ -113,6 +113,19 @@ public class Task extends BaseEntity {
     @BatchSize(size = 100)
     private Set<String> labels = new HashSet<>();
 
+    /** Null for a top-level task; a subtask cannot become a parent. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_task_id")
+    private Task parent;
+
+    /** Time estimate for subtasks only, in minutes. Parent tasks use story points. */
+    @Column(name = "estimate_minutes")
+    private Integer estimateMinutes;
+
+    /** Parent id if the child was deleted by parent cascade; never set on manual child delete. */
+    @Column(name = "deleted_with_parent_id")
+    private Long deletedWithParentId;
+
     /** Set when the task is deleted; the row stays in the database. */
     private Instant deletedAt;
 

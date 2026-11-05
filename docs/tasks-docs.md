@@ -1,9 +1,9 @@
 # Sprintory — Tasks API contract (R09)
 
-**Status:** tasks with keys, story 9 fields, soft delete, filters/search and board/backlog ordering. PMP-125 adds status-change history and soft Kanban WIP warnings to task moves. See [§9 Implementation status](#9-implementation-status).
+**Status:** tasks with keys, filters and ordering; PMP-125 board history/WIP; PMP-131 restoration; PMP-132 one-level subtasks and completion confirmation. Sprint assignment and Ahmed's expanded per-task activity/comment feed remain separate stories. See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/projects/{projectId}/tasks/**`.
 **Related:** [Projects](./projects-docs.md) (keys, board, columns), [Board configuration](./board-docs.md), [Roles and permissions](./roles-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R09, R13, R16.
-**Audit log:** deleting a task (and, from PMP-131, restoring one) writes an entry to the workspace's audit log ([audit-log-docs.md §4.4](./audit-log-docs.md#4-action-catalogue)). Other task edits are not audit-logged; they belong to the task's own history.
+**Audit log:** deleting or restoring a task writes an entry to the workspace's audit log ([audit-log-docs.md §4.4](./audit-log-docs.md#4-action-catalogue)). Other task edits are not audit-logged; they belong to the task's own history.
 
 This document is the single reference for tasks end to end. If the code and this file disagree, fix one of them in the same PR.
 
@@ -28,7 +28,7 @@ This document is the single reference for tasks end to end. If the code and this
 - **New tasks start in the backlog.** What "the backlog" means depends on the template:
   - **Scrum:** a task is in the backlog when it is **in no sprint**. Its status is still a column (the first one, To Do). The Scrum board shows only the active sprint's tasks (R15), so a backlog task is not on the board until the Scrum Master pulls it into a sprint (R14) and starts the sprint. Until sprints exist, every Scrum task is in the backlog and `sprintId` is always `null`.
   - **Kanban:** there are no sprints, so the backlog is the first **column**, "Backlog". A new task is in that column.
-- **Deleting is a soft delete.** The task disappears from the board, the backlog, every list and search, and returns `404`, but its row stays in the database. Its key is not given out again.
+- **Deleting is a soft delete.** The task disappears from the board, the backlog, every list and search, and returns `404`, but its row stays in the database. Its key is not given out again. `POST /{taskId}/restore` restores it, with permission checks and audit logging. Deleting a parent also soft-deletes its live subtasks; restoring it only restores children deleted by that cascade.
 - **Order.** Each task has a place in its board column and a place in the backlog. New tasks go last in both. Drag and drop uses two endpoints (3.6, 3.7); lists can be read in board or backlog order (`?order=`, §3.2).
 - **Projects are private** ([API conventions §5](./api-conventions.md#5-private-projects-and-access-control)). Anyone who may not see the project gets `404`.
 - **Tasks are project work** (story 7). A workspace admin who is **not** a member of the project gets `403` on every task endpoint, reads included.
@@ -60,6 +60,10 @@ All paths are under `/api/v1/projects/{projectId}/tasks`. Bodies are JSON in `ca
 | 3.6 | PUT | `/{taskId}/position` | `MoveTaskRequest` | `200` + `TaskResponse` | `EDIT_TASKS` |
 | 3.7 | PUT | `/{taskId}/backlog-rank` | `ReorderBacklogRequest` | `200` + `TaskResponse` | `MANAGE_BACKLOG` |
 | 3.8 | GET | `/{taskId}/history` | none | `200` + `TaskStatusHistoryResponse[]` | `VIEW_WORK` |
+| 3.9 | POST | `/{taskId}/restore` | none | `200 TaskResponse` | `EDIT_TASKS` |
+| 3.10 | POST | `/{parentId}/subtasks` | `CreateSubtaskRequest` | `201 TaskResponse` | `EDIT_TASKS` |
+| 3.11 | GET | `/{parentId}/subtasks` | none | `200 TaskResponse[]` | `VIEW_WORK` |
+| 3.12 | PATCH | `/{parentId}/subtasks/{subtaskId}` | `UpdateSubtaskRequest` | `200 TaskResponse` | `EDIT_TASKS` |
 
 A `{taskId}` is always looked up **inside** `{projectId}`: a task of another project gives the same `404` as a missing one.
 
@@ -85,12 +89,16 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
   "assigneeId": 7, "estimate": 3, "labels": ["R09", "backend"],
   "description": "Steps to reproduce: ...", "sprintId": null,
   "createdAt": "2026-10-26T09:30:00Z", "updatedAt": "2026-10-26T09:30:00Z",
-  "wipWarning": null }
+  "wipWarning": null,
+  "parentTaskId": null, "estimateMinutes": null,
+  "subtaskTotal": 0, "subtaskDone": 0 }
 ```
 
 - `labels` come back sorted. Labels are trimmed, and duplicates that differ only in case collapse into the first spelling (`["backend", "Backend"]` stores `backend`).
 - `assigneeId` is a user id; show the name from `GET /projects/{projectId}/members`.
-- `sprintId` stays `null` until sprints exist (R14).
+- `sprintId` stays `null` until sprints exist (R14). Parent-to-child sprint inheritance will be integrated with the future sprint backend; the API does not yet accept `sprintId`.
+- Top-level responses include `subtaskTotal` and `subtaskDone` (zero until children exist); child responses have `parentTaskId`, `estimateMinutes`, and `estimate: null` (no story points). Children do not appear as separate board cards or in the main project task list.
+- `confirmOpenSubtasks` is an optional boolean on `PATCH /{taskId}` and `PUT /{taskId}/position`. A transition of a parent with open subtasks to a `DONE`-category column returns `409 OPEN_SUBTASKS_CONFIRMATION_REQUIRED` unless explicitly confirmed.
 - The board positions and backlog ranks are internal and never sent; lists come back already sorted (§3.2).
 - `wipWarning` is `null` normally. On a move into a Kanban column above its WIP limit, the *move succeeds* and `wipWarning` contains `{ "columnId", "count", "limit", "message" }`. See [board-docs §3.6](./board-docs.md#36-soft-wip-warning-on-task-move).
 
@@ -351,3 +359,69 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: contro
 | 26 Oct 2026 | Labels: at most 20, each at most 50 characters, collapsed case-insensitively. Description: rich text, no limit. |
 | 26 Oct 2026 | Someone who leaves a project (or the workspace) is unassigned from its tasks, so the assignee is always a project member. |
 | 1 Nov 2026 | A task status change records from/to column snapshots and actor; over-limit Kanban task moves succeed with a warning, never a validation failure. |
+
+
+---
+
+## 10. Task restoration (PMP-131) and one-level subtasks (PMP-132)
+
+**Release:** migration `V9__subtasks.sql` on top of V8 audit infrastructure. No earlier migration is changed. For development with Flyway disabled, use a clean Flyway-managed test database; Hibernate auto-update is not a migration strategy.
+
+### 10.1 Restore a task
+
+`POST /api/v1/projects/{projectId}/tasks/{taskId}/restore` (no body)
+
+- **Permission:** `EDIT_TASKS`, with an active workspace. Non-members see `404`; Viewers see `403`; archived workspace changes see `409`.
+- **Success:** `200 TaskResponse`, same immutable `key`. The key counter is never decremented or reused. Workspace audit logs record one `TASK_RESTORED` entry; a failed or repeated restore produces none.
+- **Missing, live (not deleted), other-project, or child whose parent is still deleted:** `404 RESOURCE_NOT_FOUND` with `Task not found.`. No separate deleted-record listing endpoint is exposed.
+- **Original column was subsequently removed:** the task is restored into the first *active* project column rather than linking to a soft-deleted column.
+- **Parent restoration:** also restores only children that were live when the parent was deleted. A child deleted separately *before* its parent's deletion remains deleted; it can be restored independently after the parent is live again.
+- **Subtasks:** the same restore endpoint works on individually deleted subtasks; restoring a subtask while its parent is deleted returns `404`.
+
+### 10.2 Subtask endpoints
+
+A subtask belongs to exactly one top-level task of the *same project*. It has its own generated key, title, assignee, board-column status and optional time estimate **in minutes**. It has **no story points**, and cannot have children. Only existing project members may be assigned.
+
+**Create:** `POST /api/v1/projects/{projectId}/tasks/{parentId}/subtasks` (`201`)
+
+```json
+{ "title": "Write integration tests", "assigneeId": 17, "statusId": 11, "estimateMinutes": 90 }
+```
+
+Only `title` is required. `statusId` omitted means the project's first active board column. The subtask's key comes from the *same* per-project sequence as top-level tasks. Reject blank or overlong titles, non-positive ids/minutes, non-member assignees and a parent that is itself a subtask. Unknown or cross-project parents return `404`; attempting a second subtask level returns `400 BAD_REQUEST`.
+
+**List:** `GET /api/v1/projects/{projectId}/tasks/{parentId}/subtasks` (`200 TaskResponse[]`), sorted by creation id oldest first. This is the **only dedicated subtask list**; the main `GET /projects/{projectId}/tasks` excludes children so they never become separate board cards, backlog items, or WIP counts. A parent response reports `subtaskDone` / `subtaskTotal` (for example `3 / 5`). The count is based on board-column `DONE` **category**, not its editable name.
+
+**Edit:** `PATCH /api/v1/projects/{projectId}/tasks/{parentId}/subtasks/{subtaskId}` (`200`)
+
+```json
+{ "title": "Write backend tests", "statusId": 14, "estimateMinutes": 60 }
+```
+
+Allowed fields: `title`, `statusId`, `assigneeId`, `estimateMinutes`, `clearAssignee`, `clearEstimateMinutes` (booleans, optional). Status changes create the existing `task_status_history` event. `estimateMinutes` must be a positive integer; clearing sets it to `null`. The parent id and subtask id must match and belong to the project, otherwise `404`. The regular task PATCH endpoint is deliberately **not** an alternative for subtasks because its `estimate` means story points.
+
+**Delete:** use the existing `DELETE /api/v1/projects/{projectId}/tasks/{subtaskId}` (`204`). The child is independently soft-deleted; `subtaskTotal` decreases accordingly. Restoration uses §10.1.
+
+**Permissions:** `VIEW_WORK` for reading; `EDIT_TASKS` for create/edit/delete/restore. Viewer may read but never mutate. Non-project-members get `404` even if they belong to the workspace. A workspace admin outside the project still cannot read or edit project tasks.
+
+### 10.3 Parent completion confirmation
+
+When a top-level task has one or more live subtasks in columns other than category `DONE`, a transition **into DONE** is conditional. The server rejects an unconfirmed transition with HTTP `409`:
+
+```json
+{ "code": "OPEN_SUBTASKS_CONFIRMATION_REQUIRED",
+  "message": "2 subtasks are not Done. Retry with confirmOpenSubtasks=true to continue." }
+```
+
+The frontend shows a warning, allows explicit confirmation, and retries the *same* request with `"confirmOpenSubtasks": true`. This applies to both `PATCH /{taskId}` (when changing `statusId`) and `PUT /{taskId}/position`. No need to reconfirm for reordering within a DONE column. There is **no hard block** once confirmation is provided. A status change for a child never needs this confirmation because nesting beyond one level is forbidden.
+
+### 10.4 Other subsystems, current boundaries
+
+- **Kanban WIP:** only top-level tasks count; subtasks never increase column task counters or WIP warnings. Parent tasks remain in their own status columns. Column deletion still rehomes *both* active parents and active children; individual status-history entries are recorded.
+- **Sprint assignment:** `sprintId` remains `null` because the sprint domain/API is not yet implemented. When the R14 sprint feature ships, it must move all children with their parent and expose the inherited `sprintId`. This requirement cannot be fully acceptance-tested yet; do not simulate a second sprint model here.
+- **Task history:** existing `GET /{taskId}/history` currently returns **status-change history only**, including child column changes. Ahmed owns the expanded comment/field/subtask activity feed (PMP-133), so field-change and subtask added/deleted events must be coordinated there, not invented as an incompatible duplicate log. The workspace audit log still records explicit task delete/restore actions.
+- **No frontend modifications** in PMP-131/PMP-132. Mobeen's PMP-134 must integrate these endpoints after backend review and merge.
+
+### 10.5 Test expectations
+
+The full suite is `bash ./mvnw clean verify` (Docker required for PostgreSQL Testcontainers). New integration tests cover restoration including a removed column, uniqueness of keys, cascade versus manual deletion, parent progress, distinct estimate units, board/WIP exclusion, DONE confirmation, column rehoming history and role-based access checks. Validate against a Flyway-created schema at V9. **Do not mark these tests as passing until they run in the project's Java/Maven environment.**

@@ -88,6 +88,12 @@ public class TaskController {
         return taskApiService.history(principal.getUser(), projectId, taskId);
     }
 
+    @PostMapping("/{taskId}/restore")
+    public TaskResponse restore(@AuthenticationPrincipal AppUserDetails principal,
+                                @PathVariable Long projectId, @PathVariable Long taskId) {
+        return taskApiService.restore(principal.getUser(), projectId, taskId);
+    }
+
     @DeleteMapping("/{taskId}")
     public ResponseEntity<Void> delete(@AuthenticationPrincipal AppUserDetails principal,
                                        @PathVariable Long projectId, @PathVariable Long taskId) {
