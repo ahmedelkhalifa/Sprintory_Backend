@@ -20,7 +20,8 @@ class ProjectRoleTest {
     void everyRoleHasExactlyThePermissionsOfTheMatrix() {
         Map<ProjectRole, Set<ProjectPermission>> matrix = Map.of(
                 PROJECT_MANAGER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, EDIT_SETTINGS, ARCHIVE_PROJECT,
-                        MANAGE_MEMBERS, MANAGE_ROLES, CONFIGURE_BOARD, EDIT_TASKS, COMMENT, LOG_TIME),
+                        MANAGE_MEMBERS, MANAGE_ROLES, CONFIGURE_BOARD, EDIT_TASKS, COMMENT, MODERATE_COMMENTS,
+                        LOG_TIME),
                 PRODUCT_OWNER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, EDIT_TASKS, COMMENT, LOG_TIME),
                 SCRUM_MASTER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_SPRINTS, EDIT_TASKS, COMMENT, LOG_TIME),
                 MEMBER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, EDIT_TASKS, COMMENT, LOG_TIME),
@@ -114,6 +115,16 @@ class ProjectRoleTest {
         assertFalse(VIEWER.permissions().contains(EDIT_TASKS));
         assertFalse(VIEWER.permissions().contains(COMMENT));
         assertFalse(VIEWER.permissions().contains(LOG_TIME));
+    }
+
+    // --- PMP-133 comments ---
+
+    @Test
+    void onlyTheProjectManagerModeratesComments() {
+        for (ProjectRole role : ProjectRole.values()) {
+            assertEquals(role == PROJECT_MANAGER, role.permissions().contains(MODERATE_COMMENTS), role.name());
+        }
+        assertFalse(ProjectPermission.WORKSPACE_ADMIN.contains(MODERATE_COMMENTS), "admins do not see project work");
     }
 
     // --- story 6 acceptance criterion 14 ---

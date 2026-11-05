@@ -32,6 +32,7 @@ import team.sprintory_backend.task.dto.TaskResponse;
 import team.sprintory_backend.task.dto.UpdateSubtaskRequest;
 import team.sprintory_backend.task.dto.UpdateTaskRequest;
 import team.sprintory_backend.task.exceptions.OpenSubtasksConfirmationRequiredException;
+import team.sprintory_backend.task.models.TaskHistoryField;
 import team.sprintory_backend.task.services.TaskApiService;
 import team.sprintory_backend.task.services.SubtaskService;
 import team.sprintory_backend.user.models.Role;
@@ -133,7 +134,7 @@ class TaskRestorationSubtasksIntegrationTest extends AbstractIntegrationTest {
         subtasks.update(owner, projectId, p.id(), child.id(),
                 new UpdateSubtaskRequest("Finished child", null, done, null, false, false));
         assertEquals(1, tasks.get(owner, projectId, p.id()).subtaskDone());
-        assertEquals(1, tasks.history(owner, projectId, child.id()).size());
+        assertEquals(1, statusMoves(child.id()));
         assertThrows(BadRequestException.class, () -> subtasks.create(owner, projectId, child.id(),
                 new CreateSubtaskRequest("Grandchild", null, null, null)));
         assertThrows(BadRequestException.class, () -> tasks.moveOnBoard(owner, projectId, child.id(),
@@ -200,7 +201,13 @@ class TaskRestorationSubtasksIntegrationTest extends AbstractIntegrationTest {
         boards.delete(owner, projectId, review, new DeleteBoardColumnRequest(toDo));
         em.flush(); em.clear();
         assertEquals("To Do", subtasks.list(owner, projectId, p.id()).get(0).statusName());
-        assertEquals(1, tasks.history(owner, projectId, child.id()).size());
+        assertEquals(1, statusMoves(child.id()));
+    }
+
+    /** How many of the task's history entries are status moves. */
+    private long statusMoves(Long taskId) {
+        return tasks.history(owner, projectId, taskId, PageRequest.of(0, 100)).content().stream()
+                .filter(entry -> entry.field() == TaskHistoryField.STATUS).count();
     }
 
     private TaskResponse parent(String title) {

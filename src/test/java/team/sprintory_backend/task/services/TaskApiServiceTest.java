@@ -18,6 +18,13 @@ import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.common.richtext.InvalidRichTextException;
+import team.sprintory_backend.common.richtext.RichTextDocument;
+import team.sprintory_backend.common.richtext.RichTextMention;
+import team.sprintory_backend.common.richtext.RichTextParser;
+import team.sprintory_backend.mention.exceptions.InvalidMentionException;
+import team.sprintory_backend.mention.services.MentionService;
+import team.sprintory_backend.notification.events.Mentioned;
 import team.sprintory_backend.notification.events.TaskAssigned;
 import team.sprintory_backend.notification.events.TaskCreated;
 import team.sprintory_backend.project.models.Project;
@@ -47,6 +54,7 @@ import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 import team.sprintory_backend.workspace.models.Workspace;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.HashSet;
 import java.util.List;
@@ -57,6 +65,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 /** Pure service tests: access and every repository are mocked, so no database or Spring context. */
@@ -71,6 +80,8 @@ class TaskApiServiceTest {
     private UserRepository userRepository;
     private AuditLogService auditLog;
     private ApplicationEventPublisher events;
+    private TaskStatusHistoryService history;
+    private MentionService mentions;
     private TaskApiService service;
     private User user;
     private Workspace workspace;
@@ -87,10 +98,12 @@ class TaskApiServiceTest {
         userRepository = mock(UserRepository.class);
         auditLog = mock(AuditLogService.class);
         events = mock(ApplicationEventPublisher.class);
+        history = mock(TaskStatusHistoryService.class);
+        mentions = mock(MentionService.class);
         service = new TaskApiService(access, taskRepository, projectRepository, projectMemberRepository,
                 columnRepository, userRepository,
                 new ProjectBoardStrategies(List.of(new ScrumBoardStrategy(), new KanbanBoardStrategy())),
-                mock(team.sprintory_backend.task.services.TaskStatusHistoryService.class), auditLog, events);
+                history, auditLog, events, new RichTextParser(JsonMapper.builder().build()), mentions);
         user = User.builder().id(42L).firstName("Ada").lastName("Lovelace")
                 .email("ada@example.com").build();
 
@@ -155,13 +168,13 @@ class TaskApiServiceTest {
         when(userRepository.getReferenceById(7L)).thenReturn(assignee);
 
         TaskResponse response = service.create(user, PROJECT_ID, new CreateTaskRequest("Crash on start",
-                TaskType.BUG, TaskPriority.HIGHEST, 7L, 3, null, "Steps to reproduce"));
+                TaskType.BUG, TaskPriority.HIGHEST, 7L, 3, null, doc("Steps to reproduce")));
 
         assertEquals(TaskType.BUG, response.type());
         assertEquals(TaskPriority.HIGHEST, response.priority());
         assertEquals(7L, response.assigneeId());
         assertEquals(3, response.estimate());
-        assertEquals("Steps to reproduce", response.description());
+        assertEquals(doc("Steps to reproduce"), response.description());
         assertEquals(List.of(), response.labels());
         Task created = savedTask();
         verify(events).publishEvent(new TaskCreated(created, user));
@@ -224,7 +237,7 @@ class TaskApiServiceTest {
         when(columnRepository.findByIdAndBoardProjectId(14L, PROJECT_ID)).thenReturn(Optional.of(done));
 
         TaskResponse response = service.update(user, PROJECT_ID, 5L, new UpdateTaskRequest(" New title ",
-                TaskType.STORY, TaskPriority.LOW, 14L, null, 8, List.of("ui"), "Details", false, false, false));
+                TaskType.STORY, TaskPriority.LOW, 14L, null, 8, List.of("ui"), doc("Details"), false, false, false));
 
         verify(access).requireActive(PROJECT_ID, user, ProjectPermission.EDIT_TASKS);
         assertEquals("New title", response.title());
@@ -235,7 +248,7 @@ class TaskApiServiceTest {
         verify(projectRepository).lockById(PROJECT_ID);
         assertEquals(8, response.estimate());
         assertEquals(List.of("ui"), response.labels());
-        assertEquals("Details", response.description());
+        assertEquals(doc("Details"), response.description());
         assertEquals(7L, response.assigneeId(), "assignee was not sent, so it is unchanged");
         assertEquals("MOB-5", task.getKey());
     }
@@ -336,6 +349,208 @@ class TaskApiServiceTest {
                 new UpdateTaskRequest(null, null, null, null, null, null, null, null, true, false, false));
 
         verifyNoInteractions(events);
+    }
+
+    // --- description and mentions (PMP-136) ---
+
+    @Test
+    void aPlainTextDescriptionIsRefusedBeforeAnythingIsWritten() {
+        assertThrows(InvalidRichTextException.class, () -> service.create(user, PROJECT_ID,
+                new CreateTaskRequest("Fix login", null, null, null, null, null, "Steps to reproduce")));
+
+        verify(projectRepository, never()).incrementTaskNumber(anyLong());
+        verify(taskRepository, never()).save(any(Task.class));
+        verifyNoInteractions(events, history);
+    }
+
+    @Test
+    void aDescriptionIsStoredNormalized() {
+        String sent = "{\"type\":\"doc\",\"class\":\"x\",\"content\":[{\"type\":\"paragraph\",\"content\":"
+                + "[{\"type\":\"text\",\"text\":\"Hi\"}]}]}";
+
+        TaskResponse response = service.create(user, PROJECT_ID,
+                new CreateTaskRequest("Fix login", null, null, null, null, null, sent));
+
+        assertEquals(doc("Hi"), response.description());
+    }
+
+    @Test
+    void anEmptyDocumentMeansNoDescription() {
+        TaskResponse response = service.create(user, PROJECT_ID, new CreateTaskRequest("Fix login", null, null,
+                null, null, null, "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}"));
+
+        assertNull(response.description());
+        verifyNoInteractions(mentions);
+    }
+
+    @Test
+    void creatingWithMentionsTellsTheMentionedPeople() {
+        String description = docWith(text("Ask "), mention(31));
+        when(mentions.newlyMentionedUserIds(eq(project), any(RichTextDocument.class), isNull()))
+                .thenReturn(Set.of(31L));
+
+        service.create(user, PROJECT_ID, new CreateTaskRequest("Fix login", null, null, null, null, null, description));
+
+        Task saved = savedTask();
+        verify(events).publishEvent(new Mentioned(saved, user, Set.of(31L), "Ask @Damir"));
+    }
+
+    @Test
+    void aDescriptionWithoutNewMentionsPublishesNoMention() {
+        service.create(user, PROJECT_ID, new CreateTaskRequest("Fix login", null, null, null, null, null, doc("Hi")));
+
+        verify(events, never()).publishEvent(any(Mentioned.class));
+    }
+
+    @Test
+    void anOutsiderMentionIsRefusedBeforeAnythingIsWritten() {
+        when(mentions.newlyMentionedUserIds(eq(project), any(RichTextDocument.class), isNull()))
+                .thenThrow(new InvalidMentionException("Only members of this project can be mentioned."));
+
+        assertThrows(InvalidMentionException.class, () -> service.create(user, PROJECT_ID,
+                new CreateTaskRequest("Fix login", null, null, null, null, null, docWith(mention(99)))));
+        verify(taskRepository, never()).save(any(Task.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    void editingComparesTheNewMentionsWithTheStoredDescription() {
+        Task task = givenTask();
+        task.setDescription(docWith(mention(31)));
+        when(mentions.newlyMentionedUserIds(eq(project), any(RichTextDocument.class), any(RichTextDocument.class)))
+                .thenReturn(Set.of(17L));
+
+        service.update(user, PROJECT_ID, 5L, new UpdateTaskRequest(null, null, null, null, null, null, null,
+                docWith(mention(31), mention(17)), false, false, false));
+
+        ArgumentCaptor<RichTextDocument> previous = ArgumentCaptor.forClass(RichTextDocument.class);
+        verify(mentions).newlyMentionedUserIds(eq(project), any(RichTextDocument.class), previous.capture());
+        assertEquals(Set.of(RichTextMention.user(31)), previous.getValue().mentions());
+        verify(events).publishEvent(new Mentioned(task, user, Set.of(17L), "@Damir@Damir"));
+    }
+
+    @Test
+    void editingAnOldPlainTextDescriptionTreatsEveryMentionAsNew() {
+        givenTask(); // its description is the plain text "Old description"
+
+        service.update(user, PROJECT_ID, 5L, new UpdateTaskRequest(null, null, null, null, null, null, null,
+                docWith(mention(31)), false, false, false));
+
+        verify(mentions).newlyMentionedUserIds(eq(project), any(RichTextDocument.class), isNull());
+    }
+
+    @Test
+    void clearingOrNotSendingTheDescriptionChecksNoMentions() {
+        Task task = givenTask();
+
+        service.update(user, PROJECT_ID, 5L, new UpdateTaskRequest("New", null, null, null, null, null, null,
+                null, false, false, false));
+        service.update(user, PROJECT_ID, 5L, new UpdateTaskRequest(null, null, null, null, null, null, null,
+                null, false, false, true));
+
+        assertNull(task.getDescription());
+        verifyNoInteractions(mentions);
+    }
+
+    // --- history (PMP-133) ---
+
+    @Test
+    void createRecordsTheCreation() {
+        service.create(user, PROJECT_ID, new CreateTaskRequest("Fix login", null, null, null, null, null, null));
+
+        Task saved = savedTask();
+        verify(history).recordCreated(saved, user);
+    }
+
+    @Test
+    void updateHandsTheFieldsBeforeAndAfterToTheHistory() {
+        Task task = givenTask();
+        task.setAssignee(User.builder().id(7L).firstName("Grace").lastName("Hopper").build());
+        User linus = User.builder().id(9L).firstName("Linus").lastName("Torvalds").build();
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, 9L)).thenReturn(true);
+        when(userRepository.getReferenceById(9L)).thenReturn(linus);
+
+        service.update(user, PROJECT_ID, 5L, new UpdateTaskRequest(" New title ", null, TaskPriority.LOW, null,
+                9L, 5, List.of("ui", "api"), doc("New description"), false, false, false));
+
+        verify(history).recordChanges(task,
+                new TaskSnapshot("Old title", "BUG", "HIGH", "Grace Hopper", "2", null, "backend", "Old description"),
+                new TaskSnapshot("New title", "BUG", "LOW", "Linus Torvalds", "5", null, "api, ui", doc("New description")),
+                user);
+    }
+
+    @Test
+    void updateWithNothingSentHandsEqualSnapshots() {
+        Task task = givenTask();
+
+        service.update(user, PROJECT_ID, 5L, new UpdateTaskRequest(null, null, null, null, null,
+                null, null, null, false, false, false));
+
+        TaskSnapshot same = TaskSnapshot.of(task);
+        verify(history).recordChanges(task, same, same, user);
+    }
+
+    @Test
+    void aRefusedUpdateRecordsNothing() {
+        givenTask();
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, 9L)).thenReturn(false);
+
+        assertThrows(BadRequestException.class, () -> service.update(user, PROJECT_ID, 5L,
+                new UpdateTaskRequest("New", null, null, null, 9L, null, null, null, false, false, false)));
+        verifyNoInteractions(history);
+    }
+
+    @Test
+    void deletingASubtaskOnItsOwnIsRecordedOnTheParent() {
+        Task parent = otherTask(4L, firstColumn, 0, 0);
+        Task subtask = givenTask();
+        subtask.setParent(parent);
+
+        service.delete(user, PROJECT_ID, 5L);
+
+        verify(history).recordSubtaskRemoved(parent, subtask, user);
+    }
+
+    @Test
+    void deletingATopLevelTaskRecordsNoSubtaskEntry() {
+        givenTask();
+        when(taskRepository.findByParentIdOrderByIdAsc(5L)).thenReturn(List.of());
+
+        service.delete(user, PROJECT_ID, 5L);
+
+        verifyNoInteractions(history);
+    }
+
+    @Test
+    void restoreIsRecordedOnTheTask() {
+        Task task = givenTask();
+        when(taskRepository.restoreOne(PROJECT_ID, 5L, 11L, "ada@example.com")).thenReturn(1);
+
+        service.restore(user, PROJECT_ID, 5L);
+
+        verify(history).recordRestored(task, user);
+        verify(history, never()).recordSubtaskAdded(any(), any(), any());
+    }
+
+    @Test
+    void restoringASubtaskOnItsOwnAlsoAddsItBackToTheParent() {
+        Task parent = otherTask(4L, firstColumn, 0, 0);
+        Task subtask = givenTask();
+        subtask.setParent(parent);
+        when(taskRepository.restoreOne(PROJECT_ID, 5L, 11L, "ada@example.com")).thenReturn(1);
+
+        service.restore(user, PROJECT_ID, 5L);
+
+        verify(history).recordRestored(subtask, user);
+        verify(history).recordSubtaskAdded(parent, subtask, user);
+    }
+
+    @Test
+    void aRestoreOfATaskThatIsNotDeletedRecordsNothing() {
+        when(taskRepository.restoreOne(PROJECT_ID, 5L, 11L, "ada@example.com")).thenReturn(0);
+
+        assertThrows(ResourceNotFoundException.class, () -> service.restore(user, PROJECT_ID, 5L));
+        verifyNoInteractions(history);
     }
 
     // --- delete ---
@@ -579,6 +794,23 @@ class TaskApiServiceTest {
         ArgumentCaptor<Task> saved = ArgumentCaptor.forClass(Task.class);
         verify(taskRepository).save(saved.capture());
         return saved.getValue();
+    }
+
+    /** A one-paragraph TipTap document, already in the normalized form the backend stores. */
+    private static String doc(String text) {
+        return docWith(text(text));
+    }
+
+    private static String docWith(String... inline) {
+        return "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[" + String.join(",", inline) + "]}]}";
+    }
+
+    private static String text(String text) {
+        return "{\"type\":\"text\",\"text\":\"" + text + "\"}";
+    }
+
+    private static String mention(long userId) {
+        return "{\"type\":\"mention\",\"attrs\":{\"kind\":\"user\",\"id\":\"" + userId + "\",\"label\":\"Damir\"}}";
     }
 
     private static ProjectBoardColumn column(ProjectBoard board, Long id, String name, int position) {

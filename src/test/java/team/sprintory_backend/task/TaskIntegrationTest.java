@@ -28,6 +28,8 @@ import team.sprintory_backend.task.api.TaskSearchFilters;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
 import team.sprintory_backend.task.dto.MoveTaskRequest;
 import team.sprintory_backend.task.dto.ReorderBacklogRequest;
+import team.sprintory_backend.task.dto.TaskHistoryEntryResponse;
+import team.sprintory_backend.task.models.TaskHistoryField;
 import team.sprintory_backend.task.dto.TaskResponse;
 import team.sprintory_backend.task.dto.UpdateTaskRequest;
 import team.sprintory_backend.task.models.TaskPriority;
@@ -129,12 +131,11 @@ class TaskIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, count("select count(*) from project_board_columns where id = :id "
                 + "and deleted_at is not null", qa));
         assertEquals("To Do", tasks.get(owner, kanban.id(), a.id()).statusName());
+        var moves = statusMoves(kanban.id(), a.id());
         assertEquals(List.of("Backlog", "In Progress", "QA"),
-                tasks.history(owner, kanban.id(), a.id()).stream()
-                        .map(event -> event.fromColumnName()).toList());
+                moves.stream().map(TaskHistoryEntryResponse::oldValue).toList());
         assertEquals(List.of("In Progress", "QA", "To Do"),
-                tasks.history(owner, kanban.id(), a.id()).stream()
-                        .map(event -> event.toColumnName()).toList());
+                moves.stream().map(TaskHistoryEntryResponse::newValue).toList());
     }
 
     @Test
@@ -154,13 +155,14 @@ class TaskIntegrationTest extends AbstractIntegrationTest {
         entityManager.flush();
         entityManager.clear();
 
-        assertEquals(5, count("select count(*) from task_status_history where from_column_id = :id", review));
+        assertEquals(5, count("select count(*) from task_history where field = 'STATUS' and old_value = 'Review' "
+                + "and task_id in (select id from tasks where project_id = :id)", kanban.id()));
         for (TaskResponse task : moved) {
             assertEquals("To Do", tasks.get(owner, kanban.id(), task.id()).statusName());
-            var events = tasks.history(owner, kanban.id(), task.id());
+            var events = statusMoves(kanban.id(), task.id());
             assertEquals(2, events.size());
-            assertEquals("Review", events.get(1).fromColumnName());
-            assertEquals("To Do", events.get(1).toColumnName());
+            assertEquals("Review", events.get(1).oldValue());
+            assertEquals("To Do", events.get(1).newValue());
         }
     }
 
@@ -405,7 +407,8 @@ class TaskIntegrationTest extends AbstractIntegrationTest {
     @Test
     void deletingTheWorkspaceRemovesItsTasksLabelsAndColumns() {
         tasks.create(owner, scrum.id(), new CreateTaskRequest("Labelled", null, null, grace.getId(), 1,
-                List.of("backend"), "text"));
+                List.of("backend"),
+                "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"text\"}]}]}"));
         create(kanban, "Kanban task");
         tasks.delete(owner, kanban.id(), create(kanban, "Deleted").id());
         entityManager.flush();
@@ -462,6 +465,12 @@ class TaskIntegrationTest extends AbstractIntegrationTest {
     }
 
     /** Counts rows straight from the database, past the persistence context. */
+    /** The task's history entries that are status moves, oldest first. */
+    private List<TaskHistoryEntryResponse> statusMoves(Long projectId, Long taskId) {
+        return tasks.history(owner, projectId, taskId, PageRequest.of(0, 100)).content().stream()
+                .filter(entry -> entry.field() == TaskHistoryField.STATUS).toList();
+    }
+
     private long count(String sql, Long id) {
         var query = entityManager.createNativeQuery(sql);
         if (id != null) {
