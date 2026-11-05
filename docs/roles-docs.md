@@ -58,12 +58,13 @@ The creator of a workspace is its first admin; people who accept an invitation j
 | `MANAGE_BACKLOG` | Order and prioritize the backlog | R13 | | ✓ | | | | |
 | `MANAGE_SPRINTS` | Plan, start and close sprints | R14, R15 | | | ✓ | | | |
 | `EDIT_TASKS` | Create, edit and delete tasks | Story 9 | ✓ | ✓ | ✓ | ✓ | | |
-| `COMMENT` | Comment on tasks | R10 | ✓ | ✓ | ✓ | ✓ | | |
+| `COMMENT` | Comment on tasks; edit and delete own comments | R10 | ✓ | ✓ | ✓ | ✓ | | |
+| `MODERATE_COMMENTS` | Delete anyone's comment (never edit it) | R10 / PMP-133 | ✓ | | | | | |
 | `LOG_TIME` | Log time on tasks | R19 | ✓ | ✓ | ✓ | ✓ | | |
 
 - **WS Admin** is what a workspace admin gets in **every** project of their workspace, whether or not they are a member of it. They manage the project but **do not see its work** unless they are a member (story 7). An admin who is also a project member gets the admin column plus their project roles combined.
 - **Strict Scrum roles:** only the Product Owner orders the backlog and only the Scrum Master runs sprints. A Project Manager who should do either gives themselves that role too.
-- **Enforced today:** the R02 and R03 permissions, `VIEW_WORK` (tasks/history and normal board reads), `EDIT_SETTINGS` (`PATCH /projects/{id}`), `CONFIGURE_BOARD` (PMP-125 board mutations and admin configuration read), `EDIT_TASKS` (task create, edit, delete, board moves) and `MANAGE_BACKLOG` (backlog reordering). See [board-docs.md](./board-docs.md) and [tasks-docs.md](./tasks-docs.md). The others are defined ahead of their features; each feature checks its permission when it is built.
+- **Enforced today:** the R02 and R03 permissions, `VIEW_WORK` (tasks/history and normal board reads), `EDIT_SETTINGS` (`PATCH /projects/{id}`), `CONFIGURE_BOARD` (PMP-125 board mutations and admin configuration read), `EDIT_TASKS` (task create, edit, delete, board moves), `MANAGE_BACKLOG` (backlog reordering), and from PMP-133 `COMMENT` and `MODERATE_COMMENTS` (comments). See [board-docs.md](./board-docs.md), [tasks-docs.md](./tasks-docs.md) and [comments-docs.md](./comments-docs.md). The others are defined ahead of their features; each feature checks its permission when it is built.
 - The matrix is fixed in code (`ProjectRole`), not configurable per workspace.
 
 ### Examples
@@ -277,3 +278,4 @@ As of 24 Oct 2026, on branch `features/roles`:
 | 24 Oct 2026 | Leaving or being removed takes the person out of the workspace's teams and projects. |
 | 24 Oct 2026 | "At least one" rules are checked under a database row lock. |
 | 24 Oct 2026 | Controllers and DTOs for story 6 are built by the other developer, against §3. |
+| 4 Nov 2026 | `MODERATE_COMMENTS` is a separate permission, held only by the Project Manager: it deletes anyone's comment but never edits it. Workspace admins do not get it (they do not see project work). Attachment and chat moderation may reuse it. |

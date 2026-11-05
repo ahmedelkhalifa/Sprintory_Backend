@@ -6,6 +6,8 @@ import org.springframework.core.MethodParameter;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import team.sprintory_backend.common.richtext.InvalidRichTextException;
+import team.sprintory_backend.mention.exceptions.InvalidMentionException;
 import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
 import team.sprintory_backend.project.exceptions.LastProjectManagerException;
 import team.sprintory_backend.workspace.exceptions.LastWorkspaceAdminException;
@@ -68,6 +70,20 @@ class ExceptionHandlerTest {
         assertError(handler.handleInvalidProjectRoles(
                         new InvalidProjectRolesException("Viewer cannot be combined with other roles."), request),
                 400, ErrorCode.INVALID_PROJECT_ROLES, "Viewer cannot be combined with other roles.");
+    }
+
+    @Test
+    void invalidRichTextAnswers400WithTheExceptionsMessage() {
+        assertError(handler.handleInvalidRichText(
+                        new InvalidRichTextException("Node type 'image' is not allowed."), request),
+                400, ErrorCode.INVALID_RICH_TEXT, "Node type 'image' is not allowed.");
+    }
+
+    @Test
+    void invalidMentionAnswers400WithTheExceptionsMessage() {
+        assertError(handler.handleInvalidMention(
+                        new InvalidMentionException("Only members of this project can be mentioned."), request),
+                400, ErrorCode.INVALID_MENTION, "Only members of this project can be mentioned.");
     }
 
     @Test

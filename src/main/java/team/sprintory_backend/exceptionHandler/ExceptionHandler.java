@@ -15,6 +15,8 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import team.sprintory_backend.common.richtext.InvalidRichTextException;
+import team.sprintory_backend.mention.exceptions.InvalidMentionException;
 import team.sprintory_backend.notification.email.EmailDeliveryException;
 import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
 import team.sprintory_backend.project.exceptions.LastProjectManagerException;
@@ -105,6 +107,20 @@ public class ExceptionHandler {
     public ResponseEntity<ErrorResponse> handleProjectKeyTaken(ProjectKeyTakenException e,
                                                                HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), ErrorCode.PROJECT_KEY_TAKEN, e.getMessage(), request);
+    }
+
+    /** A comment, description or chat text that is not an allowed TipTap document (mentions-docs §2). */
+    @org.springframework.web.bind.annotation.ExceptionHandler(InvalidRichTextException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidRichText(InvalidRichTextException e,
+                                                               HttpServletRequest request) {
+        return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.INVALID_RICH_TEXT, e.getMessage(), request);
+    }
+
+    /** A newly added mention outside the project (mentions-docs §4). */
+    @org.springframework.web.bind.annotation.ExceptionHandler(InvalidMentionException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidMention(InvalidMentionException e,
+                                                              HttpServletRequest request) {
+        return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.INVALID_MENTION, e.getMessage(), request);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(InvalidTokenException.class)

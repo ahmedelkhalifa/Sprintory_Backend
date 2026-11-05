@@ -158,21 +158,18 @@ All paths are under `/api/v1`. Bodies are JSON in `camelCase`.
 
 ### 3.7 Read a task's status history
 
-`GET /api/v1/projects/{projectId}/tasks/{taskId}/history`
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/history?page=&size=`
 
-- **Who:** `VIEW_WORK`, so only project members (including Viewers) may read the history. A workspace admin without project membership receives `403`.
-- **Response `200`:** events in chronological order:
+**Superseded on 4 Nov 2026 by [task-history-docs.md](./task-history-docs.md)** (PMP-133). The endpoint now returns the task's full activity feed, paginated. A status move is an entry with `"type": "FIELD_CHANGED"` and `"field": "STATUS"`:
 
-  ```json
-  [
-    { "id": 83, "fromColumnId": 1, "fromColumnName": "Backlog",
-      "toColumnId": 3, "toColumnName": "In Progress",
-      "actorId": 17, "changedAt": "2026-11-01T19:30:00Z" }
-  ]
-  ```
+```json
+{ "id": 502, "type": "FIELD_CHANGED", "field": "STATUS", "oldValue": "Backlog", "newValue": "In Progress",
+  "refId": null, "actor": { "id": 17, "name": "Ada Lovelace" }, "occurredAt": "2026-11-01T19:30:00Z" }
+```
 
-- An event is created by changing `statusId` via task PATCH, moving across columns via `position`, or rehoming a task when a column is deleted. Same-column reordering creates no status event.
-- Names are stored as snapshots on the event, so a later rename does not change the historical text. Task creation does not generate a "from → to" event.
+- A status entry is still created by changing `statusId` via task PATCH, moving across columns via `position`, or rehoming a task when a column is deleted (one per moved task). Same-column reordering creates none.
+- Column names are snapshots, so a later rename does not change past entries. Column ids are no longer returned.
+- **Who:** unchanged, `VIEW_WORK`; a workspace admin without project membership receives `403`.
 
 ---
 
@@ -203,7 +200,7 @@ The frontend implementation is **PMP-126**, not part of this backend delivery.
 4. **Delete with tasks.** When the chosen column contains tasks (`taskCount > 0`), require a destination selector. Request soft delete with `targetColumnId`, then refetch the board/tasks.
 5. **Soft warnings.** Display `taskCount / wipLimit` for limited columns. Apply warning style when `wipExceeded` is true; a move still succeeds and may return `TaskResponse.wipWarning` for a toast.
 6. **Scrum.** Never show WIP editing or WIP counters because `wipLimitsEnabled` is false. Do not offer WIP setup even if a client can craft a request.
-7. **History.** Optionally expose `GET /tasks/{taskId}/history` in the task view; the endpoint is independent of the audit-log story for other task changes.
+7. **History.** The task view's History tab uses `GET /tasks/{taskId}/history`; see [task-history-docs.md §4](./task-history-docs.md#4-frontend-flows-pmp-134).
 
 ---
 
@@ -212,7 +209,7 @@ The frontend implementation is **PMP-126**, not part of this backend delivery.
 | Table | Column(s) | Behavior |
 | --- | --- | --- |
 | `project_board_columns` | `category` (`TODO` / `IN_PROGRESS` / `DONE`), `deleted_at` (nullable), existing `wip_limit`, `sort_order` | `deleted_at IS NULL` rows are active; soft-deleted columns retain their ids |
-| `task_status_history` | `id`, `task_id`, `from_column_id`, `to_column_id`, `from_column_name`, `to_column_name`, `actor_id`, `changed_at` | Append-only history; snapshots preserve past column names; table cascades with task deletion at the database level |
+| `task_status_history` | `id`, `task_id`, `from_column_id`, `to_column_id`, `from_column_name`, `to_column_name`, `actor_id`, `changed_at` | Append-only history; snapshots preserve past column names; table cascades with task deletion at the database level. **Replaced by `task_history` in V11** (4 Nov 2026): its rows were copied there and the table dropped. See [task-history-docs.md §6](./task-history-docs.md#6-data-model). |
 | `tasks` | `status_column_id`, `board_position`, `deleted_at` | Task retains column id when renamed; moves rewrite status and rank; deleted tasks are not counted in WIP |
 
 - **Migration:** `V7__board_configuration_and_status_history.sql`, applied *after* V6. It backfills categories for existing boards, adds the soft-delete field, creates active-only unique indexes on `(project_id, lower(name))` and `(project_id, sort_order)`, and creates the history table. Earlier migrations must not be edited.
@@ -236,7 +233,7 @@ The frontend implementation is **PMP-126**, not part of this backend delivery.
 
 - **No column restore API.** Soft deletion preserves rows for integrity, but restoring them requires a separate decision on names, order, categories and tasks.
 - **No subtasks yet.** All current tasks are top-level; when subtasks are introduced, counts must exclude children.
-- **Status history only.** Changes to task titles, estimates, labels, comments, etc. are not recorded here; broader audit activity remains a separate story.
+- **Status history only, in PMP-125.** PMP-133 extends it to every task field change, deleted comments and subtasks ([task-history-docs.md](./task-history-docs.md)).
 - **No sprint lifecycle yet.** `activeSprintId` remains `null` until R14/R15 is built.
 - **No client UI changes in PMP-125.** PMP-126 integrates these endpoints, then PMP-127 verifies end-to-end acceptance.
 
