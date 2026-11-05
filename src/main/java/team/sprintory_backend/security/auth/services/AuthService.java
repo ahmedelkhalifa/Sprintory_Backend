@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -18,6 +19,7 @@ import team.sprintory_backend.security.auth.dto.LoginRequest;
 import team.sprintory_backend.security.auth.dto.RegisterRequest;
 import team.sprintory_backend.notification.email.EmailDeliveryException;
 import team.sprintory_backend.notification.email.EmailService;
+import team.sprintory_backend.notification.events.PasswordReset;
 import team.sprintory_backend.security.auth.models.OneTimeTokenPurpose;
 import team.sprintory_backend.security.auth.models.RefreshToken;
 import team.sprintory_backend.security.exceptions.EmailAlreadyRegisteredException;
@@ -50,6 +52,7 @@ public class AuthService {
     private final EmailService emailService;
     private final AuditLogService auditLog;
     private final LoginFailureTracker loginFailureTracker;
+    private final ApplicationEventPublisher events;
 
     // Not final: @Value on a final field with @RequiredArgsConstructor fails at startup.
     @Value("${app.frontend-url}")
@@ -174,6 +177,8 @@ public class AuthService {
         refreshTokenService.revokeAll(user);
         // No changes on purpose: the token and the password never reach the log.
         auditLog.recordInAllWorkspacesOf(user, user, AuditAction.PASSWORD_RESET);
+        // Always on: "your password was changed" (docs/notifications-docs.md §5).
+        events.publishEvent(new PasswordReset(user));
     }
 
     private void sendPasswordReset(User user) {

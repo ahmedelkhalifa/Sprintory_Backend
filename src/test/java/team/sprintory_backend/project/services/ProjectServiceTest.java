@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -32,6 +33,9 @@ import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
+import team.sprintory_backend.notification.events.ProjectMemberAdded;
+import team.sprintory_backend.notification.events.ProjectRolesChanged;
+import team.sprintory_backend.notification.repositories.TaskWatcherRepository;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.team.models.Team;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
@@ -75,7 +79,9 @@ class ProjectServiceTest {
     private ProjectService service;
     private ProjectBoardService boardService;
     private TaskRepository taskRepository;
+    private TaskWatcherRepository taskWatcherRepository;
     private AuditLogService auditLog;
+    private ApplicationEventPublisher events;
 
     private Workspace workspace;
     private Project project;
@@ -92,11 +98,13 @@ class ProjectServiceTest {
         WorkspaceAccess workspaceAccess = new WorkspaceAccess(workspaceMemberRepository);
         boardService = mock(ProjectBoardService.class);
         taskRepository = mock(TaskRepository.class);
+        taskWatcherRepository = mock(TaskWatcherRepository.class);
         auditLog = mock(AuditLogService.class);
+        events = mock(ApplicationEventPublisher.class);
         service = new ProjectService(projectRepository, projectMemberRepository, workspaceMemberRepository,
                 teamRepository, teamMemberRepository, workspaceAccess,
                 new ProjectAccess(projectRepository, projectMemberRepository, workspaceAccess), boardService,
-                taskRepository, auditLog);
+                taskRepository, taskWatcherRepository, auditLog, events);
 
         workspace = Workspace.builder().id(WORKSPACE_ID).name("Acme").slug("acme").build();
         project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App").key("MOB")
@@ -526,6 +534,7 @@ class ProjectServiceTest {
         assertThrows(WorkspaceArchivedException.class, () -> service.removeMember(admin, PROJECT_ID, 12L));
         verify(projectMemberRepository, never()).deleteByProjectIdAndUserId(anyLong(), anyLong());
         verify(taskRepository, never()).unassignInProject(anyLong(), anyLong());
+        verify(taskWatcherRepository, never()).deleteInProject(anyLong(), anyLong());
     }
 
     @Test
@@ -539,6 +548,7 @@ class ProjectServiceTest {
         assertEquals("A project must have at least one Project Manager.", e.getMessage());
         verify(projectMemberRepository, never()).deleteByProjectIdAndUserId(anyLong(), anyLong());
         verify(taskRepository, never()).unassignInProject(anyLong(), anyLong());
+        verify(taskWatcherRepository, never()).deleteInProject(anyLong(), anyLong());
     }
 
     @Test
@@ -551,6 +561,7 @@ class ProjectServiceTest {
 
         verify(projectMemberRepository).deleteByProjectIdAndUserId(PROJECT_ID, member.getId());
         verify(taskRepository).unassignInProject(PROJECT_ID, member.getId());
+        verify(taskWatcherRepository).deleteInProject(PROJECT_ID, member.getId());
     }
 
     @Test
@@ -808,6 +819,8 @@ class ProjectServiceTest {
         verify(auditLog).record(same(workspace), same(admin), eq(AuditAction.PROJECT_MEMBER_ADDED),
                 eq(AuditTarget.user(linus)), same(project), eq(AuditChange.of("roles", null, "MEMBER")));
         verifyNoMoreInteractions(auditLog);
+        verify(events).publishEvent(new ProjectMemberAdded(project, admin, linus));
+        verifyNoMoreInteractions(events);
     }
 
     @Test
@@ -818,7 +831,7 @@ class ProjectServiceTest {
 
         assertThrows(BadRequestException.class,
                 () -> service.addMembers(admin, PROJECT_ID, new AddProjectMembersRequest(List.of(8L, 99L))));
-        verifyNoInteractions(auditLog);
+        verifyNoInteractions(auditLog, events);
     }
 
     @Test
@@ -835,6 +848,8 @@ class ProjectServiceTest {
                 eq(AuditTarget.user(linus)), same(project), eq(AuditChange.of("roles", null, "MEMBER")),
                 eq(AuditChange.of("viaTeam", null, "Backend")));
         verifyNoMoreInteractions(auditLog);
+        verify(events).publishEvent(new ProjectMemberAdded(project, admin, linus));
+        verifyNoMoreInteractions(events);
     }
 
     @Test
@@ -884,6 +899,8 @@ class ProjectServiceTest {
         verify(auditLog).record(same(workspace), same(member), eq(AuditAction.PROJECT_ROLES_CHANGED),
                 eq(AuditTarget.user(linus)), same(project),
                 eq(AuditChange.of("roles", "MEMBER", "PRODUCT_OWNER, SCRUM_MASTER")));
+        verify(events).publishEvent(new ProjectRolesChanged(project, member, linus,
+                Set.of(ProjectRole.SCRUM_MASTER, ProjectRole.PRODUCT_OWNER)));
     }
 
     @Test
@@ -894,7 +911,7 @@ class ProjectServiceTest {
 
         service.setRoles(admin, PROJECT_ID, member.getId(), Set.of(ProjectRole.PRODUCT_OWNER, ProjectRole.PROJECT_MANAGER));
 
-        verifyNoInteractions(auditLog);
+        verifyNoInteractions(auditLog, events);
     }
 
     @Test
@@ -904,7 +921,7 @@ class ProjectServiceTest {
 
         assertThrows(InvalidProjectRolesException.class, () -> service.setRoles(admin, PROJECT_ID, member.getId(),
                 Set.of(ProjectRole.VIEWER, ProjectRole.MEMBER)));
-        verifyNoInteractions(auditLog);
+        verifyNoInteractions(auditLog, events);
     }
 
     // --- fixtures ---
