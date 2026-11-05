@@ -9,6 +9,14 @@ import jakarta.validation.constraints.Positive;
  */
 public record MoveTaskRequest(
         @NotNull @Positive Long statusId,
-        @Positive Long afterTaskId
+        @Positive Long afterTaskId,
+        Boolean confirmOpenSubtasks
 ) {
+    public MoveTaskRequest(Long statusId, Long afterTaskId) {
+        this(statusId, afterTaskId, false);
+    }
+
+    public MoveTaskRequest {
+        confirmOpenSubtasks = Boolean.TRUE.equals(confirmOpenSubtasks);
+    }
 }

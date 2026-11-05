@@ -16,7 +16,7 @@ This document is the single API reference for board configuration. If the code a
 - **Kanban Backlog** is the first column. It may not be removed, reordered away from position 0, or given a WIP limit; its category stays `TODO`. Kanban has no separate backlog page.
 - **Soft delete** records `deleted_at`, retains the row, and hides it from the active board. If it contains active tasks, the caller must choose another active column in the same project; each task moves there and receives a task-status-history event. There is no restoration endpoint in PMP-125.
 - **WIP is soft.** A limit is an optional positive integer on a *non-Backlog, non-DONE Kanban* column. Tasks can move past the limit. The backend returns counts and an optional warning; the frontend renders `taskCount / wipLimit` and highlights only while `taskCount > wipLimit`.
-- **Counts are project-wide and unfiltered.** `taskCount` counts active tasks in the column, not only those currently shown by a client-side filter. The current task model has no subtasks, so exclusion of child tasks must be implemented when subtasks are introduced.
+- **Counts are project-wide and unfiltered.** `taskCount` counts active top-level tasks in the column, not only those currently shown by a client-side filter. Only **top-level tasks** count for WIP; PMP-132 subtasks are excluded even if their status points to the column. `subtaskCount` separately reports live children so a column with only subtasks still prompts for a relocation target on deletion.
 - **Scrum never has WIP controls.** The API rejects setting a WIP limit on Scrum columns, regardless of category.
 - **Archived workspaces are read-only.** Reading remains possible, but board mutations return `409 WORKSPACE_ARCHIVED`.
 
@@ -86,10 +86,10 @@ All paths are under `/api/v1`. Bodies are JSON in `camelCase`.
     "wipLimitsEnabled": true,
     "activeSprintId": null,
     "columns": [
-      { "id": 1, "name": "Backlog", "position": 0, "wipLimit": null, "category": "TODO", "taskCount": 3, "wipExceeded": false },
-      { "id": 2, "name": "To Do", "position": 1, "wipLimit": null, "category": "TODO", "taskCount": 1, "wipExceeded": false },
-      { "id": 3, "name": "In Progress", "position": 2, "wipLimit": 3, "category": "IN_PROGRESS", "taskCount": 4, "wipExceeded": true },
-      { "id": 4, "name": "Done", "position": 3, "wipLimit": null, "category": "DONE", "taskCount": 5, "wipExceeded": false }
+      { "id": 1, "name": "Backlog", "position": 0, "wipLimit": null, "category": "TODO", "taskCount": 3, "wipExceeded": false, "subtaskCount": 0 },
+      { "id": 2, "name": "To Do", "position": 1, "wipLimit": null, "category": "TODO", "taskCount": 1, "wipExceeded": false, "subtaskCount": 0 },
+      { "id": 3, "name": "In Progress", "position": 2, "wipLimit": 3, "category": "IN_PROGRESS", "taskCount": 4, "wipExceeded": true, "subtaskCount": 0 },
+      { "id": 4, "name": "Done", "position": 3, "wipLimit": null, "category": "DONE", "taskCount": 5, "wipExceeded": false, "subtaskCount": 0 }
     ]
   }
   ```
@@ -232,7 +232,8 @@ The frontend implementation is **PMP-126**, not part of this backend delivery.
 ## 8. Known limitations and later stories
 
 - **No column restore API.** Soft deletion preserves rows for integrity, but restoring them requires a separate decision on names, order, categories and tasks.
-- **No subtasks yet.** All current tasks are top-level; when subtasks are introduced, counts must exclude children.
+- **Subtasks:** PMP-132 excludes child tasks from WIP counts and board cards. Deleting a column still moves live child tasks along with their parent cards, preserving individual status histories.
+- **PMP-132 API:** `ProjectBoardColumnResponse.subtaskCount` counts live children separately. It does not affect `taskCount` or WIP. When deleting a column, the frontend requests a relocation target if `taskCount + subtaskCount > 0`.
 - **Status history only, in PMP-125.** PMP-133 extends it to every task field change, deleted comments and subtasks ([task-history-docs.md](./task-history-docs.md)).
 - **No sprint lifecycle yet.** `activeSprintId` remains `null` until R14/R15 is built.
 - **No client UI changes in PMP-125.** PMP-126 integrates these endpoints, then PMP-127 verifies end-to-end acceptance.
@@ -241,7 +242,7 @@ The frontend implementation is **PMP-126**, not part of this backend delivery.
 
 ## 9. Implementation status
 
-As of 1 Nov 2026, in local branch `feature/pmp-125-board-wip`:
+Baseline PMP-125 (merged into backend `main` by 3 Nov 2026). Test counts below refer to the original 1 Nov verification, **not** to the new PMP-131/132 patch:
 
 | Part | Status |
 | --- | --- |
@@ -250,7 +251,7 @@ As of 1 Nov 2026, in local branch `feature/pmp-125-board-wip`:
 | Task status history and soft move warnings | Implemented; selected unit tests passed |
 | Migration `V7__board_configuration_and_status_history.sql` | Applied successfully on PostgreSQL 16 via Testcontainers (V1–V7) |
 | Targeted Maven tests (BoardColumnValidationTest, ProjectBoardServiceTest, ProjectBoardColumnControllerTest, TaskApiServiceTest, TaskControllerTest, ProjectRoleTest) | **52 passed, 0 failures, 0 errors** (1 Nov 2026, developer machine) |
-| Full test suite and PostgreSQL acceptance tests | Baseline clean verify: **381 passed, 0 failed, 0 errors** (1 Nov 2026). Re-run after final concurrency regression adjustment. |
+| Full test suite and PostgreSQL acceptance tests | Final baseline clean verify: **382 passed, 0 failed, 0 errors** (1 Nov 2026, developer machine). PMP-131/132 must run its own full suite after applying V9. |
 | Frontend integration (PMP-126) and manual acceptance (PMP-127) | Not started as part of this backend patch |
 
 ---

@@ -65,12 +65,12 @@ class ProjectBoardServiceTest {
     @Test
     void boardExposesCountsAndOverLimitFlag() {
         live.get(2).setWipLimit(3);
-        when(tasks.countByProjectIdAndStatusId(projectId, 3L)).thenReturn(4L);
+        when(tasks.countByProjectIdAndStatusIdAndParentIsNull(projectId, 3L)).thenReturn(4L);
         var column = service.get(pm, projectId).columns().get(2);
         assertEquals(BoardColumnCategory.IN_PROGRESS, column.category());
         assertEquals(4, column.taskCount());
         assertTrue(column.wipExceeded());
-        when(tasks.countByProjectIdAndStatusId(projectId, 3L)).thenReturn(3L);
+        when(tasks.countByProjectIdAndStatusIdAndParentIsNull(projectId, 3L)).thenReturn(3L);
         assertFalse(service.get(pm, projectId).columns().get(2).wipExceeded());
     }
 
@@ -125,7 +125,7 @@ class ProjectBoardServiceTest {
         // Delete a non-essential middle column with two tasks.
         Task first = new Task(); first.setId(51L); first.setStatus(live.get(2));
         Task second = new Task(); second.setId(52L); second.setStatus(live.get(2));
-        when(tasks.findColumnInBoardOrder(projectId, 3L)).thenReturn(List.of(first, second));
+        when(tasks.findAllInColumnForDeletion(projectId, 3L)).thenReturn(List.of(first, second));
         when(tasks.findMaxBoardPosition(projectId, 2L)).thenReturn(1_000_000L);
 
         service.delete(pm, projectId, 3L, new DeleteBoardColumnRequest(2L));
@@ -141,7 +141,7 @@ class ProjectBoardServiceTest {
 
     @Test
     void columnDeletionRequiresTargetWhenNonempty() {
-        when(tasks.findColumnInBoardOrder(projectId, 3L)).thenReturn(List.of(new Task()));
+        when(tasks.findAllInColumnForDeletion(projectId, 3L)).thenReturn(List.of(new Task()));
         assertThrows(BadRequestException.class,
                 () -> service.delete(pm, projectId, 3L, null));
     }

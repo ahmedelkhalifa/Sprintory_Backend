@@ -78,6 +78,9 @@ class TaskControllerTest {
 
         assertEquals(HttpStatus.NO_CONTENT, controller.delete(principal, 3L, 42L).getStatusCode());
         verify(service).delete(user, 3L, 42L);
+
+        when(service.restore(user, 3L, 42L)).thenReturn(task);
+        assertSame(task, controller.restore(principal, 3L, 42L));
     }
 
     @Test

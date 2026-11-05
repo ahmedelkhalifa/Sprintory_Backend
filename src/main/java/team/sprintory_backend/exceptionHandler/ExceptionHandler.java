@@ -73,6 +73,15 @@ public class ExceptionHandler {
         return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.BAD_REQUEST, e.getMessage(), request);
     }
 
+    @org.springframework.web.bind.annotation.ExceptionHandler(
+            team.sprintory_backend.task.exceptions.OpenSubtasksConfirmationRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleOpenSubtasks(
+            team.sprintory_backend.task.exceptions.OpenSubtasksConfirmationRequiredException e,
+            HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.OPEN_SUBTASKS_CONFIRMATION_REQUIRED,
+                e.getMessage(), request);
+    }
+
     @org.springframework.web.bind.annotation.ExceptionHandler(WorkspaceArchivedException.class)
     public ResponseEntity<ErrorResponse> handleWorkspaceArchived(HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), ErrorCode.WORKSPACE_ARCHIVED,

@@ -216,7 +216,7 @@ Only deletion and restoration are logged. Every other task change belongs to the
 | `action` | Written when | `actor` | `target` | `project` | `changes` | Suggested sentence |
 | --- | --- | --- | --- | --- | --- | --- |
 | `TASK_DELETED` | Someone deletes a task (`DELETE /projects/{id}/tasks/{taskId}`, a soft delete) | the person who deleted it | `TASK`, `name` = `"<KEY> <title>"`, e.g. `"MOB-42 Fix login"` | the project | none | *Ada deleted MOB-42 "Fix login" in "Mobile App"* |
-| `TASK_RESTORED` | Someone restores a deleted task. **The restore endpoint is Damir's PMP-131**; this action starts appearing when it ships. | the person who restored it | `TASK`, same name format | the project | none | *Ada restored MOB-42 "Fix login" in "Mobile App"* |
+| `TASK_RESTORED` | Someone restores a deleted task. **PMP-131:** restoration writes this action for an explicitly restored task or subtask. | the person who restored it | `TASK`, same name format | the project | none | *Ada restored MOB-42 "Fix login" in "Mobile App"* |
 
 ### 4.5 Security (`area: "SECURITY"`)
 
@@ -357,7 +357,7 @@ auditLog.record(project.getWorkspace(), user, AuditAction.PROJECT_ROLES_CHANGED,
         AuditTarget.user(target.getUser()), project, AuditChange.of("roles", oldRoles, newRoles));
 ```
 
-**PMP-131 (task restore, Damir):** `TASK_RESTORED` already exists. In the restore method, after the task is restored and inside its `@Transactional`:
+**PMP-131 (task restore):** `TASK_RESTORED` is emitted after restoration, inside its `@Transactional`:
 
 ```java
 auditLog.record(project.getWorkspace(), user, AuditAction.TASK_RESTORED, AuditTarget.task(task), project);
@@ -391,7 +391,7 @@ As of 2 Nov 2026, on branch `features/audit-log`:
 | Workspace and invitation entries | Done; `WorkspaceServiceTest` (42), `InvitationServiceTest` (18) |
 | Team entries | Done; `TeamServiceTest` (27) |
 | Project entries | Done; `ProjectServiceTest` (66) |
-| Task delete entry | Done; `TaskApiServiceTest` (26). `TASK_RESTORED` is written by PMP-131 when it ships |
+| Task delete entry | Done; `TaskApiServiceTest` (26). `TASK_RESTORED` is written by PMP-131 restoration |
 | `PASSWORD_RESET` and `LOGIN_FAILED_REPEATED` | Done; `AuthServiceTest` (20), `LoginFailureTrackerTest` (7) |
 | `GET /audit-log` and `GET /audit-log/actors` with filters | Done; `AuditLogServiceTest` (14 in total), `AuditLogFiltersTest` (6), `AuditLogControllerTest` (3) |
 | Access-denied test required by the DoD | Done: `AuditLogServiceTest.aMemberIsDeniedTheLogAndNothingIsQueried` |
