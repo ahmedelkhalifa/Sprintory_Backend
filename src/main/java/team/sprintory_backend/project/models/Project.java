@@ -71,6 +71,12 @@ public class Project extends BaseEntity {
      * .incrementTaskNumber} changes it: {@code updatable = false} keeps a save of this entity from
      * writing back a stale value.
      */
+    /** A charter becomes read-only when the project is completed or archived (PMP-63). */
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(name = "lifecycle_status", nullable = false, length = 20)
+    private ProjectLifecycleState lifecycleStatus = ProjectLifecycleState.ACTIVE;
+
     @Column(name = "last_task_number", nullable = false, updatable = false)
     private int lastTaskNumber;
 

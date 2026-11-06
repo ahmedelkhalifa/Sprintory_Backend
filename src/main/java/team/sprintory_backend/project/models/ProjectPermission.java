@@ -34,6 +34,8 @@ public enum ProjectPermission {
     COMMENT,
     /** Delete anyone's comment, never edit it (R10, PMP-133). Project Manager only. */
     MODERATE_COMMENTS,
+    /** Edit project charter goals, scope and stakeholders (PMP-116). */
+    EDIT_CHARTER,
     /** Log time on tasks (R19). */
     LOG_TIME;
 
