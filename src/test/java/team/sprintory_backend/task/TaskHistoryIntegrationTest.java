@@ -8,6 +8,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.annotation.Transactional;
 import team.sprintory_backend.AbstractIntegrationTest;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.mention.exceptions.InvalidMentionException;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.models.ProjectMember;
 import team.sprintory_backend.project.models.ProjectRole;
@@ -149,6 +150,33 @@ class TaskHistoryIntegrationTest extends AbstractIntegrationTest {
         assertEquals(TaskHistoryField.ESTIMATE_MINUTES, childFeed.get(1).field());
         assertEquals("60", childFeed.get(1).oldValue());
         assertEquals("90", childFeed.get(1).newValue());
+    }
+
+    @Test
+    void aSubtaskKeepsItsDescriptionAndLabelsAndRecordsTheirChanges() {
+        TaskResponse parent = tasks.create(owner, projectId,
+                new CreateTaskRequest("Parent", null, null, null, null, null, null));
+        String mentionGrace = "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":["
+                + "{\"type\":\"mention\",\"attrs\":{\"kind\":\"user\",\"id\":\"" + grace.getId()
+                + "\",\"label\":\"Grace\"}}]}]}";
+        TaskResponse child = subtasks.create(owner, projectId, parent.id(), new CreateSubtaskRequest(
+                "Write tests", null, null, null, List.of("qa", "QA"), mentionGrace));
+        assertEquals(List.of("qa"), child.labels());
+        assertEquals(mentionGrace, child.description());
+
+        TaskResponse edited = subtasks.update(owner, projectId, parent.id(), child.id(), new UpdateSubtaskRequest(
+                null, null, null, null, null, null, List.of("qa", "backend"), null, true));
+        assertEquals(List.of("backend", "qa"), edited.labels());
+        assertNull(edited.description());
+
+        List<TaskHistoryEntryResponse> changes = feed(child.id()).subList(1, feed(child.id()).size());
+        assertEquals(List.of(TaskHistoryField.LABELS, TaskHistoryField.DESCRIPTION),
+                changes.stream().map(TaskHistoryEntryResponse::field).toList());
+        assertNull(changes.get(1).oldValue(), "a description change never stores the text");
+
+        String mentionOutsider = mentionGrace.replace(grace.getId().toString(), outsider.getId().toString());
+        assertThrows(InvalidMentionException.class, () -> subtasks.update(owner, projectId, parent.id(), child.id(),
+                new UpdateSubtaskRequest(null, null, null, null, null, null, null, mentionOutsider, null)));
     }
 
     @Test

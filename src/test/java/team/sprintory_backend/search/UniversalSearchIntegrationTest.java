@@ -15,8 +15,10 @@ import team.sprintory_backend.search.dto.SearchResultType;
 import team.sprintory_backend.search.dto.UniversalSearchFilters;
 import team.sprintory_backend.search.dto.UniversalSearchResult;
 import team.sprintory_backend.search.services.UniversalSearchService;
+import team.sprintory_backend.task.dto.CreateSubtaskRequest;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
 import team.sprintory_backend.task.dto.TaskResponse;
+import team.sprintory_backend.task.services.SubtaskService;
 import team.sprintory_backend.task.services.TaskApiService;
 import team.sprintory_backend.team.models.Team;
 import team.sprintory_backend.team.models.TeamMember;
@@ -60,6 +62,7 @@ class UniversalSearchIntegrationTest extends AbstractIntegrationTest {
     @Autowired private TeamMemberRepository teamMemberRepository;
     @Autowired private ProjectService projects;
     @Autowired private TaskApiService tasks;
+    @Autowired private SubtaskService subtasks;
     @Autowired private UniversalSearchService search;
 
     private User ada;
@@ -145,6 +148,24 @@ class UniversalSearchIntegrationTest extends AbstractIntegrationTest {
         assertEquals("/projects/" + service.id() + "/tasks/" + hit.id(), hit.path());
         assertEquals(guild.getId(), hit.workspaceId());
         assertEquals(service.id(), hit.projectId());
+        assertNull(hit.parentKey(), "a top-level task");
+    }
+
+    @Test
+    void aSubtaskIsFoundAndCarriesItsParentsKey() {
+        TaskResponse parent = task(grace, service, "Session handling");                                // SVC-3
+        TaskResponse child = subtasks.create(grace, service.id(), parent.id(),
+                new CreateSubtaskRequest("Write session tests", null, null, null));                    // SVC-4
+
+        PageResponse<UniversalSearchResult> page = search.search(grace,
+                UniversalSearchFilters.fromQuery("session", "task", null, null), PageRequest.of(0, 20));
+
+        assertEquals(List.of("Session handling", "Write session tests"), titles(page));
+        assertNull(page.content().get(0).parentKey());
+        UniversalSearchResult hit = page.content().get(1);
+        assertEquals(child.key(), hit.taskKey());
+        assertEquals(parent.key(), hit.parentKey());
+        assertEquals("/projects/" + service.id() + "/tasks/" + child.id(), hit.path());
     }
 
     @Test

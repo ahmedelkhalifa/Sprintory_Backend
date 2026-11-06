@@ -17,6 +17,7 @@ import team.sprintory_backend.project.dto.*;
 import team.sprintory_backend.project.models.*;
 import team.sprintory_backend.project.repositories.*;
 import team.sprintory_backend.project.strategy.*;
+import team.sprintory_backend.task.exceptions.OpenSubtasksConfirmationRequiredException;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.task.services.TaskStatusHistoryService;
@@ -179,6 +180,8 @@ public class ProjectBoardService {
         if (targetId != null) {
             if (targetId.equals(columnId)) throw new BadRequestException("Choose a different target column.");
             ProjectBoardColumn target = columns.get(indexOf(columns, targetId));
+            requireCompletionConfirmation(projectId, column, target, tasks,
+                    request.confirmOpenSubtasks());
             Long currentMax = taskRepository.findMaxBoardPosition(projectId, targetId);
             long highest = currentMax == null ? 0L : currentMax;
             for (Task task : tasks) {
@@ -207,6 +210,30 @@ public class ProjectBoardService {
 
     private List<ProjectBoardColumn> active(Long projectId) {
         return new ArrayList<>(columnRepository.findByBoardProjectIdOrderByPositionAscIdAsc(projectId));
+    }
+
+    /**
+     * Moving parents into a DONE column needs the same confirmation as a task move when they have
+     * open subtasks (tasks-docs §11.3). Subtasks in the deleted column move into DONE as well, so
+     * only open subtasks in other columns count. Nothing has moved yet when this refuses.
+     */
+    private void requireCompletionConfirmation(Long projectId, ProjectBoardColumn deleted,
+                                               ProjectBoardColumn target, List<Task> moving,
+                                               boolean confirmed) {
+        if (confirmed || target.getCategory() != BoardColumnCategory.DONE
+                || deleted.getCategory() == BoardColumnCategory.DONE) {
+            return;
+        }
+        List<Long> parentIds = moving.stream().filter(task -> task.getParent() == null)
+                .map(Task::getId).toList();
+        if (parentIds.isEmpty()) {
+            return;
+        }
+        long open = taskRepository.countByParentIdInAndStatusCategoryNotAndStatusIdNot(
+                parentIds, BoardColumnCategory.DONE, deleted.getId());
+        if (open > 0) {
+            throw new OpenSubtasksConfirmationRequiredException(open);
+        }
     }
 
     private static int indexOf(List<ProjectBoardColumn> columns, Long id) {

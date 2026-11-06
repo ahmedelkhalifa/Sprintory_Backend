@@ -45,7 +45,7 @@ import team.sprintory_backend.workspace.repositories.WorkspaceRepository;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** PMP-131/132: real Postgres, V9 migration, permissions, cascade provenance and board invariants. */
+/** PMP-131/132: real Postgres, V10 migration, permissions, cascade provenance and board invariants. */
 @Transactional
 class TaskRestorationSubtasksIntegrationTest extends AbstractIntegrationTest {
     private static final TaskSearchFilters ALL = new TaskSearchFilters(null,null,null,null,null,null);
@@ -202,6 +202,26 @@ class TaskRestorationSubtasksIntegrationTest extends AbstractIntegrationTest {
         em.flush(); em.clear();
         assertEquals("To Do", subtasks.list(owner, projectId, p.id()).get(0).statusName());
         assertEquals(1, statusMoves(child.id()));
+    }
+
+    @Test
+    void deletingAColumnIntoDoneNeedsConfirmationForParentsWithOpenSubtasks() {
+        TaskResponse p = parent("Parent");
+        var ids = boards.get(owner, projectId).columns();
+        Long review = boards.add(owner, projectId, new CreateBoardColumnRequest("Review",
+                BoardColumnCategory.IN_PROGRESS, ids.get(2).id())).columns().stream()
+                .filter(c -> c.name().equals("Review")).findFirst().orElseThrow().id();
+        Long done = ids.stream().filter(c -> c.name().equals("Done")).findFirst().orElseThrow().id();
+        tasks.moveOnBoard(owner, projectId, p.id(), new MoveTaskRequest(review, null));
+        subtasks.create(owner, projectId, p.id(), new CreateSubtaskRequest("Open child", null, null, null));
+
+        assertThrows(OpenSubtasksConfirmationRequiredException.class,
+                () -> boards.delete(owner, projectId, review, new DeleteBoardColumnRequest(done)));
+        assertEquals("Review", tasks.get(owner, projectId, p.id()).statusName());
+
+        boards.delete(owner, projectId, review, new DeleteBoardColumnRequest(done, true));
+        em.flush(); em.clear();
+        assertEquals("Done", tasks.get(owner, projectId, p.id()).statusName());
     }
 
     /** How many of the task's history entries are status moves. */

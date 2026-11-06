@@ -10,7 +10,7 @@ import team.sprintory_backend.audit.models.AuditTarget;
 import team.sprintory_backend.chat.dto.ChatHistoryResponse;
 import team.sprintory_backend.chat.dto.ChatMessageResponse;
 import team.sprintory_backend.chat.events.ChatChanged;
-import team.sprintory_backend.chat.events.ProjectChatMentioned;
+import team.sprintory_backend.notification.events.ProjectChatMentioned;
 import team.sprintory_backend.chat.models.ProjectChatMessage;
 import team.sprintory_backend.chat.repositories.ProjectChatMessageRepository;
 import team.sprintory_backend.common.richtext.InvalidRichTextException;
@@ -118,8 +118,9 @@ public class ChatService {
     public ChatMessageResponse delete(User caller, Long projectId, Long messageId) {
         ProjectAccessResult result = requireWriter(caller, projectId);
         ProjectChatMessage msg = requireMessage(projectId, messageId);
-        if (msg.getDeletedAt() != null) return toResponse(msg);
+        // Check first: a repeated delete is a no-op only for someone allowed to delete it.
         requireAuthorOrModerator(caller, result, msg);
+        if (msg.getDeletedAt() != null) return toResponse(msg);
         msg.setDeletedAt(Instant.now());
         msg.setContentJson(null);
         ChatMessageResponse response = toResponse(msg);
@@ -127,7 +128,7 @@ public class ChatService {
         return response;
     }
 
-    /** The notifications module will listen to this project-scoped event (not task-scoped Mentioned). */
+    /** Tells the newly mentioned people; NotificationListener drops the author and non-members. */
     private void publishMentions(ProjectAccessResult result, User caller, Long messageId,
                                  Set<Long> mentioned, RichTextDocument body) {
         if (!mentioned.isEmpty()) {

@@ -97,8 +97,8 @@ Reading needs `VIEW_WORK`.
 | `ASSIGNEE` | task or subtask edit with `assigneeId` or `clearAssignee` | the person's first and last name; `null` = unassigned | `null` → `Ada Lovelace` |
 | `ESTIMATE` | task edit with `estimate` or `clearEstimate` (story points, top-level tasks only) | the number; `null` = not estimated | `3` → `5` |
 | `ESTIMATE_MINUTES` | subtask edit with `estimateMinutes` or `clearEstimateMinutes` (time estimate, subtasks only) | the number of minutes; `null` = not estimated | `60` → `90` |
-| `LABELS` | task edit with `labels` | the labels sorted and joined with `, `; `null` = none | `backend` → `backend, R09` |
-| `DESCRIPTION` | task edit with `description` or `clearDescription` | always `null` → `null`: the entry means "changed the description" | |
+| `LABELS` | task or subtask edit with `labels` | the labels sorted and joined with `, `; `null` = none | `backend` → `backend, R09` |
+| `DESCRIPTION` | task or subtask edit with `description` or `clearDescription` | always `null` → `null`: the entry means "changed the description" | |
 
 - "Task edit" is `PATCH …/tasks/{taskId}`. "Subtask edit" is `PATCH …/tasks/{parentId}/subtasks/{subtaskId}`; that entry goes to the **subtask's** own history.
 - One edit that changes several fields writes **one entry per field**, all with the same `occurredAt`.
@@ -213,17 +213,17 @@ Rules:
 
 ## 9. Implementation status
 
-As of 4 Nov 2026, on branch `features/comments_history`:
+As of 6 Nov 2026 (merged to `main`; the subtask description and label entries come from the refactoring branch `fix/refactoring`):
 
 | Part | Status |
 | --- | --- |
 | This contract | Written, agreed with the backend owner |
 | `V11__task_history.sql`, `TaskHistoryEntry`, repository | Done; `TaskHistoryMigrationIntegrationTest` migrates a V10 database with status moves to V11 on PostgreSQL and checks the copy and the drop |
-| `TaskStatusHistoryService` writers and paginated list, `GET /history` paged | Done; `TaskStatusHistoryServiceTest` (15), `TaskIntegrationTest` and `TaskRestorationSubtasksIntegrationTest` updated. Status moves are written; the other writers are not called yet (step 5) |
+| `TaskStatusHistoryService` writers and paginated list, `GET /history` paged | Done; `TaskStatusHistoryServiceTest` (15), `TaskIntegrationTest` and `TaskRestorationSubtasksIntegrationTest` updated. Every writer is called (rows below) |
 | Entries from task create and edit (via `TaskSnapshot` + `recordChanges`) | Done; `TaskApiServiceTest`, `TaskStatusHistoryServiceTest`, `TaskHistoryIntegrationTest` (5) on PostgreSQL, including priority Low → High |
-| Entries from subtasks and restore (`SubtaskService`, `TaskApiService.delete/restore`) | Done; same tests. Subtask description and label entries come when subtasks get those fields |
-| Entry from comment delete | With the comments (step 6) |
-| Unit and PostgreSQL integration tests | Not started |
+| Entries from subtasks and restore (`SubtaskService`, `TaskApiService.delete/restore`) | Done; same tests. Subtask `DESCRIPTION` and `LABELS` entries since 6 Nov 2026 (`SubtaskServiceTest`, `TaskHistoryIntegrationTest`) |
+| Entry from comment delete | Done; `CommentServiceTest`, `CommentIntegrationTest` |
+| Unit and PostgreSQL integration tests | Done; the tests named above, all passing in `clean verify` |
 | Frontend (PMP-134) and acceptance test (PMP-135) | Not started |
 
 ---
@@ -236,7 +236,7 @@ As of 4 Nov 2026, on branch `features/comments_history`:
 | 4 Nov 2026 | One generic `task_history` table for every kind of entry. V11 copies the PMP-125 status moves into it and drops `task_status_history`. `TaskStatusHistoryService` stays the single writer, and `record(...)` keeps its signature. |
 | 4 Nov 2026 | Subtasks have their own feed; the parent only shows "subtask added / removed". Their time estimate is its own field, `ESTIMATE_MINUTES`, because it is not story points. |
 | 4 Nov 2026 | Restore (PMP-131) writes `RESTORED`. Deleting a parent writes nothing for its subtasks, and restoring it writes one entry on the parent only. |
-| 4 Nov 2026 | PMP-131/132 merge first; this story adds their history calls afterwards, because it owns the history (agreed in PMP-132's docs, §10.4). |
+| 4 Nov 2026 | PMP-131/132 merge first; this story adds their history calls afterwards, because it owns the history (agreed in [tasks-docs.md §11.4](./tasks-docs.md#114-other-subsystems-current-boundaries)). |
 | 4 Nov 2026 | A status move is a `FIELD_CHANGED` entry with field `STATUS`, like every other field. |
 | 4 Nov 2026 | Description changes are recorded without text; comment text is never copied. |
 | 4 Nov 2026 | Values and the actor's name are snapshots, stored as display text. `actor_id` has no foreign key. |

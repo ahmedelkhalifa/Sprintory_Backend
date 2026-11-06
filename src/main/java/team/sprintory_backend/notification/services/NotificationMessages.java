@@ -41,6 +41,10 @@ public final class NotificationMessages {
         return name(actor) + " mentioned you in " + task(task);
     }
 
+    public static String mentionedInChat(User actor, Project project) {
+        return name(actor) + " mentioned you in the " + quoted(project.getName()) + " chat";
+    }
+
     public static String memberAdded(User actor, Project project) {
         return name(actor) + " added you to the project " + quoted(project.getName());
     }

@@ -86,9 +86,12 @@ public class UniversalSearchRepository {
      * which part comes first depends on the types and scope asked for.
      */
 
+    /** Only a subtask has a parent key. */
+    private static final String NO_PARENT = "cast(null as varchar)";
+
     private static String workspaces(UniversalSearchFilters filters) {
         return columns("'WORKSPACE'", 0, "w.id", "w.name", "cast(null as varchar)", "w.id",
-                "cast(null as bigint)", "cast(null as varchar)", rank("w.name", null))
+                "cast(null as bigint)", "cast(null as varchar)", NO_PARENT, rank("w.name", null))
                 + "from workspaces w "
                 + "join workspace_members wm on wm.workspace_id = w.id and wm.user_id = :userId "
                 + "where lower(w.name)" + LIKE
@@ -97,7 +100,7 @@ public class UniversalSearchRepository {
 
     private static String projects(UniversalSearchFilters filters) {
         return columns("'PROJECT'", 1, "p.id", "p.name", "w.name", "p.workspace_id", "p.id",
-                "cast(null as varchar)", rank("p.name", "p.project_key"))
+                "cast(null as varchar)", NO_PARENT, rank("p.name", "p.project_key"))
                 + "from projects p "
                 + "join workspaces w on w.id = p.workspace_id "
                 + "join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = :userId "
@@ -110,7 +113,7 @@ public class UniversalSearchRepository {
 
     private static String teams(UniversalSearchFilters filters) {
         return columns("'TEAM'", 2, "t.id", "t.name", "w.name", "t.workspace_id", "cast(null as bigint)",
-                "cast(null as varchar)", rank("t.name", null))
+                "cast(null as varchar)", NO_PARENT, rank("t.name", null))
                 + "from teams t "
                 + "join workspaces w on w.id = t.workspace_id "
                 + "join workspace_members wm on wm.workspace_id = t.workspace_id and wm.user_id = :userId "
@@ -122,9 +125,12 @@ public class UniversalSearchRepository {
 
     private static String tasks(UniversalSearchFilters filters) {
         return columns("'TASK'", 3, "t.id", "t.title", "p.project_key || ' · ' || p.name", "p.workspace_id",
-                "t.project_id", "t.task_key", rank("t.title", "t.task_key"))
+                "t.project_id", "t.task_key", "pt.task_key", rank("t.title", "t.task_key"))
                 + "from tasks t "
                 + "join projects p on p.id = t.project_id "
+                // A subtask's parent is never deleted while the subtask is live: deleting a parent
+                // deletes its subtasks with it.
+                + "left join tasks pt on pt.id = t.parent_task_id "
                 + "join project_members pm on pm.project_id = t.project_id and pm.user_id = :userId "
                 + "join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = :userId "
                 + "where t.deleted_at is null "
@@ -134,10 +140,12 @@ public class UniversalSearchRepository {
     }
 
     private static String columns(String type, int typeOrder, String id, String title, String subtitle,
-                                  String workspaceId, String projectId, String taskKey, String matchRank) {
+                                  String workspaceId, String projectId, String taskKey, String parentKey,
+                                  String matchRank) {
         return "select " + type + " as type, " + typeOrder + " as type_order, " + id + " as id, "
                 + title + " as title, " + subtitle + " as subtitle, " + workspaceId + " as workspace_id, "
-                + projectId + " as project_id, " + taskKey + " as task_key, " + matchRank + " as match_rank ";
+                + projectId + " as project_id, " + taskKey + " as task_key, " + parentKey + " as parent_key, "
+                + matchRank + " as match_rank ";
     }
 
     /** 0 for an exact match on either field, 1 for a prefix match, 2 for "contains". */
@@ -162,6 +170,7 @@ public class UniversalSearchRepository {
             case TASK -> "/projects/" + projectId + "/tasks/" + id;
         };
         return new UniversalSearchResult(type, id, row.getString("title"), row.getString("subtitle"), path,
-                row.getObject("workspace_id", Long.class), projectId, row.getString("task_key"));
+                row.getObject("workspace_id", Long.class), projectId, row.getString("task_key"),
+                row.getString("parent_key"));
     }
 }

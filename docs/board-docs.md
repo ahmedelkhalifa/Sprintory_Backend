@@ -61,10 +61,10 @@ All paths are under `/api/v1`. Bodies are JSON in `camelCase`.
 { "columnIds": [1, 2, 5, 3, 4] }
 
 // DeleteBoardColumnRequest: required if the column has tasks
-{ "targetColumnId": 2 }
+{ "targetColumnId": 2, "confirmOpenSubtasks": false }
 ```
 
-`afterColumnId`, `wipLimit`, and `targetColumnId` are optional in their respective requests. Omitted or `null` `wipLimit` on PATCH means **no change**; use `clearWipLimit: true` to remove it. Do not send both a limit and `clearWipLimit: true`.
+`afterColumnId`, `wipLimit`, `targetColumnId` and `confirmOpenSubtasks` (default `false`) are optional in their respective requests. Omitted or `null` `wipLimit` on PATCH means **no change**; use `clearWipLimit: true` to remove it. Do not send both a limit and `clearWipLimit: true`.
 
 ---
 
@@ -130,6 +130,7 @@ All paths are under `/api/v1`. Bodies are JSON in `camelCase`.
 
 - **Empty column:** no request body is needed (`{}` is also accepted).
 - **Column with tasks:** send `{ "targetColumnId": 2 }` to name a *different active column of the same project*.
+- **Into a `DONE` column:** when the target is `DONE` (and the deleted column is not), and a moved top-level task has subtasks that stay open, the delete is refused with `409 OPEN_SUBTASKS_CONFIRMATION_REQUIRED`, as for a task move ([tasks-docs.md §11.3](./tasks-docs.md#113-parent-completion-confirmation)). Nothing moves and the column stays. Retry the same request with `"confirmOpenSubtasks": true`. Subtasks in the deleted column itself move into `DONE` too, so they do not count.
 - **Result `204`:** moved tasks are appended to the target column in board order, one status-history event per active task; the old column row is soft-deleted. The operation is transactional.
 - **Refused:** Kanban Backlog; deleting below two columns; deleting the final `TODO` or `DONE`; missing/invalid target for a nonempty column.
 - **No restore endpoint** is available. The soft-deleted column row stays in the database, but is excluded from board reads.
@@ -185,6 +186,7 @@ Errors use [API conventions §4](./api-conventions.md#4-standard-error-responses
 | 403 | `ACCESS_DENIED` | Visible project but not authorized to configure or move |
 | 404 | `RESOURCE_NOT_FOUND` | Project not visible or does not exist; task missing/deleted, when reading task history |
 | 409 | `WORKSPACE_ARCHIVED` | Attempted mutation in an archived workspace |
+| 409 | `OPEN_SUBTASKS_CONFIRMATION_REQUIRED` | Deleting a column into a `DONE` column would complete parents whose subtasks stay open; retry with `confirmOpenSubtasks: true` (§3.5) |
 
 Database indexes also guard concurrent duplicate active names and positions. A migration-backed PostgreSQL integration test is required to confirm the actual database behavior.
 
@@ -197,7 +199,7 @@ The frontend implementation is **PMP-126**, not part of this backend delivery.
 1. **Show configuration only for `CONFIGURE_BOARD`** in `ProjectResponse.permissions`. Never use `EDIT_TASKS` as a substitute. A workspace Admin may configure columns even without task visibility.
 2. **Render server columns.** `GET /board` returns ordered, persistent columns; do not keep UI-only column overrides. After every create/edit/reorder/delete, use the returned board (for DELETE, refetch it).
 3. **Add/edit/reorder.** Collect name, category and optional Kanban WIP. Use `afterColumnId` for insertion; use the full-ID reorder endpoint for drag-and-drop. Use category for completion and reports.
-4. **Delete with tasks.** When the chosen column contains tasks (`taskCount > 0`), require a destination selector. Request soft delete with `targetColumnId`, then refetch the board/tasks.
+4. **Delete with tasks.** When the chosen column contains tasks (`taskCount > 0`), require a destination selector. Request soft delete with `targetColumnId`, then refetch the board/tasks. If the target is a `DONE` column and the answer is `409 OPEN_SUBTASKS_CONFIRMATION_REQUIRED`, show its message, ask for confirmation, and resend with `confirmOpenSubtasks: true`.
 5. **Soft warnings.** Display `taskCount / wipLimit` for limited columns. Apply warning style when `wipExceeded` is true; a move still succeeds and may return `TaskResponse.wipWarning` for a toast.
 6. **Scrum.** Never show WIP editing or WIP counters because `wipLimitsEnabled` is false. Do not offer WIP setup even if a client can craft a request.
 7. **History.** The task view's History tab uses `GET /tasks/{taskId}/history`; see [task-history-docs.md §4](./task-history-docs.md#4-frontend-flows-pmp-134).
@@ -251,7 +253,8 @@ Baseline PMP-125 (merged into backend `main` by 3 Nov 2026). Test counts below r
 | Task status history and soft move warnings | Implemented; selected unit tests passed |
 | Migration `V7__board_configuration_and_status_history.sql` | Applied successfully on PostgreSQL 16 via Testcontainers (V1–V7) |
 | Targeted Maven tests (BoardColumnValidationTest, ProjectBoardServiceTest, ProjectBoardColumnControllerTest, TaskApiServiceTest, TaskControllerTest, ProjectRoleTest) | **52 passed, 0 failures, 0 errors** (1 Nov 2026, developer machine) |
-| Full test suite and PostgreSQL acceptance tests | Final baseline clean verify: **382 passed, 0 failed, 0 errors** (1 Nov 2026, developer machine). PMP-131/132 must run its own full suite after applying V9. |
+| Full test suite and PostgreSQL acceptance tests | Final baseline clean verify: **382 passed, 0 failed, 0 errors** (1 Nov 2026, developer machine). PMP-131/132 ran its own full suite after applying V10. |
+| Open-subtasks confirmation when a column delete moves parents into a `DONE` column (§3.5) | Done (6 Nov 2026, `fix/refactoring`); `ProjectBoardServiceTest`, `TaskRestorationSubtasksIntegrationTest` on PostgreSQL |
 | Frontend integration (PMP-126) and manual acceptance (PMP-127) | Not started as part of this backend patch |
 
 ---

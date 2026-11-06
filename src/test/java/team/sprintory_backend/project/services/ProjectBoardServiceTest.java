@@ -11,6 +11,7 @@ import team.sprintory_backend.project.dto.*;
 import team.sprintory_backend.project.models.*;
 import team.sprintory_backend.project.repositories.*;
 import team.sprintory_backend.project.strategy.*;
+import team.sprintory_backend.task.exceptions.OpenSubtasksConfirmationRequiredException;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.task.services.TaskStatusHistoryService;
@@ -137,6 +138,40 @@ class ProjectBoardServiceTest {
         assertNotNull(live.get(2).getDeletedAt());
         verify(history, times(2)).record(any(Task.class), eq(live.get(2)), eq(live.get(1)), eq(pm));
         verify(tasks).saveAllAndFlush(anyList());
+        verify(tasks, never()).countByParentIdInAndStatusCategoryNotAndStatusIdNot(any(), any(), any());
+    }
+
+    @Test
+    void deletingIntoDoneRefusesParentsWithOpenSubtasksUnlessConfirmed() {
+        Task parent = new Task(); parent.setId(51L); parent.setStatus(live.get(2));
+        when(tasks.findAllInColumnForDeletion(projectId, 3L)).thenReturn(List.of(parent));
+        when(tasks.countByParentIdInAndStatusCategoryNotAndStatusIdNot(List.of(51L),
+                BoardColumnCategory.DONE, 3L)).thenReturn(2L);
+
+        assertThrows(OpenSubtasksConfirmationRequiredException.class,
+                () -> service.delete(pm, projectId, 3L, new DeleteBoardColumnRequest(4L)));
+        assertSame(live.get(2), parent.getStatus());
+        assertNull(live.get(2).getDeletedAt());
+        verifyNoInteractions(history);
+
+        service.delete(pm, projectId, 3L, new DeleteBoardColumnRequest(4L, true));
+        assertSame(live.get(3), parent.getStatus());
+        assertNotNull(live.get(2).getDeletedAt());
+    }
+
+    @Test
+    void subtasksMovingAlongIntoDoneNeedNoConfirmation() {
+        Task parent = new Task(); parent.setId(51L); parent.setStatus(live.get(2));
+        Task child = new Task(); child.setId(52L); child.setStatus(live.get(2)); child.setParent(parent);
+        when(tasks.findAllInColumnForDeletion(projectId, 3L)).thenReturn(List.of(parent, child));
+
+        service.delete(pm, projectId, 3L, new DeleteBoardColumnRequest(4L));
+
+        // Only the parent's other subtasks are counted; the child in the deleted column moves too.
+        verify(tasks).countByParentIdInAndStatusCategoryNotAndStatusIdNot(List.of(51L),
+                BoardColumnCategory.DONE, 3L);
+        assertSame(live.get(3), parent.getStatus());
+        assertSame(live.get(3), child.getStatus());
     }
 
     @Test

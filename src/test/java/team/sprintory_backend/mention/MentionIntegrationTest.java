@@ -6,6 +6,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import team.sprintory_backend.AbstractIntegrationTest;
+import team.sprintory_backend.chat.dto.ChatMessageResponse;
+import team.sprintory_backend.chat.services.ChatService;
+import tools.jackson.databind.ObjectMapper;
 import team.sprintory_backend.common.richtext.InvalidRichTextException;
 import team.sprintory_backend.common.richtext.RichTextDocument;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
@@ -56,6 +59,8 @@ class MentionIntegrationTest extends AbstractIntegrationTest {
     @Autowired private MentionService mentions;
     @Autowired private RichTextParser parser;
     @Autowired private TaskApiService tasks;
+    @Autowired private ChatService chat;
+    @Autowired private ObjectMapper jsonMapper;
 
     private User owner;
     private User grace;
@@ -183,6 +188,31 @@ class MentionIntegrationTest extends AbstractIntegrationTest {
                 new CreateTaskRequest("Fix login", null, null, null, null, null, outsider)));
         assertThrows(InvalidRichTextException.class, () -> tasks.create(owner, project.getId(),
                 new CreateTaskRequest("Fix login", null, null, null, null, null, "Steps to reproduce")));
+    }
+
+    // --- project chat, end to end (PMP-137 → R27) ---
+
+    @Test
+    void mentioningInTheChatNotifiesAboutTheProjectAndEditingNotifiesOnlyNewOnes() {
+        String first = "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":["
+                + mention("user", grace.getId()) + "," + mention("team", backend.getId()) + "]}]}";
+        ChatMessageResponse message = chat.send(owner, project.getId(), jsonMapper.readTree(first));
+        entityManager.flush();
+
+        assertEquals(1, mentionsOf(grace), "named and through the team, still one notification");
+        assertEquals(0, mentionsOf(owner), "the author is never told");
+        assertEquals(1L, ((Number) entityManager.createNativeQuery("select count(*) from notifications "
+                        + "where recipient_id = :id and type = 'MENTIONED' and task_id is null and project_id = :p")
+                .setParameter("id", grace.getId()).setParameter("p", project.getId())
+                .getSingleResult()).longValue(), "about the project, not a task");
+
+        String second = "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":["
+                + mention("user", grace.getId()) + "," + mention("user", viewer.getId()) + "]}]}";
+        chat.edit(owner, project.getId(), message.id(), jsonMapper.readTree(second));
+        entityManager.flush();
+
+        assertEquals(1, mentionsOf(grace), "already mentioned before the edit");
+        assertEquals(1, mentionsOf(viewer));
     }
 
     // --- helpers ---

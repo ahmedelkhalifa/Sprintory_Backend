@@ -278,7 +278,7 @@ Every `type` value, its preference `category`, who receives it and what it links
 | `TASK_ASSIGNED` | `ASSIGNMENT` | A task is created with an assignee, or its assignee changes to another person (`POST` / `PATCH /projects/{id}/tasks`). Clearing the assignee or "changing" it to the same person sends nothing. | the new assignee | yes | `TASK` | *Damir Gabaidullin assigned you MOB-42 "Fix login"* |
 | `TASK_STATUS_CHANGED` | `STATUS_CHANGE` | A task moves to another board column. This happens through task update, a board move, or deleting a column (which moves its tasks: **one notification per moved task**). Reordering inside the same column sends nothing. | the task's watchers | yes | `TASK` | *Damir Gabaidullin moved MOB-42 "Fix login" from To Do to In Progress* |
 | `TASK_COMMENTED` | `COMMENT` | Someone comments on a task. **Produced once comments ship (PMP-133).** | the task's watchers, minus the people mentioned in the comment | yes, with `excerpt` | `TASK` | *Damir Gabaidullin commented on MOB-42 "Fix login"* |
-| `MENTIONED` | `MENTION` | Someone @mentions you, or a team you are in, in a comment or a task description. Editing notifies **only newly added** mentions. **Produced once mentions ship (PMP-136).** | the mentioned users. For `@team`, the team's members who are in this project. This includes people who unwatched the task. | yes, with `excerpt` | `TASK` | *Damir Gabaidullin mentioned you in MOB-42 "Fix login"* |
+| `MENTIONED` | `MENTION` | Someone @mentions you, or a team you are in, in a comment, a task or subtask description (PMP-136), or a project chat message (PMP-137). Editing notifies **only newly added** mentions. | the mentioned users. For `@team`, the team's members who are in this project. This includes people who unwatched the task. | yes, with `excerpt` | `TASK`; `PROJECT` for a chat mention | *Damir Gabaidullin mentioned you in MOB-42 "Fix login"*; in the chat: *Damir Gabaidullin mentioned you in the "Mobile App" chat* |
 | `PROJECT_MEMBER_ADDED` | `PROJECT_MEMBERSHIP` | You are added to a project, directly or through a team (`POST /projects/{id}/members`, `/teams`). The creator of a new project gets nothing (they are the actor). | the added person | no | `PROJECT` | *Damir Gabaidullin added you to the project "Mobile App"* |
 | `PROJECT_ROLES_CHANGED` | `PROJECT_MEMBERSHIP` | Your project roles change (`PUT /projects/{id}/members/{userId}/roles`) and the set actually differs | the person whose roles changed | no | `PROJECT` | *Damir Gabaidullin changed your roles in "Mobile App" to Project Manager, Member* |
 | `SPRINT_STARTED` | `SPRINT` | A sprint is started. **Produced once sprints ship (PMP-119).** | every project member | no | `PROJECT` | *Damir Gabaidullin started "MOB Sprint 4" in "Mobile App"* |
@@ -384,7 +384,7 @@ Emails contain the task key, title, the excerpt if any, a link to the item, and 
    | `TASK_ASSIGNED` | `[Sprintory] MOB-42 Fix login: you were assigned` |
    | `TASK_STATUS_CHANGED` | `[Sprintory] MOB-42 Fix login: status changed` |
    | `TASK_COMMENTED` | `[Sprintory] MOB-42 Fix login: new comment` |
-   | `MENTIONED` | `[Sprintory] MOB-42 Fix login: you were mentioned` |
+   | `MENTIONED` | `[Sprintory] MOB-42 Fix login: you were mentioned`; in the chat: `[Sprintory] You were mentioned in the Mobile App chat` |
    | `PROJECT_MEMBER_ADDED` | `[Sprintory] You were added to Mobile App` |
    | `PROJECT_ROLES_CHANGED` | `[Sprintory] Your roles in Mobile App changed` |
    | `SPRINT_STARTED` / `SPRINT_COMPLETED` / `SPRINT_CANCELLED` | `[Sprintory] A sprint started in Mobile App` / `… was completed in …` / `… was cancelled in …` |
@@ -477,7 +477,8 @@ As of 4 Nov 2026, on branch `features/notifications`:
 | Nightly 90-day cleanup | Done; `NotificationServiceTest`, `EmailOutboxServiceTest` |
 | Full suite (`clean verify`) | **581 passed, 0 failed** (4 Nov 2026, with Docker, Testcontainers tests included) |
 | Manual end-to-end run with Mailpit (the acceptance criteria) | Not done yet |
-| Producers for comments (PMP-133) and mentions (PMP-136) | In progress on `features/comments_history`, against [comments-docs.md](./comments-docs.md) and [mentions-docs.md](./mentions-docs.md). Posting publishes `TaskCommented`; editing a comment and creating or editing a description publish `Mentioned` with the newly added ids only |
+| Producers for comments (PMP-133) and mentions (PMP-136) | Done (5 Nov 2026), against [comments-docs.md](./comments-docs.md) and [mentions-docs.md](./mentions-docs.md). Posting publishes `TaskCommented`; editing a comment and creating or editing a task or subtask description publish `Mentioned` with the newly added ids only |
+| Chat mentions (PMP-137) | Done (6 Nov 2026). `ChatService` publishes `ProjectChatMentioned` on send and edit, with the newly added ids only; `NotificationListenerTest`, `NotificationEmailsTest`, and `MentionIntegrationTest` end to end on PostgreSQL |
 | Producers for sprints (PMP-119, PMP-122) | Waiting for those features. They only publish the event ([§15](#15-notes-for-backend-developers)) |
 | Frontend (PMP-114) and acceptance test (PMP-115) | Not started |
 
@@ -500,6 +501,7 @@ As of 4 Nov 2026, on branch `features/notifications`:
 | 3 Nov 2026 | Emails go through a persisted outbox with retries (1 min, 5 min, 15 min, 1 h, 6 h, then `FAILED`). Frontend routes in emails are configuration properties. |
 | 3 Nov 2026 | Retention: 90 days for notifications and finished outbox rows, cleaned nightly. This is a team choice. |
 | 3 Nov 2026 | `SPRINT_CANCELLED` is defined next to started and completed, because PMP-41 notifies members on cancel too. Comment, mention and sprint types are defined now, so those features need no migration. |
+| 6 Nov 2026 | A chat mention is its own event, `ProjectChatMentioned`, not `Mentioned` with an optional task: a chat has no task, and `Mentioned` keeps its task. It reuses the `MENTIONED` type and the `MENTION` preference (no migration), and the notification is about the project. |
 
 ---
 
@@ -513,6 +515,9 @@ events.publishEvent(new TaskCommented(task, user, comment.getId(), plainText, me
 
 // PMP-136, mentions in a task description (only the newly added ids):
 events.publishEvent(new Mentioned(task, user, newlyMentionedUserIds, plainText));
+
+// PMP-137, mentions in a chat message (only the newly added ids):
+events.publishEvent(new ProjectChatMentioned(project, user, messageId, newlyMentionedUserIds, plainText));
 
 // PMP-119 / PMP-122, after the state change:
 events.publishEvent(new SprintStarted(project, user, sprint.getName()));
