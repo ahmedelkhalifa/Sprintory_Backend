@@ -36,6 +36,26 @@ public class JwtService {
                 .compact();
     }
 
+    /** One-use-in-purpose, short-lived STOMP credential; never accepted as an HTTP access token. */
+    public String generateChatSocketToken(String email) {
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .subject(email)
+                .claim("token_use", "chat_stomp")
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(120)))
+                .signWith(key)
+                .compact();
+    }
+
+    public boolean isValidChatSocketToken(String token) {
+        try {
+            return "chat_stomp".equals(parse(token).get("token_use", String.class));
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
     // No refresh token here on purpose: refresh tokens are opaque rows, see RefreshTokenService.
 
     public String extractSubject(String token) {
@@ -44,8 +64,8 @@ public class JwtService {
 
     public boolean isValid(String token) {
         try {
-            parse(token);                         // throws if signature/format/expiry is bad
-            return true;
+            // STOMP credentials cannot authenticate HTTP, even if copied to a cookie.
+            return !"chat_stomp".equals(parse(token).get("token_use", String.class));
         } catch (ExpiredJwtException e) {
             return false;
         } catch (JwtException | IllegalArgumentException e) {

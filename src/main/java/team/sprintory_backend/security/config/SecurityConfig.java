@@ -53,6 +53,8 @@ public class SecurityConfig {
                 // that pass, so without this the end of every stream logs a failed 401.
                 .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                 .requestMatchers("/api/v1/auth/**").permitAll()
+                // STOMP CONNECT authenticates separately with a scoped, short-lived JWT.
+                .requestMatchers("/ws/chat/**", "/ws/chat").permitAll()
                 // The invitation page shows the workspace before the invitee logs in or registers
                 .requestMatchers("/api/v1/invitations/lookup").permitAll()
                 // Google sign-in: the start of the flow and Google's callback
