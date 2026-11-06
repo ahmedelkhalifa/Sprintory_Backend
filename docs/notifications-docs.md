@@ -477,7 +477,8 @@ As of 4 Nov 2026, on branch `features/notifications`:
 | Nightly 90-day cleanup | Done; `NotificationServiceTest`, `EmailOutboxServiceTest` |
 | Full suite (`clean verify`) | **581 passed, 0 failed** (4 Nov 2026, with Docker, Testcontainers tests included) |
 | Manual end-to-end run with Mailpit (the acceptance criteria) | Not done yet |
-| Producers for comments (PMP-133), mentions (PMP-136), sprints (PMP-119, PMP-122) | Waiting for those features. They only publish the event ([§15](#15-notes-for-backend-developers)) |
+| Producers for comments (PMP-133) and mentions (PMP-136) | In progress on `features/comments_history`, against [comments-docs.md](./comments-docs.md) and [mentions-docs.md](./mentions-docs.md). Posting publishes `TaskCommented`; editing a comment and creating or editing a description publish `Mentioned` with the newly added ids only |
+| Producers for sprints (PMP-119, PMP-122) | Waiting for those features. They only publish the event ([§15](#15-notes-for-backend-developers)) |
 | Frontend (PMP-114) and acceptance test (PMP-115) | Not started |
 
 ---

@@ -1,8 +1,8 @@
 # Sprintory — Tasks API contract (R09)
 
-**Status:** tasks with keys, filters and ordering; PMP-125 board history/WIP; PMP-131 restoration; PMP-132 one-level subtasks and completion confirmation. Sprint assignment and Ahmed's expanded per-task activity/comment feed remain separate stories. See [§9 Implementation status](#9-implementation-status).
-**Applies to:** backend `/api/v1/projects/{projectId}/tasks/**`.
-**Related:** [Projects](./projects-docs.md) (keys, board, columns), [Board configuration](./board-docs.md), [Roles and permissions](./roles-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R09, R13, R16.
+**Status:** tasks with keys, story 9 fields, soft delete, filters/search and board/backlog ordering. PMP-125 adds status-change history and soft Kanban WIP warnings to task moves. PMP-131 adds task restoration and PMP-132 one-level subtasks with completion confirmation (§10). PMP-133/PMP-136 (4 Nov 2026) turn the history into a full activity feed ([task-history-docs.md](./task-history-docs.md)), add comments ([comments-docs.md](./comments-docs.md)), and make the description TipTap JSON with @mentions ([mentions-docs.md](./mentions-docs.md)); the history and comments cover subtasks too. Sprint assignment remains a separate story. See [§9 Implementation status](#9-implementation-status).
+**Applies to:** backend `/api/v1/projects/{projectId}/tasks/**`. Comments and history have their own contracts (linked above).
+**Related:** [Projects](./projects-docs.md) (keys, board, columns), [Board configuration](./board-docs.md), [Task history](./task-history-docs.md), [Comments](./comments-docs.md), [Mentions and rich text](./mentions-docs.md), [Roles and permissions](./roles-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R09, R13, R16.
 **Audit log:** deleting or restoring a task writes an entry to the workspace's audit log ([audit-log-docs.md §4.4](./audit-log-docs.md#4-action-catalogue)). Other task edits are not audit-logged; they belong to the task's own history.
 
 This document is the single reference for tasks end to end. If the code and this file disagree, fix one of them in the same PR.
@@ -23,7 +23,7 @@ This document is the single reference for tasks end to end. If the code and this
   | Assignee | Optional. Must be a member of the project. Someone who leaves the project (removed from it, or leaving or removed from the workspace) is unassigned from its tasks; a deleted user too. |
   | Estimate | Optional story points, 0 or more (whole numbers). |
   | Labels | Optional free-text tags, e.g. `R09`, `backend`. At most 20, each at most 50 characters. |
-  | Description | Optional rich text, stored as sent (a string). No length limit. |
+  | Description | Optional rich text: a string holding a **TipTap JSON document**, checked and normalized by the backend, and able to @mention people and teams ([mentions-docs.md §2](./mentions-docs.md#2-rich-text-format)). No length limit. A document with no text is stored as no description. |
 
 - **New tasks start in the backlog.** What "the backlog" means depends on the template:
   - **Scrum:** a task is in the backlog when it is **in no sprint**. Its status is still a column (the first one, To Do). The Scrum board shows only the active sprint's tasks (R15), so a backlog task is not on the board until the Scrum Master pulls it into a sprint (R14) and starts the sprint. Until sprints exist, every Scrum task is in the backlog and `sprintId` is always `null`.
@@ -38,7 +38,7 @@ This document is the single reference for tasks end to end. If the code and this
 
 | Action | Not in the workspace, or not in the project | Workspace admin, not in the project | Viewer | Member/Developer, Scrum Master | Product Owner | Project Manager |
 | --- | --- | --- | --- | --- | --- | --- |
-| Read, list, search tasks and status history | 404 | 403 | allowed | allowed | allowed | allowed |
+| Read, list, search tasks and their history | 404 | 403 | allowed | allowed | allowed | allowed |
 | Create, edit, delete, move on the board | 404 | 403 | 403 | allowed | allowed | allowed |
 | Reorder the backlog (Scrum) | 404 | 403 | 403 | 403 | allowed | 403 |
 
@@ -59,11 +59,12 @@ All paths are under `/api/v1/projects/{projectId}/tasks`. Bodies are JSON in `ca
 | 3.5 | DELETE | `/{taskId}` | none | `204` | `EDIT_TASKS` |
 | 3.6 | PUT | `/{taskId}/position` | `MoveTaskRequest` | `200` + `TaskResponse` | `EDIT_TASKS` |
 | 3.7 | PUT | `/{taskId}/backlog-rank` | `ReorderBacklogRequest` | `200` + `TaskResponse` | `MANAGE_BACKLOG` |
-| 3.8 | GET | `/{taskId}/history` | none | `200` + `TaskStatusHistoryResponse[]` | `VIEW_WORK` |
+| 3.8 | GET | `/{taskId}/history?page=&size=` | none | `200` + `PageResponse<TaskHistoryEntryResponse>` | `VIEW_WORK` |
 | 3.9 | POST | `/{taskId}/restore` | none | `200 TaskResponse` | `EDIT_TASKS` |
 | 3.10 | POST | `/{parentId}/subtasks` | `CreateSubtaskRequest` | `201 TaskResponse` | `EDIT_TASKS` |
 | 3.11 | GET | `/{parentId}/subtasks` | none | `200 TaskResponse[]` | `VIEW_WORK` |
 | 3.12 | PATCH | `/{parentId}/subtasks/{subtaskId}` | `UpdateSubtaskRequest` | `200 TaskResponse` | `EDIT_TASKS` |
+| — | GET, POST, PATCH, DELETE | `/{taskId}/comments/**` | see [comments-docs.md](./comments-docs.md) | | `VIEW_WORK`, `COMMENT`, `MODERATE_COMMENTS` |
 
 A `{taskId}` is always looked up **inside** `{projectId}`: a task of another project gives the same `404` as a missing one.
 
@@ -72,7 +73,8 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
 ```jsonc
 // CreateTaskRequest: only "title" is required
 { "title": "Login fails on Safari", "type": "BUG", "priority": "HIGH", "assigneeId": 7,
-  "estimate": 3, "labels": ["backend", "R09"], "description": "Steps to reproduce: ..." }
+  "estimate": 3, "labels": ["backend", "R09"],
+  "description": "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Steps to reproduce: ...\"}]}]}" }
 
 // UpdateTaskRequest: send only what changes (see 3.4)
 { "statusId": 13, "clearAssignee": true }
@@ -87,7 +89,7 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
 { "id": 55, "projectId": 8, "key": "MOB-42", "title": "Login fails on Safari",
   "type": "BUG", "priority": "HIGH", "statusId": 12, "statusName": "To Do",
   "assigneeId": 7, "estimate": 3, "labels": ["R09", "backend"],
-  "description": "Steps to reproduce: ...", "sprintId": null,
+  "description": "{\"type\":\"doc\",\"content\":[...]}", "sprintId": null,
   "createdAt": "2026-10-26T09:30:00Z", "updatedAt": "2026-10-26T09:30:00Z",
   "wipWarning": null,
   "parentTaskId": null, "estimateMinutes": null,
@@ -96,6 +98,7 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
 
 - `labels` come back sorted. Labels are trimmed, and duplicates that differ only in case collapse into the first spelling (`["backend", "Backend"]` stores `backend`).
 - `assigneeId` is a user id; show the name from `GET /projects/{projectId}/members`.
+- `description` is a string holding TipTap JSON (`JSON.stringify(editor.getJSON())`). The response returns the backend's normalized copy. Descriptions saved before 4 Nov 2026 may still be plain text; see [mentions-docs.md §2.6](./mentions-docs.md#26-task-descriptions).
 - `sprintId` stays `null` until sprints exist (R14). Parent-to-child sprint inheritance will be integrated with the future sprint backend; the API does not yet accept `sprintId`.
 - Top-level responses include `subtaskTotal` and `subtaskDone` (zero until children exist); child responses have `parentTaskId`, `estimateMinutes`, and `estimate: null` (no story points). Children do not appear as separate board cards or in the main project task list.
 - `confirmOpenSubtasks` is an optional boolean on `PATCH /{taskId}` and `PUT /{taskId}/position`. A transition of a parent with open subtasks to a `DONE`-category column returns `409 OPEN_SUBTASKS_CONFIRMATION_REQUIRED` unless explicitly confirmed.
@@ -112,6 +115,7 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
 
 - **Who:** members with `EDIT_TASKS` (everyone but Viewers). The workspace must be active.
 - **Result:** the next key; `type` `TASK` and `priority` `MEDIUM` when left out; status = the board's first column (To Do in Scrum, Backlog in Kanban); last in that column and last in the backlog; no sprint.
+- **Side effects:** a `CREATED` history entry ([task-history-docs.md](./task-history-docs.md)); everyone @mentioned in the description gets `MENTIONED` ([mentions-docs.md §4](./mentions-docs.md#4-rules)).
 - **Response `201`:** `TaskResponse`.
 - **Errors:**
 
@@ -120,6 +124,8 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
   | 400 | `VALIDATION_ERROR` | `title` missing, blank or over 255; `estimate` negative; `assigneeId` not positive; more than 20 labels, or a label blank or over 50 |
   | 400 | `BAD_REQUEST` "Malformed request body." | e.g. `"type": "EPIC"` or `"estimate": "three"` |
   | 400 | `BAD_REQUEST` "The assignee must be a member of this project." | `assigneeId` is not a project member |
+  | 400 | `INVALID_RICH_TEXT` | `description` is not a valid TipTap document ([mentions-docs.md §2](./mentions-docs.md#2-rich-text-format)), e.g. plain text |
+  | 400 | `INVALID_MENTION` | the description mentions someone outside the project, or a team with no member in it |
   | 401 | `AUTHENTICATION_ERROR` | not logged in |
   | 403 | `ACCESS_DENIED` | a Viewer, or a workspace admin who is not in the project |
   | 404 | `RESOURCE_NOT_FOUND` "Project not found." | the project does not exist or the caller cannot see it |
@@ -172,9 +178,11 @@ A `statusId` or `assigneeId` that does not belong to the project simply finds no
   - A field that is left out or `null` **stays as it is**. `{}` changes nothing.
   - To empty a field, send its flag: `clearAssignee`, `clearEstimate`, `clearDescription` (`true`). The flags are optional; left out or `null` means `false`. Sending a value **and** its clear flag is a `400`.
   - `labels` replaces all labels; `"labels": []` removes them all.
-  - `statusId` must be an active column of this project's board. Changing it puts the task **last** in the new column. To drop it at a particular place, use 3.6 instead. A changed status records one history event (§3.8) and can return a nonblocking Kanban `wipWarning`.
+  - `statusId` must be an active column of this project's board. Changing it puts the task **last** in the new column. To drop it at a particular place, use 3.6 instead. A changed status can return a nonblocking Kanban `wipWarning`.
   - `assigneeId` must be a project member.
+  - `description` must be TipTap JSON. Only **newly added** mentions are checked and notified ([mentions-docs.md §4](./mentions-docs.md#4-rules)).
   - The key, the project and the sprint cannot be changed here.
+  - **History:** every field that really changes writes one `FIELD_CHANGED` entry (§3.8); a description change is recorded without its text.
 - **Response `200`:** the updated `TaskResponse`.
 - **Errors:**
 
@@ -183,6 +191,7 @@ A `statusId` or `assigneeId` that does not belong to the project simply finds no
   | 400 | `VALIDATION_ERROR` | `title` blank or over 255; `estimate` negative; ids not positive; label limits; a value together with its clear flag |
   | 400 | `BAD_REQUEST` "The status must be a column of this project's board." | `statusId` of another project, or no such column |
   | 400 | `BAD_REQUEST` "The assignee must be a member of this project." | `assigneeId` is not a project member |
+  | 400 | `INVALID_RICH_TEXT`, `INVALID_MENTION` | as in 3.1, for the new description and its newly added mentions |
   | 401, 403, 404, 409 | | as in 3.1; plus `404` "Task not found." as in 3.3 |
 
 ### 3.5 Delete a task
@@ -204,7 +213,7 @@ One drag and drop: puts the task in column `statusId`, right **after** `afterTas
 
 - **Who:** members with `EDIT_TASKS`. The workspace must be active.
 - **Request:** `{ "statusId": 13, "afterTaskId": 41 }`.
-- **Response `200`:** the moved `TaskResponse`. Reload the board with `?order=board` to show everyone's current order. Moving across columns records one history event; moving within a column does not. Kanban WIP limits never block a valid move: over-limit destinations return `wipWarning`, and `GET /board` exposes the persistent `wipExceeded` flag. See [board-docs §3.6](./board-docs.md#36-soft-wip-warning-on-task-move).
+- **Response `200`:** the moved `TaskResponse`. Reload the board with `?order=board` to show everyone's current order. Moving across columns records one `STATUS` history entry (§3.8); moving within a column does not. Kanban WIP limits never block a valid move: over-limit destinations return `wipWarning`, and `GET /board` exposes the persistent `wipExceeded` flag. See [board-docs §3.6](./board-docs.md#36-soft-wip-warning-on-task-move).
 - **Errors:**
 
   | Status | Code | When |
@@ -227,14 +236,14 @@ One drag and drop in the Scrum product backlog (R13): puts the task right after 
 - **Response `200`:** the moved `TaskResponse`. Reload with `?order=backlog`.
 - **Errors:** `400 BAD_REQUEST` "This project has no backlog to reorder; move the task on the board." (Kanban); the `afterTaskId` errors of 3.6 (except the column one); `401`; `403` for everyone but the Product Owner; `404`; `409`.
 
-### 3.8 Read task status-change history
+### 3.8 Read a task's history
 
-`GET /api/v1/projects/{projectId}/tasks/{taskId}/history`
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/history?page=&size=`
 
 - **Who:** project members with `VIEW_WORK`, including Viewers. Workspace admins not in the project cannot read tasks or task history.
-- **Response `200`:** chronological array of `{ id, fromColumnId, fromColumnName, toColumnId, toColumnName, actorId, changedAt }` events, or `[]` when no status changes occurred.
-- Events record task changes to another column via PATCH or board drag, and rehoming when a board column is soft-deleted. A rename or same-column reorder does not produce an event. Column names are recorded as historical snapshots.
-- **Errors:** `401`, `403`, `404` as in §3.3. See [board-docs §3.7](./board-docs.md#37-read-a-tasks-status-history) for an example.
+- **Response `200`:** `PageResponse<TaskHistoryEntryResponse>`, oldest first: creation, every field change (old → new), status moves, deleted comments and subtasks.
+- **Errors:** `401`, `403`, `404` as in §3.3.
+- **The full contract is [task-history-docs.md](./task-history-docs.md).** Until 4 Nov 2026 this endpoint returned a plain array of status moves; see its §2.
 
 ### How the order is stored
 
@@ -251,6 +260,8 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 | `VALIDATION_ERROR` | 400 | Request validation failed. | A body breaks the field rules. `fieldErrors` names the field, e.g. `{ "title": "must not be blank" }` or `{ "estimate": "must be greater than or equal to 0" }` |
 | `BAD_REQUEST` | 400 | Malformed request body. | Not valid JSON, or a wrong value such as `"type": "EPIC"` |
 | `BAD_REQUEST` | 400 | (see 3.2, 3.4, 3.6, 3.7) | A filter, status, assignee or neighbour that is not valid for this project |
+| `INVALID_RICH_TEXT` | 400 | (see [mentions-docs.md §5](./mentions-docs.md#5-errors)) | `description` is not a valid TipTap document |
+| `INVALID_MENTION` | 400 | Only members of this project can be mentioned. | The description newly mentions someone outside the project |
 | `AUTHENTICATION_ERROR` | 401 | Authentication required. Please log in. | No valid access cookie |
 | `ACCESS_DENIED` | 403 | You do not have access to this resource. | A Viewer changing a task; a workspace admin not in the project; anyone but the Product Owner reordering the backlog. Show "You don't have permission". |
 | `RESOURCE_NOT_FOUND` | 404 | Project not found. | The project does not exist or the caller cannot see it |
@@ -265,9 +276,10 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 
 1. Assignee picker: `GET /projects/{projectId}/members?q=` — only project members can be assigned.
 2. Status picker (edit only): the columns of `GET /projects/{projectId}/board`.
-3. Create with `POST …/tasks`; edit with `PATCH …/tasks/{taskId}`, sending only what changed and the `clear*` flags for emptied fields.
-4. Show `fieldErrors` of a `400 VALIDATION_ERROR` next to the fields.
-5. Hide create, edit, delete and drag controls unless the project's `permissions` contain `EDIT_TASKS` (Viewers do not have it). The backend refuses with `403` either way.
+3. Description: the shared TipTap editor with @mentions ([mentions-docs.md §6](./mentions-docs.md#6-frontend-flows-pmp-138)); send `JSON.stringify(editor.getJSON())`.
+4. Create with `POST …/tasks`; edit with `PATCH …/tasks/{taskId}`, sending only what changed and the `clear*` flags for emptied fields.
+5. Show `fieldErrors` of a `400 VALIDATION_ERROR` next to the fields, and the message of `INVALID_RICH_TEXT` / `INVALID_MENTION` under the description.
+6. Hide create, edit, delete and drag controls unless the project's `permissions` contain `EDIT_TASKS` (Viewers do not have it). The backend refuses with `403` either way.
 
 ### 5.2 Task list
 
@@ -294,7 +306,8 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 | --- | --- | --- |
 | `tasks` | `id`, `project_id`, `task_number`, `task_key` (≤ 21), `title` (≤ 255), `type`, `priority`, `status_column_id`, `assignee_id` (nullable), `estimate` (nullable), `description` (`text`), `board_position`, `backlog_rank`, `deleted_at` (nullable), audit columns | unique on (`project_id`, `task_number`); checks on `type`, `priority`, `estimate >= 0` |
 | `task_labels` | `task_id`, `label` (≤ 50) | primary key on both |
-| `task_status_history` | `task_id`, from/to column IDs and names, `actor_id`, `changed_at` | append-only status-change events, created by V7; `task_id` has `ON DELETE CASCADE` |
+| `task_history` | `task_id`, `type`, `field`, `old_value`, `new_value`, `ref_id`, `actor_id`, `actor_name`, `occurred_at` | append-only activity feed, created by V11, which replaced V7's `task_status_history`; `task_id` has `ON DELETE CASCADE`. See [task-history-docs.md §6](./task-history-docs.md#6-data-model) |
+| `task_comments` | see [comments-docs.md §6](./comments-docs.md#6-data-model) | `task_id` has `ON DELETE CASCADE` |
 | `projects.last_task_number` | the latest task number of the project | starts at 0, only ever increases |
 
 - **Foreign keys:**
@@ -306,7 +319,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 - **Keys:** `ProjectRepository.incrementTaskNumber` (an UPDATE, which locks the project row) then `findLastTaskNumber`. `Project.lastTaskNumber` is mapped `updatable = false`, so saving a project never writes back a stale number.
 - **Soft delete:** `Task` carries `@SQLRestriction("deleted_at is null")`, so no JPA query ever returns a deleted task. **Native SQL must add `deleted_at is null` itself** (universal search does).
 - **Indexes:** (`project_id`, `deleted_at`), `status_column_id`, `assignee_id`, (`project_id`, `status_column_id`, `board_position`), (`project_id`, `backlog_rank`).
-- **Migrations:** `V6__tasks.sql` (task storage), `V7__board_configuration_and_status_history.sql` (status history and board configuration).
+- **Migrations:** `V6__tasks.sql` (task storage), `V7__board_configuration_and_status_history.sql` (status history and board configuration), `V10__subtasks.sql` (PMP-131/132, Damir), `V11__task_history.sql` (full history, replacing the V7 table, and the comments table).
 - **Code:** `task/{models,repositories,services,controllers,dto,api}`. `TaskApiService` holds the rules, `TaskSpecifications` the list query, `TaskRanks` the order arithmetic.
 
 ---
@@ -327,7 +340,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 - **No undelete** and no list of deleted tasks.
 - **Sprints (R14, R15):** `sprintId` is always `null`; the Scrum board shows no tasks until sprints exist. They will reuse `backlog_rank` and `board_position`.
 - **Columns (R16 / PMP-125):** board configuration and soft WIP warnings are implemented in the backend. See [board-docs.md](./board-docs.md).
-- **Subtasks, comments, broader activity history (R10), attachments (R25)** are later stories. PMP-125 implements **status-change history only**, not history of every task-field change; future dependent tables must cascade from `tasks`.
+- **Subtasks (R10, PMP-132) and attachments (R25)** are later stories. Comments and the full activity history (R10) are PMP-133 ([comments-docs.md](./comments-docs.md), [task-history-docs.md](./task-history-docs.md)). Future dependent tables must cascade from `tasks`.
 
 ---
 
@@ -344,6 +357,8 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: contro
 | Unassigning on leaving a project or the workspace (`ProjectServiceTest`, `WorkspaceServiceTest`) | Implemented, all passing |
 | `TaskIntegrationTest` (12) against PostgreSQL: keys, soft delete, defaults, filters, board and backlog order, renumbering, unassigning on leave, cascades | Implemented, all passing |
 | PMP-125 status history and soft WIP responses | Implemented; clean verify passed 381 tests and V7 applied on PostgreSQL Testcontainers (1 Nov 2026); final regression re-run and frontend acceptance pending |
+| PMP-133/PMP-136: full history (V11) and TipTap descriptions with mentions | Done (5 Nov 2026); see [task-history-docs.md §9](./task-history-docs.md#9-implementation-status) and [mentions-docs.md §10](./mentions-docs.md#10-implementation-status) |
+| PMP-133: comments (table in V11) | Done (5 Nov 2026). See [comments-docs.md §9](./comments-docs.md#9-implementation-status) |
 
 ---
 
@@ -359,6 +374,8 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: contro
 | 26 Oct 2026 | Labels: at most 20, each at most 50 characters, collapsed case-insensitively. Description: rich text, no limit. |
 | 26 Oct 2026 | Someone who leaves a project (or the workspace) is unassigned from its tasks, so the assignee is always a project member. |
 | 1 Nov 2026 | A task status change records from/to column snapshots and actor; over-limit Kanban task moves succeed with a warning, never a validation failure. |
+| 4 Nov 2026 | The description must be TipTap JSON, checked and normalized by the backend; mentions in it notify. Supersedes "stored as sent" of 26 Oct. |
+| 4 Nov 2026 | History covers every field change, not only status, in one `task_history` table ([task-history-docs.md §10](./task-history-docs.md#10-decisions)). |
 
 
 ---

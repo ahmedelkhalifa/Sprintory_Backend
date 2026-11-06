@@ -30,8 +30,10 @@ public enum ProjectPermission {
     MANAGE_SPRINTS,
     /** Create, edit and delete tasks (story 9). */
     EDIT_TASKS,
-    /** Comment on tasks (R10). */
+    /** Comment on tasks, and edit or delete one's own comments (R10). */
     COMMENT,
+    /** Delete anyone's comment, never edit it (R10, PMP-133). Project Manager only. */
+    MODERATE_COMMENTS,
     /** Log time on tasks (R19). */
     LOG_TIME;
 

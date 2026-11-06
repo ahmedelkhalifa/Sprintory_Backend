@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectMember;
 import team.sprintory_backend.project.models.ProjectRole;
+import team.sprintory_backend.user.models.User;
 
 import java.util.Collection;
 import java.util.List;
@@ -32,6 +33,21 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
     Page<ProjectMember> searchByProjectId(@Param("projectId") Long projectId,
                                           @Param("pattern") String pattern,
                                           Pageable pageable);
+
+    /**
+     * People who can be @mentioned (PMP-136): the project's members in any role, except the
+     * caller, whose first name, last name, "first last" or email contains the search. {@code limit}
+     * caps the list; pass {@code PageRequest.of(0, n)}.
+     */
+    @Query("select u from ProjectMember pm join pm.user u where pm.project.id = :projectId "
+            + "and u.id <> :excludedUserId "
+            + "and (lower(u.firstName) like :pattern or lower(u.lastName) like :pattern "
+            + "or lower(concat(u.firstName, ' ', u.lastName)) like :pattern or lower(u.email) like :pattern) "
+            + "order by u.firstName, u.lastName, u.id")
+    List<User> searchMentionableUsers(@Param("projectId") Long projectId,
+                                      @Param("excludedUserId") Long excludedUserId,
+                                      @Param("pattern") String pattern,
+                                      Pageable limit);
 
     boolean existsByProjectIdAndUserId(Long projectId, Long userId);
 
