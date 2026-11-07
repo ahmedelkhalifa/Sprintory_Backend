@@ -65,6 +65,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ProjectService {
 
+    private final team.sprintory_backend.project.charter.repositories.ProjectCharterRepository charterRepository;
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final WorkspaceMemberRepository workspaceMemberRepository;
@@ -96,6 +97,7 @@ public class ProjectService {
                 .template(request.template())
                 .build());
         projectMemberRepository.save(newMember(project, user, ProjectRole.PROJECT_MANAGER));
+        charterRepository.save(new team.sprintory_backend.project.charter.models.ProjectCharter(project));
         projectBoardService.initialize(project);
         auditLog.record(workspace, user, AuditAction.PROJECT_CREATED, AuditTarget.project(project), project,
                 AuditChange.of("name", null, project.getName()),

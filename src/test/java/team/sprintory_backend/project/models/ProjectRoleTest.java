@@ -21,8 +21,8 @@ class ProjectRoleTest {
         Map<ProjectRole, Set<ProjectPermission>> matrix = Map.of(
                 PROJECT_MANAGER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, EDIT_SETTINGS, ARCHIVE_PROJECT,
                         MANAGE_MEMBERS, MANAGE_ROLES, CONFIGURE_BOARD, EDIT_TASKS, COMMENT, MODERATE_COMMENTS,
-                        LOG_TIME),
-                PRODUCT_OWNER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, EDIT_TASKS, COMMENT, LOG_TIME),
+                        EDIT_CHARTER, LOG_TIME),
+                PRODUCT_OWNER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, EDIT_TASKS, COMMENT, EDIT_CHARTER, LOG_TIME),
                 SCRUM_MASTER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_SPRINTS, EDIT_TASKS, COMMENT, LOG_TIME),
                 MEMBER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, EDIT_TASKS, COMMENT, LOG_TIME),
                 VIEWER, EnumSet.of(VIEW_PROJECT, VIEW_WORK));
@@ -74,7 +74,7 @@ class ProjectRoleTest {
         Set<ProjectPermission> combined = ProjectRole.permissionsOf(List.of(PRODUCT_OWNER, SCRUM_MASTER));
 
         assertEquals(EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, MANAGE_SPRINTS,
-                EDIT_TASKS, COMMENT, LOG_TIME), combined);
+                EDIT_TASKS, COMMENT, EDIT_CHARTER, LOG_TIME), combined);
     }
 
     @Test
@@ -125,6 +125,16 @@ class ProjectRoleTest {
             assertEquals(role == PROJECT_MANAGER, role.permissions().contains(MODERATE_COMMENTS), role.name());
         }
         assertFalse(ProjectPermission.WORKSPACE_ADMIN.contains(MODERATE_COMMENTS), "admins do not see project work");
+    }
+
+
+    @Test
+    void onlyPmAndScrumProductOwnerMayEditCharter() {
+        for (ProjectRole role : ProjectRole.values()) {
+            assertEquals(role == PROJECT_MANAGER || role == PRODUCT_OWNER,
+                    role.permissions().contains(EDIT_CHARTER), role.name());
+        }
+        assertFalse(ProjectPermission.WORKSPACE_ADMIN.contains(EDIT_CHARTER));
     }
 
     // --- story 6 acceptance criterion 14 ---

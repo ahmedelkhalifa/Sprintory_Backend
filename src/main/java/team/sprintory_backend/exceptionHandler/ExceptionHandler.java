@@ -82,6 +82,13 @@ public class ExceptionHandler {
                 e.getMessage(), request);
     }
 
+    @org.springframework.web.bind.annotation.ExceptionHandler(
+            team.sprintory_backend.project.charter.exceptions.CharterReadOnlyException.class)
+    public ResponseEntity<ErrorResponse> handleCharterReadOnly(HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.CHARTER_READ_ONLY,
+                "The project charter is read-only in this project state.", request);
+    }
+
     @org.springframework.web.bind.annotation.ExceptionHandler(WorkspaceArchivedException.class)
     public ResponseEntity<ErrorResponse> handleWorkspaceArchived(HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), ErrorCode.WORKSPACE_ARCHIVED,

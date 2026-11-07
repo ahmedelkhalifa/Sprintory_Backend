@@ -71,6 +71,7 @@ class ProjectServiceTest {
     private static final Long PROJECT_ID = 21L;
     private static final Long TEAM_ID = 4L;
 
+    private team.sprintory_backend.project.charter.repositories.ProjectCharterRepository charterRepository;
     private ProjectRepository projectRepository;
     private ProjectMemberRepository projectMemberRepository;
     private WorkspaceMemberRepository workspaceMemberRepository;
@@ -90,6 +91,7 @@ class ProjectServiceTest {
 
     @BeforeEach
     void setUp() {
+        charterRepository = mock(team.sprintory_backend.project.charter.repositories.ProjectCharterRepository.class);
         projectRepository = mock(ProjectRepository.class);
         projectMemberRepository = mock(ProjectMemberRepository.class);
         workspaceMemberRepository = mock(WorkspaceMemberRepository.class);
@@ -101,7 +103,7 @@ class ProjectServiceTest {
         taskWatcherRepository = mock(TaskWatcherRepository.class);
         auditLog = mock(AuditLogService.class);
         events = mock(ApplicationEventPublisher.class);
-        service = new ProjectService(projectRepository, projectMemberRepository, workspaceMemberRepository,
+        service = new ProjectService(charterRepository, projectRepository, projectMemberRepository, workspaceMemberRepository,
                 teamRepository, teamMemberRepository, workspaceAccess,
                 new ProjectAccess(projectRepository, projectMemberRepository, workspaceAccess), boardService,
                 taskRepository, taskWatcherRepository, auditLog, events);
@@ -165,6 +167,9 @@ class ProjectServiceTest {
         assertEquals("MOB", saved.getValue().getKey());
         assertEquals(ProjectTemplate.KANBAN, saved.getValue().getTemplate());
         verify(boardService).initialize(saved.getValue());
+        verify(charterRepository).save(argThat(charter ->
+                charter.getProjectId().equals(PROJECT_ID) && charter.getInScope() == null
+                        && charter.getOutOfScope() == null));
         ArgumentCaptor<ProjectMember> first = ArgumentCaptor.forClass(ProjectMember.class);
         verify(projectMemberRepository).save(first.capture());
         assertSame(member, first.getValue().getUser());
