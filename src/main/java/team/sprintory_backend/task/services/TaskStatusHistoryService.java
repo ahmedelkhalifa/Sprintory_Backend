@@ -1,6 +1,7 @@
 package team.sprintory_backend.task.services;
 
 import lombok.RequiredArgsConstructor;
+import team.sprintory_backend.attachment.models.TaskAttachment;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -113,6 +114,18 @@ public class TaskStatusHistoryService {
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordSubtaskRemoved(Task parent, Task subtask, User actor) {
         save(parent, TaskHistoryType.SUBTASK_REMOVED, null, label(subtask), null, subtask.getId(), actor);
+    }
+
+    /** A file was attached (R25); the entry holds its file name, never a link. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordAttachmentAdded(Task task, TaskAttachment attachment, User actor) {
+        save(task, TaskHistoryType.ATTACHMENT_ADDED, null, null, attachment.getFileName(), attachment.getId(), actor);
+    }
+
+    /** An attachment was deleted, by its uploader or the Project Manager (R25). */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordAttachmentRemoved(Task task, TaskAttachment attachment, User actor) {
+        save(task, TaskHistoryType.ATTACHMENT_REMOVED, null, attachment.getFileName(), null, attachment.getId(), actor);
     }
 
     /** The task or subtask was restored after a delete (PMP-131). */

@@ -34,3 +34,5 @@ build/
 
 .env
 /temp/
+# Attachment files stored by local runs (app.attachments.dir default)
+/data/

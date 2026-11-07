@@ -13,5 +13,9 @@ public enum TaskHistoryType {
     SUBTASK_ADDED,
     /** On the parent: one of its subtasks was deleted on its own. */
     SUBTASK_REMOVED,
-    RESTORED
+    RESTORED,
+    /** A file was attached (R25); {@code newValue} is its file name, {@code refId} the attachment id. */
+    ATTACHMENT_ADDED,
+    /** An attachment was deleted (R25); {@code oldValue} is its file name, {@code refId} the attachment id. */
+    ATTACHMENT_REMOVED
 }

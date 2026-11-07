@@ -91,6 +91,8 @@ Reading needs `VIEW_WORK`.
 | `SUBTASK_ADDED` | on the **parent**: a subtask is created under it, or a subtask deleted on its own is restored | `null` | `null` → the subtask's key and title, e.g. `MOB-57 Write tests` | the subtask id |
 | `SUBTASK_REMOVED` | on the **parent**: one of its subtasks is deleted on its own | `null` | the subtask's key and title → `null` | the subtask id |
 | `RESTORED` | the task or subtask is restored after a delete (PMP-131, `POST …/restore`) | `null` | `null` → `null` | `null` |
+| `ATTACHMENT_ADDED` | a file is attached to the task or subtask, one entry per file ([attachments-docs.md §3.1](./attachments-docs.md#31-upload-files-to-a-task)) | `null` | `null` → the stored file name, e.g. `login-flow.webp` | the attachment id |
+| `ATTACHMENT_REMOVED` | an attachment is deleted, by its uploader or by the Project Manager ([attachments-docs.md §3.6](./attachments-docs.md#36-delete-an-attachment)) | `null` | the file name → `null` | the attachment id |
 
 `actor` is always the person who did it. `actor.id` can belong to someone who has since left; `actor.name` is the name they had at the time.
 
@@ -124,8 +126,9 @@ Reading needs `VIEW_WORK`.
 ### 3.3 Later types
 
 Planned by later stories; each adds its `type` with a migration (§6):
-- sprint scope changes and "carried over" markers (PMP-119, PMP-122);
-- attachment removed (PMP-141).
+- sprint scope changes and "carried over" markers (PMP-119, PMP-122).
+
+`ATTACHMENT_ADDED` and `ATTACHMENT_REMOVED` (PMP-141) are agreed in 3.1 and arrive with `V14__task_attachments.sql`.
 
 ---
 

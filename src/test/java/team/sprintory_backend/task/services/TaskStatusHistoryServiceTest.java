@@ -222,6 +222,29 @@ class TaskStatusHistoryServiceTest {
     }
 
     @Test
+    void attachmentsAddedAndRemovedAreRecordedWithTheirFileName() {
+        team.sprintory_backend.attachment.models.TaskAttachment attachment =
+                team.sprintory_backend.attachment.models.TaskAttachment.builder()
+                        .id(91L).fileName("login-flow.webp").build();
+
+        service.recordAttachmentAdded(task, attachment, user);
+        service.recordAttachmentRemoved(task, attachment, user);
+
+        ArgumentCaptor<TaskHistoryEntry> entries = ArgumentCaptor.forClass(TaskHistoryEntry.class);
+        verify(historyRepository, org.mockito.Mockito.times(2)).save(entries.capture());
+        TaskHistoryEntry added = entries.getAllValues().get(0);
+        TaskHistoryEntry removed = entries.getAllValues().get(1);
+        assertEquals(TaskHistoryType.ATTACHMENT_ADDED, added.getType());
+        assertNull(added.getOldValue());
+        assertEquals("login-flow.webp", added.getNewValue());
+        assertEquals(91L, added.getRefId());
+        assertEquals(TaskHistoryType.ATTACHMENT_REMOVED, removed.getType());
+        assertEquals("login-flow.webp", removed.getOldValue());
+        assertNull(removed.getNewValue());
+        assertEquals(91L, removed.getRefId());
+    }
+
+    @Test
     void aRestoreIsRecorded() {
         service.recordRestored(task, user);
 
