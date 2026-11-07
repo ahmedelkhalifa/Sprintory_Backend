@@ -43,6 +43,13 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
 
     long countByParentIdAndStatusCategoryNot(Long parentId, BoardColumnCategory category);
 
+    /**
+     * Open subtasks of the given parents outside one column: a column delete moves that column's
+     * subtasks along with their parents, so only the others stay open.
+     */
+    long countByParentIdInAndStatusCategoryNotAndStatusIdNot(Collection<Long> parentIds,
+                                                             BoardColumnCategory category, Long statusId);
+
     @EntityGraph(attributePaths = {"status", "assignee"})
     List<Task> findByParentIdOrderByIdAsc(Long parentId);
 

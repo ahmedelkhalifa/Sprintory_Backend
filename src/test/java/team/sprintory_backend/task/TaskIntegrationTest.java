@@ -23,6 +23,7 @@ import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectBoardService;
 import team.sprintory_backend.project.services.ProjectService;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.api.TaskListOrder;
 import team.sprintory_backend.task.api.TaskSearchFilters;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
@@ -467,7 +468,7 @@ class TaskIntegrationTest extends AbstractIntegrationTest {
     /** Counts rows straight from the database, past the persistence context. */
     /** The task's history entries that are status moves, oldest first. */
     private List<TaskHistoryEntryResponse> statusMoves(Long projectId, Long taskId) {
-        return tasks.history(owner, projectId, taskId, PageRequest.of(0, 100)).content().stream()
+        return tasks.history(owner, projectId, taskId, TaskHistoryOrder.OLDEST, PageRequest.of(0, 100)).content().stream()
                 .filter(entry -> entry.field() == TaskHistoryField.STATUS).toList();
     }
 

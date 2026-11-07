@@ -12,6 +12,7 @@ import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.stereotype.Component;
+import team.sprintory_backend.chat.controllers.ChatStompController;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.services.ProjectAccess;
@@ -31,6 +32,10 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class ChatStompSecurityInterceptor implements ChannelInterceptor {
     private static final Pattern TOPIC = Pattern.compile("^/topic/projects/([1-9][0-9]*)/chat$");
+    /** What a client subscribes to for the refusals of its own sends (ChatStompController). */
+    static final String ERROR_QUEUE = "/user" + ChatStompController.ERROR_QUEUE;
+    /** Spring's per-session form of that queue: "/queue/errors-user" + the session id. */
+    private static final String ERROR_QUEUE_PREFIX = ChatStompController.ERROR_QUEUE + "-user";
     private static final Pattern SEND = Pattern.compile("^/app/projects/([1-9][0-9]*)/chat\\.(send|edit|delete)$");
 
     private final JwtService jwtService;
@@ -66,6 +71,8 @@ public class ChatStompSecurityInterceptor implements ChannelInterceptor {
         }
         if (command == StompCommand.SUBSCRIBE) {
             AppUserDetails user = requireUser(stomp.getUser());
+            // Spring resolves this to the subscribing session's own queue; no one else's.
+            if (ERROR_QUEUE.equals(stomp.getDestination())) return message;
             Long projectId = matchProject(TOPIC, stomp.getDestination());
             if (!members.existsByProjectIdAndUserId(projectId, user.getUser().getId())) {
                 throw new AccessDeniedException("Project membership required to subscribe.");
@@ -83,6 +90,11 @@ public class ChatStompSecurityInterceptor implements ChannelInterceptor {
     public Message<?> outbound(Message<?> message, MessageChannel channel) {
         SimpMessageHeaderAccessor stomp = SimpMessageHeaderAccessor.wrap(message);
         if (stomp.getMessageType() != SimpMessageType.MESSAGE) return message;
+        // A refusal sent back to its sender: the broker addresses it to that session's own queue.
+        if (stomp.getSessionId() != null
+                && (ERROR_QUEUE_PREFIX + stomp.getSessionId()).equals(stomp.getDestination())) {
+            return message;
+        }
         Matcher matcher = TOPIC.matcher(stomp.getDestination() == null ? "" : stomp.getDestination());
         if (!matcher.matches()) return null; // No other outbound topic permitted for this endpoint.
         Long userId = sessionUsers.get(stomp.getSessionId());

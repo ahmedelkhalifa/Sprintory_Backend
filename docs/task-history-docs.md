@@ -33,24 +33,31 @@ Reading needs `VIEW_WORK`.
 
 ## 2. Endpoint
 
-`GET /api/v1/projects/{projectId}/tasks/{taskId}/history?page=&size=`
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/history?order=&page=&size=`
 
 - **Who:** members with `VIEW_WORK`, Viewers included. Archived workspace: allowed.
-- **Order:** oldest first (`occurredAt`, then `id`). The order cannot be changed; `?sort=` is ignored.
+- **Order** (`?order=`, ignoring case), like the task list's `order` ([tasks-docs.md §3.2](./tasks-docs.md#32-list-and-search-a-projects-tasks)):
+
+  | `order` | Entries |
+  | --- | --- |
+  | `newest` (default) | the latest first: `occurredAt` descending, then `id` descending |
+  | `oldest` | as they happened: `occurredAt`, then `id` |
+
+  Both end with the id, so entries written in the same moment keep their place and pages never overlap. Any other value is `400`. `?sort=` is ignored; use `order`.
 - **Paging** as everywhere ([workspaces-docs.md, Pagination and search](./workspaces-docs.md#pagination-and-search)): `page` 0-based, `size` default 20, at most 100.
-- **Response `200`:** `PageResponse<TaskHistoryEntryResponse>`:
+- **Response `200`:** `PageResponse<TaskHistoryEntryResponse>`, here in the default order (newest first):
 
   ```jsonc
   {
     "content": [
-      { "id": 500, "type": "CREATED", "field": null, "oldValue": null, "newValue": null, "refId": null,
-        "actor": { "id": 7, "name": "Ada Lovelace" }, "occurredAt": "2026-11-05T09:00:00Z" },
-      { "id": 501, "type": "FIELD_CHANGED", "field": "PRIORITY", "oldValue": "LOW", "newValue": "HIGH", "refId": null,
-        "actor": { "id": 31, "name": "Damir Gabaidullin" }, "occurredAt": "2026-11-05T09:12:44Z" },
+      { "id": 503, "type": "COMMENT_DELETED", "field": null, "oldValue": null, "newValue": null, "refId": 77,
+        "actor": { "id": 7, "name": "Ada Lovelace" }, "occurredAt": "2026-11-05T10:02:13Z" },
       { "id": 502, "type": "FIELD_CHANGED", "field": "STATUS", "oldValue": "To Do", "newValue": "In Progress", "refId": null,
         "actor": { "id": 31, "name": "Damir Gabaidullin" }, "occurredAt": "2026-11-05T09:13:02Z" },
-      { "id": 503, "type": "COMMENT_DELETED", "field": null, "oldValue": null, "newValue": null, "refId": 77,
-        "actor": { "id": 7, "name": "Ada Lovelace" }, "occurredAt": "2026-11-05T10:02:13Z" }
+      { "id": 501, "type": "FIELD_CHANGED", "field": "PRIORITY", "oldValue": "LOW", "newValue": "HIGH", "refId": null,
+        "actor": { "id": 31, "name": "Damir Gabaidullin" }, "occurredAt": "2026-11-05T09:12:44Z" },
+      { "id": 500, "type": "CREATED", "field": null, "oldValue": null, "newValue": null, "refId": null,
+        "actor": { "id": 7, "name": "Ada Lovelace" }, "occurredAt": "2026-11-05T09:00:00Z" }
     ],
     "page": 0, "size": 20, "totalElements": 4, "totalPages": 1
   }
@@ -60,10 +67,13 @@ Reading needs `VIEW_WORK`.
 
   | Status | Code | When |
   | --- | --- | --- |
+  | 400 | `BAD_REQUEST` "Invalid 'order': use newest or oldest." | any other `order` |
   | 401 | `AUTHENTICATION_ERROR` | not logged in |
   | 403 | `ACCESS_DENIED` | a workspace admin who is not in the project |
   | 404 | `RESOURCE_NOT_FOUND` "Project not found." | the project does not exist or the caller cannot see it |
   | 404 | `RESOURCE_NOT_FOUND` "Task not found." | missing, deleted, or another project's task |
+
+**Changed on 7 Nov 2026.** The default order is now newest first; it was oldest first. Pass `?order=oldest` for the old order.
 
 **Changed on 4 Nov 2026.** Until then this endpoint returned a plain array of status moves (`fromColumnId`, `fromColumnName`, `toColumnId`, `toColumnName`, `actorId`, `changedAt`). Those moves are kept and now appear as `FIELD_CHANGED` / `STATUS` entries, with the column names but no column ids.
 
@@ -97,8 +107,8 @@ Reading needs `VIEW_WORK`.
 | `ASSIGNEE` | task or subtask edit with `assigneeId` or `clearAssignee` | the person's first and last name; `null` = unassigned | `null` → `Ada Lovelace` |
 | `ESTIMATE` | task edit with `estimate` or `clearEstimate` (story points, top-level tasks only) | the number; `null` = not estimated | `3` → `5` |
 | `ESTIMATE_MINUTES` | subtask edit with `estimateMinutes` or `clearEstimateMinutes` (time estimate, subtasks only) | the number of minutes; `null` = not estimated | `60` → `90` |
-| `LABELS` | task edit with `labels` | the labels sorted and joined with `, `; `null` = none | `backend` → `backend, R09` |
-| `DESCRIPTION` | task edit with `description` or `clearDescription` | always `null` → `null`: the entry means "changed the description" | |
+| `LABELS` | task or subtask edit with `labels` | the labels sorted and joined with `, `; `null` = none | `backend` → `backend, R09` |
+| `DESCRIPTION` | task or subtask edit with `description` or `clearDescription` | always `null` → `null`: the entry means "changed the description" | |
 
 - "Task edit" is `PATCH …/tasks/{taskId}`. "Subtask edit" is `PATCH …/tasks/{parentId}/subtasks/{subtaskId}`; that entry goes to the **subtask's** own history.
 - One edit that changes several fields writes **one entry per field**, all with the same `occurredAt`.
@@ -121,7 +131,7 @@ Planned by later stories; each adds its `type` with a migration (§6):
 
 ## 4. Frontend flows (PMP-134)
 
-1. The task view gets a "History" tab next to "Comments". Load `GET …/history?page=0&size=20`; older entries come first, so "Load more" goes at the bottom.
+1. The task view gets a "History" tab next to "Comments". Load `GET …/history?page=0&size=20`; the latest change comes first, and "Load more" (the next page) goes at the bottom with older entries. A toggle "Oldest first" can pass `order=oldest`; reload from page 0 when it changes.
 2. Render one line per entry with the actor's name and the time:
 
    | Entry | Line |
@@ -213,17 +223,18 @@ Rules:
 
 ## 9. Implementation status
 
-As of 4 Nov 2026, on branch `features/comments_history`:
+As of 6 Nov 2026 (merged to `main`; the subtask description and label entries come from the refactoring branch `fix/refactoring`):
 
 | Part | Status |
 | --- | --- |
 | This contract | Written, agreed with the backend owner |
 | `V11__task_history.sql`, `TaskHistoryEntry`, repository | Done; `TaskHistoryMigrationIntegrationTest` migrates a V10 database with status moves to V11 on PostgreSQL and checks the copy and the drop |
-| `TaskStatusHistoryService` writers and paginated list, `GET /history` paged | Done; `TaskStatusHistoryServiceTest` (15), `TaskIntegrationTest` and `TaskRestorationSubtasksIntegrationTest` updated. Status moves are written; the other writers are not called yet (step 5) |
+| `TaskStatusHistoryService` writers and paginated list, `GET /history` paged | Done; `TaskStatusHistoryServiceTest` (15), `TaskIntegrationTest` and `TaskRestorationSubtasksIntegrationTest` updated. Every writer is called (rows below) |
+| `?order=newest` (default) / `oldest` (`task/api/TaskHistoryOrder`) | Done 7 Nov 2026 on `fix/refactoring`; `TaskHistoryOrderTest`, `TaskStatusHistoryServiceTest`, `TaskControllerTest`, `TaskHistoryIntegrationTest` (order and paging on PostgreSQL) |
 | Entries from task create and edit (via `TaskSnapshot` + `recordChanges`) | Done; `TaskApiServiceTest`, `TaskStatusHistoryServiceTest`, `TaskHistoryIntegrationTest` (5) on PostgreSQL, including priority Low → High |
-| Entries from subtasks and restore (`SubtaskService`, `TaskApiService.delete/restore`) | Done; same tests. Subtask description and label entries come when subtasks get those fields |
-| Entry from comment delete | With the comments (step 6) |
-| Unit and PostgreSQL integration tests | Not started |
+| Entries from subtasks and restore (`SubtaskService`, `TaskApiService.delete/restore`) | Done; same tests. Subtask `DESCRIPTION` and `LABELS` entries since 6 Nov 2026 (`SubtaskServiceTest`, `TaskHistoryIntegrationTest`) |
+| Entry from comment delete | Done; `CommentServiceTest`, `CommentIntegrationTest` |
+| Unit and PostgreSQL integration tests | Done; the tests named above, all passing in `clean verify` |
 | Frontend (PMP-134) and acceptance test (PMP-135) | Not started |
 
 ---
@@ -236,8 +247,9 @@ As of 4 Nov 2026, on branch `features/comments_history`:
 | 4 Nov 2026 | One generic `task_history` table for every kind of entry. V11 copies the PMP-125 status moves into it and drops `task_status_history`. `TaskStatusHistoryService` stays the single writer, and `record(...)` keeps its signature. |
 | 4 Nov 2026 | Subtasks have their own feed; the parent only shows "subtask added / removed". Their time estimate is its own field, `ESTIMATE_MINUTES`, because it is not story points. |
 | 4 Nov 2026 | Restore (PMP-131) writes `RESTORED`. Deleting a parent writes nothing for its subtasks, and restoring it writes one entry on the parent only. |
-| 4 Nov 2026 | PMP-131/132 merge first; this story adds their history calls afterwards, because it owns the history (agreed in PMP-132's docs, §10.4). |
+| 4 Nov 2026 | PMP-131/132 merge first; this story adds their history calls afterwards, because it owns the history (agreed in [tasks-docs.md §11.4](./tasks-docs.md#114-other-subsystems-current-boundaries)). |
 | 4 Nov 2026 | A status move is a `FIELD_CHANGED` entry with field `STATUS`, like every other field. |
 | 4 Nov 2026 | Description changes are recorded without text; comment text is never copied. |
 | 4 Nov 2026 | Values and the actor's name are snapshots, stored as display text. `actor_id` has no foreign key. |
 | 4 Nov 2026 | `GET /history` is paginated, oldest first, and carries the actor's name. |
+| 7 Nov 2026 | The feed is newest first by default, and `?order=oldest` gives the old order. It uses `order`, like the task list, rather than Spring's `?sort=`, which every list in the API ignores so an unknown property cannot fail a request. Comments stay oldest first, because they read as a conversation. |

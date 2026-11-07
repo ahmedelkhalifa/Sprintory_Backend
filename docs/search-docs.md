@@ -18,7 +18,7 @@ This document is the single reference for universal search. If the code and this
   | Workspace | its members |
   | Project | the workspace's admins (all projects); other members only the projects they are in |
   | Team | the workspace's admins (all teams); other members only the teams they are in |
-  | Task | members of its project (`VIEW_WORK`). **Not** a workspace admin who is not in the project. Never a deleted task. |
+  | Task | members of its project (`VIEW_WORK`). **Not** a workspace admin who is not in the project. Never a deleted task. **Subtasks (PMP-132) are included** and carry `parentKey`, unlike the project task list, which shows top-level tasks only. |
 
 - **Filters only narrow** the results. Searching a workspace or project the caller cannot see returns an empty page, never an error, so the search does not reveal whether it exists.
 - **Archived workspaces** are searched too (reading is allowed there).
@@ -44,11 +44,13 @@ This document is the single reference for universal search. If the code and this
   {
     "content": [
       { "type": "TEAM", "id": 4, "title": "Auth", "subtitle": "Acme",
-        "path": "/teams/4", "workspaceId": 3, "projectId": null, "taskKey": null },
+        "path": "/teams/4", "workspaceId": 3, "projectId": null, "taskKey": null, "parentKey": null },
       { "type": "TASK", "id": 55, "title": "Fix auth login", "subtitle": "MOB · Mobile App",
-        "path": "/projects/8/tasks/55", "workspaceId": 3, "projectId": 8, "taskKey": "MOB-42" }
+        "path": "/projects/8/tasks/55", "workspaceId": 3, "projectId": 8, "taskKey": "MOB-42", "parentKey": null },
+      { "type": "TASK", "id": 61, "title": "Write auth tests", "subtitle": "MOB · Mobile App",
+        "path": "/projects/8/tasks/61", "workspaceId": 3, "projectId": 8, "taskKey": "MOB-57", "parentKey": "MOB-42" }
     ],
-    "page": 0, "size": 20, "totalElements": 2, "totalPages": 1
+    "page": 0, "size": 20, "totalElements": 3, "totalPages": 1
   }
   ```
 
@@ -61,6 +63,7 @@ This document is the single reference for universal search. If the code and this
   | `path` | its **API** path: `/workspaces/{id}`, `/projects/{id}`, `/teams/{id}`, `/projects/{projectId}/tasks/{id}`. The frontend maps it to its own route. |
   | `workspaceId`, `projectId` | where it lives (`projectId` only for projects and tasks) |
   | `taskKey` | tasks only, e.g. `MOB-42` |
+| `parentKey` | subtasks only: the key of the parent task, e.g. `MOB-42`. `null` for a top-level task and for every other type. |
 
 - **Errors:**
 
@@ -79,8 +82,8 @@ This document is the single reference for universal search. If the code and this
 
 1. Debounce the search box; send `q` once it has a character or two.
 2. Inside a workspace or project page, pass `workspaceId` / `projectId` to search only there.
-3. Group or label hits by `type`; show `subtitle` under the title and `taskKey` in front of a task's title.
-4. Navigate with `type` and the ids (or `path`): task → the task in its project, project → project page, team → team page, workspace → workspace page.
+3. Group or label hits by `type`; show `subtitle` under the title and `taskKey` in front of a task's title. For a subtask (`parentKey` set), also show "subtask of MOB-42".
+4. Navigate with `type` and the ids (or `path`): task → the task in its project (for a subtask, the subtask itself: `GET /projects/{projectId}/tasks/{id}` returns it, with its `parentTaskId`), project → project page, team → team page, workspace → workspace page.
 5. Do not combine this with the per-project task search; for the task list's filters use [tasks-docs.md §3.2](./tasks-docs.md#32-list-and-search-a-projects-tasks).
 
 ---
@@ -91,6 +94,7 @@ This document is the single reference for universal search. If the code and this
 
 - **Native SQL**, through `NamedParameterJdbcTemplate`. Only fixed SQL fragments are concatenated (which parts and which scope conditions); every user value, `q` included, is a bound parameter.
 - Because it is native SQL, the soft-delete filter on `Task` does not apply: the task part writes `deleted_at is null` itself.
+- The task part left-joins the parent task for `parentKey`. That join needs no `deleted_at` check: deleting a parent deletes its live subtasks with it, so a live subtask always has a live parent.
 - Every part names all its columns, because a `UNION` takes its column names from its first part and which part comes first depends on `types` and the scope.
 - **Visibility must stay in line with the rest of the API.** If `ProjectAccess`, the team rules or the roles matrix change (for example a project role without `VIEW_WORK`), change the query too.
 
@@ -122,4 +126,4 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: endpoi
 | `UniversalSearchController`, `UniversalSearchFilters`, `UniversalSearchResult` | Implemented |
 | `UniversalSearchService`, `UniversalSearchRepository` | Implemented |
 | Unit tests: `UniversalSearchControllerTest`, `UniversalSearchFiltersTest`, `UniversalSearchServiceTest` | Implemented, all passing |
-| `UniversalSearchIntegrationTest` (9) against PostgreSQL: visibility for member, admin and outsider, deleted tasks, keys, scopes, types, literal wildcards, paging | Implemented, all passing |
+| `UniversalSearchIntegrationTest` (10) against PostgreSQL: visibility for member, admin and outsider, deleted tasks, keys, scopes, types, literal wildcards, paging, subtasks with `parentKey` | Implemented, all passing (`parentKey` added 6 Nov 2026) |

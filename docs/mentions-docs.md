@@ -2,7 +2,7 @@
 
 **Status:** backend implemented and tested, including against PostgreSQL (PMP-136, branch `features/comments_history`, 5 Nov 2026). Frontend (PMP-138) and acceptance testing (PMP-140) open. See [§10 Implementation status](#10-implementation-status).
 **Applies to:**
-- the rich-text format of task comments and task descriptions (and later project chat, PMP-137);
+- the rich-text format of task comments, task and subtask descriptions, and project chat messages (PMP-137);
 - backend `GET /api/v1/projects/{projectId}/mentionables`;
 - the mention rules of `…/comments` and of task create and edit.
 
@@ -16,7 +16,7 @@ This document is the single reference for @mentions and for the rich-text format
 
 The story: *"As a team member, I want to comment, mention colleagues, and chat within the project, so that I can get answers without leaving the platform."* This file covers part A, mentions. Chat (part B, PMP-137) has its own contract and reuses the rich-text format of §2.
 
-- **Where:** typing `@` in a **comment** or a **task description** opens a suggestion list. Comments on subtasks (PMP-132) work the same way. Subtasks have no description, so there are no description mentions on them.
+- **Where:** typing `@` in a **comment** or a **task description** opens a suggestion list. Subtasks (PMP-132) work the same way: their comments and their description take mentions, through the subtask endpoints ([tasks-docs.md §11.2](./tasks-docs.md#112-subtask-endpoints)).
 - **Who can be mentioned:** members of this project only, Viewers included. People outside the project cannot.
 - **`@team`:** mentions the members of a team **who are in this project**.
 - **Storage:** a mention is a TipTap `mention` node holding the **id** of the person or team, never their name. The current name is shown, so renaming a user or a team does not break old mentions.
@@ -27,7 +27,7 @@ The story: *"As a team member, I want to comment, mention colleagues, and chat w
 
 ## 2. Rich-text format
 
-Comments and task descriptions are [TipTap](https://tiptap.dev) documents, sent and returned as a **string** holding the editor's JSON (`JSON.stringify(editor.getJSON())`).
+Comments, task descriptions and subtask descriptions are [TipTap](https://tiptap.dev) documents, sent and returned as a **string** holding the editor's JSON (`JSON.stringify(editor.getJSON())`).
 
 ```json
 {
@@ -210,15 +210,17 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 
 ## 10. Implementation status
 
-As of 4 Nov 2026, on branch `features/comments_history`:
+As of 6 Nov 2026 (merged to `main`; the subtask and chat rows come from the refactoring branch `fix/refactoring`):
 
 | Part | Status |
 | --- | --- |
 | This contract | Written, agreed with the backend owner |
-| `RichTextParser` (format, normalizing, plain text), `INVALID_RICH_TEXT` | Done; `RichTextParserTest` (23), `ExceptionHandlerTest`. Not yet called by comments or descriptions |
+| `RichTextParser` (format, normalizing, plain text), `INVALID_RICH_TEXT` | Done; `RichTextParserTest` (23), `ExceptionHandlerTest`. Used by comments, task and subtask descriptions, and chat messages |
 | `MentionService` (rules of §4) and `/mentionables`, `INVALID_MENTION` | Done; `MentionServiceTest` (16), `MentionControllerTest`, `ExceptionHandlerTest`, and `MentionIntegrationTest` (7) on PostgreSQL for the suggestion queries and team expansion |
 | Mentions in task descriptions (TipTap JSON required, new mentions publish `Mentioned`) | Done; `TaskApiServiceTest`, and `MentionIntegrationTest` end to end on PostgreSQL: one notification per person, editing notifies only new people, outsiders and plain text refused |
-| Mentions in comments | With the comments (step 6) |
+| Mentions in comments | Done; `CommentServiceTest`, `CommentIntegrationTest` on PostgreSQL |
+| Mentions in subtask descriptions (PMP-132) | Done (6 Nov 2026); shared with tasks through `task/services/TaskContent`. `SubtaskServiceTest`, `TaskHistoryIntegrationTest` on PostgreSQL |
+| Mentions in project chat (PMP-137) | Done (6 Nov 2026); `ChatService` publishes `ProjectChatMentioned`, which notifies about the project. `ChatServiceTest`, `NotificationListenerTest`, `MentionIntegrationTest` end to end on PostgreSQL |
 | Notifications listener for `MENTIONED` | Done (PMP-113) |
 | Frontend (PMP-138) and acceptance test (PMP-140) | Not started |
 

@@ -16,6 +16,8 @@ import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import team.sprintory_backend.chat.dto.ChatMessageRequest;
 import team.sprintory_backend.chat.events.ChatChanged;
+import team.sprintory_backend.exceptionHandler.ErrorCode;
+import team.sprintory_backend.exceptionHandler.ErrorResponse;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.models.ProjectMember;
 import team.sprintory_backend.project.models.ProjectRole;
@@ -109,6 +111,64 @@ class ChatStompIntegrationTest {
             if (receiver != null) receiver.disconnect();
             client.stop();
         }
+    }
+
+    @Test void aRefusedSendIsReportedToTheSenderOnly() throws Exception {
+        String marker = UUID.randomUUID().toString().substring(0, 8);
+        User owner = users.save(User.builder().firstName("Owner").lastName("Test")
+                .email("chat-err-owner-" + marker + "@example.com").enabled(true).build());
+        User friend = users.save(User.builder().firstName("Friend").lastName("Test")
+                .email("chat-err-friend-" + marker + "@example.com").enabled(true).build());
+        Workspace workspace = workspaces.save(Workspace.builder().name("Chat errors").slug("chat-err-" + marker).build());
+        for (User u : new User[]{owner, friend}) {
+            workspaceMembers.save(WorkspaceMember.builder().workspace(workspace).user(u)
+                    .role(Role.WORKSPACE_MEMBER).build());
+        }
+        Long projectId = projectService.create(owner, workspace.getId(),
+                new CreateProjectRequest("Project", "CHE", ProjectTemplate.KANBAN, null)).id();
+        projectMembers.save(ProjectMember.builder().project(projects.getReferenceById(projectId))
+                .user(friend).roles(Set.of(ProjectRole.MEMBER)).build());
+
+        WebSocketStompClient client = new WebSocketStompClient(new StandardWebSocketClient());
+        client.setMessageConverter(new JacksonJsonMessageConverter());
+        client.start();
+        StompSession sender = null;
+        StompSession receiver = null;
+        try {
+            sender = connect(client, owner);
+            receiver = connect(client, friend);
+            LinkedBlockingQueue<ErrorResponse> senderErrors = errorsOf(sender);
+            LinkedBlockingQueue<ErrorResponse> receiverErrors = errorsOf(receiver);
+            Thread.sleep(350); // Spring's simple STOMP broker has no subscription receipts.
+
+            var unknownNode = mapper.readTree("""
+                {"type":"doc","content":[{"type":"script","content":[]}]}
+                """);
+            sender.send("/app/projects/" + projectId + "/chat.send", new ChatMessageRequest(unknownNode));
+
+            ErrorResponse error = senderErrors.poll(5, TimeUnit.SECONDS);
+            assertNotNull(error, "The sender got no error frame");
+            assertEquals(ErrorCode.INVALID_RICH_TEXT, error.getCode());
+            assertEquals(400, error.getStatus());
+            assertEquals("/app/projects/" + projectId + "/chat.send", error.getPath());
+            assertNull(receiverErrors.poll(1200, TimeUnit.MILLISECONDS), "Another client saw the sender's error");
+            assertTrue(sender.isConnected(), "A refused message must not close the connection");
+        } finally {
+            if (sender != null) sender.disconnect();
+            if (receiver != null) receiver.disconnect();
+            client.stop();
+        }
+    }
+
+    private static LinkedBlockingQueue<ErrorResponse> errorsOf(StompSession session) {
+        LinkedBlockingQueue<ErrorResponse> errors = new LinkedBlockingQueue<>();
+        session.subscribe("/user/queue/errors", new StompFrameHandler() {
+            @Override public Type getPayloadType(StompHeaders headers) { return ErrorResponse.class; }
+            @Override public void handleFrame(StompHeaders headers, Object payload) {
+                errors.add((ErrorResponse) payload);
+            }
+        });
+        return errors;
     }
 
     private StompSession connect(WebSocketStompClient client, User user) throws Exception {

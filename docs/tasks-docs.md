@@ -238,11 +238,11 @@ One drag and drop in the Scrum product backlog (R13): puts the task right after 
 
 ### 3.8 Read a task's history
 
-`GET /api/v1/projects/{projectId}/tasks/{taskId}/history?page=&size=`
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/history?order=&page=&size=`
 
 - **Who:** project members with `VIEW_WORK`, including Viewers. Workspace admins not in the project cannot read tasks or task history.
-- **Response `200`:** `PageResponse<TaskHistoryEntryResponse>`, oldest first: creation, every field change (old → new), status moves, deleted comments and subtasks.
-- **Errors:** `401`, `403`, `404` as in §3.3.
+- **Response `200`:** `PageResponse<TaskHistoryEntryResponse>`: creation, every field change (old → new), status moves, deleted comments and subtasks. Newest first by default; `?order=oldest` gives them as they happened (since 7 Nov 2026).
+- **Errors:** `400` for an unknown `order`; `401`, `403`, `404` as in §3.3.
 - **The full contract is [task-history-docs.md](./task-history-docs.md).** Until 4 Nov 2026 this endpoint returned a plain array of status moves; see its §2.
 
 ### How the order is stored
@@ -359,6 +359,7 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: contro
 | PMP-125 status history and soft WIP responses | Implemented; clean verify passed 381 tests and V7 applied on PostgreSQL Testcontainers (1 Nov 2026); final regression re-run and frontend acceptance pending |
 | PMP-133/PMP-136: full history (V11) and TipTap descriptions with mentions | Done (5 Nov 2026); see [task-history-docs.md §9](./task-history-docs.md#9-implementation-status) and [mentions-docs.md §10](./mentions-docs.md#10-implementation-status) |
 | PMP-133: comments (table in V11) | Done (5 Nov 2026). See [comments-docs.md §9](./comments-docs.md#9-implementation-status) |
+| Subtask follow-ups (6 Nov 2026, `fix/refactoring`): description and labels, `TaskCreated`/`TaskAssigned` for subtasks, the open-subtasks confirmation on column deletes (§11.3) | Done; `SubtaskServiceTest` (17), `ProjectBoardServiceTest`, `TaskHistoryIntegrationTest`, `TaskRestorationSubtasksIntegrationTest` on PostgreSQL |
 
 ---
 
@@ -380,11 +381,11 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: contro
 
 ---
 
-## 10. Task restoration (PMP-131) and one-level subtasks (PMP-132)
+## 11. Task restoration (PMP-131) and one-level subtasks (PMP-132)
 
-**Release:** migration `V9__subtasks.sql` on top of V8 audit infrastructure. No earlier migration is changed. For development with Flyway disabled, use a clean Flyway-managed test database; Hibernate auto-update is not a migration strategy.
+**Release:** migration `V10__subtasks.sql` on top of V9 notifications. No earlier migration is changed. For development with Flyway disabled, use a clean Flyway-managed test database; Hibernate auto-update is not a migration strategy.
 
-### 10.1 Restore a task
+### 11.1 Restore a task
 
 `POST /api/v1/projects/{projectId}/tasks/{taskId}/restore` (no body)
 
@@ -395,17 +396,18 @@ As of 26 Oct 2026, on branch `features/project-template-defaults` (Damir: contro
 - **Parent restoration:** also restores only children that were live when the parent was deleted. A child deleted separately *before* its parent's deletion remains deleted; it can be restored independently after the parent is live again.
 - **Subtasks:** the same restore endpoint works on individually deleted subtasks; restoring a subtask while its parent is deleted returns `404`.
 
-### 10.2 Subtask endpoints
+### 11.2 Subtask endpoints
 
-A subtask belongs to exactly one top-level task of the *same project*. It has its own generated key, title, assignee, board-column status and optional time estimate **in minutes**. It has **no story points**, and cannot have children. Only existing project members may be assigned.
+A subtask belongs to exactly one top-level task of the *same project*. It has its own generated key, title, assignee, board-column status, optional time estimate **in minutes**, labels and description. It has **no story points**, and cannot have children. Only existing project members may be assigned.
 
 **Create:** `POST /api/v1/projects/{projectId}/tasks/{parentId}/subtasks` (`201`)
 
 ```json
-{ "title": "Write integration tests", "assigneeId": 17, "statusId": 11, "estimateMinutes": 90 }
+{ "title": "Write integration tests", "assigneeId": 17, "statusId": 11, "estimateMinutes": 90,
+  "labels": ["backend"], "description": "{\"type\":\"doc\",\"content\":[...]}" }
 ```
 
-Only `title` is required. `statusId` omitted means the project's first active board column. The subtask's key comes from the *same* per-project sequence as top-level tasks. Reject blank or overlong titles, non-positive ids/minutes, non-member assignees and a parent that is itself a subtask. Unknown or cross-project parents return `404`; attempting a second subtask level returns `400 BAD_REQUEST`.
+Only `title` is required. `labels` and `description` follow the task rules (§3.1): at most 20 labels of at most 50 characters, trimmed, with case-insensitive duplicates collapsed; the description is TipTap JSON, and everyone newly @mentioned in it gets `MENTIONED`. A bad description gives `400 INVALID_RICH_TEXT`, and a mention of someone outside the project `400 INVALID_MENTION`. `statusId` omitted means the project's first active board column. The subtask's key comes from the *same* per-project sequence as top-level tasks. Reject blank or overlong titles, non-positive ids/minutes, non-member assignees and a parent that is itself a subtask. Unknown or cross-project parents return `404`; attempting a second subtask level returns `400 BAD_REQUEST`.
 
 **List:** `GET /api/v1/projects/{projectId}/tasks/{parentId}/subtasks` (`200 TaskResponse[]`), sorted by creation id oldest first. This is the **only dedicated subtask list**; the main `GET /projects/{projectId}/tasks` excludes children so they never become separate board cards, backlog items, or WIP counts. A parent response reports `subtaskDone` / `subtaskTotal` (for example `3 / 5`). The count is based on board-column `DONE` **category**, not its editable name.
 
@@ -415,13 +417,15 @@ Only `title` is required. `statusId` omitted means the project's first active bo
 { "title": "Write backend tests", "statusId": 14, "estimateMinutes": 60 }
 ```
 
-Allowed fields: `title`, `statusId`, `assigneeId`, `estimateMinutes`, `clearAssignee`, `clearEstimateMinutes` (booleans, optional). Status changes create the existing `task_status_history` event. `estimateMinutes` must be a positive integer; clearing sets it to `null`. The parent id and subtask id must match and belong to the project, otherwise `404`. The regular task PATCH endpoint is deliberately **not** an alternative for subtasks because its `estimate` means story points.
+Allowed fields: `title`, `statusId`, `assigneeId`, `estimateMinutes`, `labels`, `description`, and the optional booleans `clearAssignee`, `clearEstimateMinutes`, `clearDescription`. As for tasks, `labels` replaces all labels (`[]` removes them), a field cannot be set and cleared in one request, and only **newly added** mentions in the description are checked and notified. Status and field changes are written to the subtask's own history ([task-history-docs.md](./task-history-docs.md)). `estimateMinutes` must be a positive integer; clearing sets it to `null`. The parent id and subtask id must match and belong to the project, otherwise `404`. The regular task PATCH endpoint is deliberately **not** an alternative for subtasks because its `estimate` means story points.
 
-**Delete:** use the existing `DELETE /api/v1/projects/{projectId}/tasks/{subtaskId}` (`204`). The child is independently soft-deleted; `subtaskTotal` decreases accordingly. Restoration uses §10.1.
+**Notifications:** creating a subtask and assigning it notify as for tasks (`TaskCreated`, then `TaskAssigned` when an assignee is set). An edit notifies only when the assignee changes to another person.
+
+**Delete:** use the existing `DELETE /api/v1/projects/{projectId}/tasks/{subtaskId}` (`204`). The child is independently soft-deleted; `subtaskTotal` decreases accordingly. Restoration uses §11.1.
 
 **Permissions:** `VIEW_WORK` for reading; `EDIT_TASKS` for create/edit/delete/restore. Viewer may read but never mutate. Non-project-members get `404` even if they belong to the workspace. A workspace admin outside the project still cannot read or edit project tasks.
 
-### 10.3 Parent completion confirmation
+### 11.3 Parent completion confirmation
 
 When a top-level task has one or more live subtasks in columns other than category `DONE`, a transition **into DONE** is conditional. The server rejects an unconfirmed transition with HTTP `409`:
 
@@ -430,15 +434,15 @@ When a top-level task has one or more live subtasks in columns other than catego
   "message": "2 subtasks are not Done. Retry with confirmOpenSubtasks=true to continue." }
 ```
 
-The frontend shows a warning, allows explicit confirmation, and retries the *same* request with `"confirmOpenSubtasks": true`. This applies to both `PATCH /{taskId}` (when changing `statusId`) and `PUT /{taskId}/position`. No need to reconfirm for reordering within a DONE column. There is **no hard block** once confirmation is provided. A status change for a child never needs this confirmation because nesting beyond one level is forbidden.
+The frontend shows a warning, allows explicit confirmation, and retries the *same* request with `"confirmOpenSubtasks": true`. This applies to `PATCH /{taskId}` (when changing `statusId`), `PUT /{taskId}/position`, and deleting a board column whose tasks move into a `DONE` column ([board-docs.md §3.5](./board-docs.md#35-soft-delete-a-column), with `confirmOpenSubtasks` in the delete body). No need to reconfirm for reordering within a DONE column. There is **no hard block** once confirmation is provided. A status change for a child never needs this confirmation because nesting beyond one level is forbidden.
 
-### 10.4 Other subsystems, current boundaries
+### 11.4 Other subsystems, current boundaries
 
 - **Kanban WIP:** only top-level tasks count; subtasks never increase column task counters or WIP warnings. Parent tasks remain in their own status columns. Column deletion still rehomes *both* active parents and active children; individual status-history entries are recorded.
 - **Sprint assignment:** `sprintId` remains `null` because the sprint domain/API is not yet implemented. When the R14 sprint feature ships, it must move all children with their parent and expose the inherited `sprintId`. This requirement cannot be fully acceptance-tested yet; do not simulate a second sprint model here.
-- **Task history:** existing `GET /{taskId}/history` currently returns **status-change history only**, including child column changes. Ahmed owns the expanded comment/field/subtask activity feed (PMP-133), so field-change and subtask added/deleted events must be coordinated there, not invented as an incompatible duplicate log. The workspace audit log still records explicit task delete/restore actions.
-- **No frontend modifications** in PMP-131/PMP-132. Mobeen's PMP-134 must integrate these endpoints after backend review and merge.
+- **Task history:** `GET /{taskId}/history` is the full feed (PMP-133, [task-history-docs.md](./task-history-docs.md)). A subtask has its own history; its parent shows `SUBTASK_ADDED` / `SUBTASK_REMOVED`, and a restore writes `RESTORED`. A parent's cascade delete or restore writes nothing for its children. The workspace audit log still records explicit task delete/restore actions.
+- **No frontend modifications** in PMP-131/PMP-132. The comments and History tab (PMP-134, Amir) build on these endpoints.
 
-### 10.5 Test expectations
+### 11.5 Test expectations
 
-The full suite is `bash ./mvnw clean verify` (Docker required for PostgreSQL Testcontainers). New integration tests cover restoration including a removed column, uniqueness of keys, cascade versus manual deletion, parent progress, distinct estimate units, board/WIP exclusion, DONE confirmation, column rehoming history and role-based access checks. Validate against a Flyway-created schema at V9. **Do not mark these tests as passing until they run in the project's Java/Maven environment.**
+The full suite is `bash ./mvnw clean verify` (Docker required for PostgreSQL Testcontainers). New integration tests cover restoration including a removed column, uniqueness of keys, cascade versus manual deletion, parent progress, distinct estimate units, board/WIP exclusion, DONE confirmation, column rehoming history and role-based access checks. Validate against a Flyway-created schema at V10. **Do not mark these tests as passing until they run in the project's Java/Maven environment.**

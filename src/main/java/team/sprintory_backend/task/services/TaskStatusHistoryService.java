@@ -2,6 +2,7 @@ package team.sprintory_backend.task.services;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -13,6 +14,7 @@ import team.sprintory_backend.notification.events.TaskStatusChanged;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.services.ProjectAccess;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.dto.TaskHistoryEntryResponse;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.models.TaskHistoryEntry;
@@ -119,13 +121,18 @@ public class TaskStatusHistoryService {
         save(task, TaskHistoryType.RESTORED, null, null, null, null, actor);
     }
 
-    /** One page of the task's feed, oldest first. Needs VIEW_WORK; a task the caller cannot see is 404. */
+    /**
+     * One page of the task's feed in the given order (newest first by default). Needs VIEW_WORK;
+     * a task the caller cannot see is 404. Any sort on {@code pageable} is replaced by the order's.
+     */
     @Transactional(readOnly = true)
-    public PageResponse<TaskHistoryEntryResponse> list(User user, Long projectId, Long taskId, Pageable pageable) {
+    public PageResponse<TaskHistoryEntryResponse> list(User user, Long projectId, Long taskId,
+                                                       TaskHistoryOrder order, Pageable pageable) {
         projectAccess.require(projectId, user, ProjectPermission.VIEW_WORK);
         taskRepository.findByIdAndProjectId(taskId, projectId)
                 .orElseThrow(() -> new ResourceNotFoundException("Task not found."));
-        return PageResponse.from(historyRepository.findByTaskIdOrderByOccurredAtAscIdAsc(taskId, pageable)
+        Pageable sorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), order.sort());
+        return PageResponse.from(historyRepository.findByTaskId(taskId, sorted)
                 .map(TaskHistoryEntryResponse::from));
     }
 

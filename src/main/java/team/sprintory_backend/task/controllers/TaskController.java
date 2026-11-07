@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import team.sprintory_backend.common.Pageables;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.api.TaskListOrder;
 import team.sprintory_backend.task.api.TaskSearchFilters;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
@@ -81,12 +82,14 @@ public class TaskController {
         return taskApiService.moveInBacklog(principal.getUser(), projectId, taskId, request);
     }
 
-    /** The task's activity feed, oldest first, paged (docs/task-history-docs.md §2). */
+    /** The task's activity feed, paged; {@code ?order=newest} (default) or {@code oldest} (docs/task-history-docs.md §2). */
     @GetMapping("/{taskId}/history")
     public PageResponse<TaskHistoryEntryResponse> history(@AuthenticationPrincipal AppUserDetails principal,
                                                           @PathVariable Long projectId, @PathVariable Long taskId,
+                                                          @RequestParam(required = false) String order,
                                                           Pageable pageable) {
-        return taskApiService.history(principal.getUser(), projectId, taskId, Pageables.withoutSort(pageable));
+        return taskApiService.history(principal.getUser(), projectId, taskId, TaskHistoryOrder.fromQuery(order),
+                Pageables.withoutSort(pageable));
     }
 
     @PostMapping("/{taskId}/restore")

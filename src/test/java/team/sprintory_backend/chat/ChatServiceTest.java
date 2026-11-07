@@ -6,7 +6,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import team.sprintory_backend.chat.events.ChatChanged;
-import team.sprintory_backend.chat.events.ProjectChatMentioned;
+import team.sprintory_backend.notification.events.ProjectChatMentioned;
 import team.sprintory_backend.chat.models.ProjectChatMessage;
 import team.sprintory_backend.chat.repositories.ProjectChatMessageRepository;
 import team.sprintory_backend.chat.services.ChatService;
@@ -139,6 +139,20 @@ class ChatServiceTest {
         assertNull(deleted.content());
         assertNull(msg.getContentJson());
         verify(events).publishEvent(any(ChatChanged.class));
+    }
+
+    @Test void aRepeatedDeleteIsANoOpOnlyForSomeoneAllowedToDelete() {
+        User other = User.builder().id(10L).firstName("Cy").lastName("Three").build();
+        var otherMember = ProjectMember.builder().user(other).roles(Set.of(ProjectRole.MEMBER)).build();
+        when(access.requireActive(42L, other, ProjectPermission.COMMENT))
+                .thenReturn(new ProjectAccessResult(project, null, otherMember, Set.of(ProjectPermission.COMMENT)));
+        var msg = existing(null);
+        msg.setDeletedAt(Instant.now());
+
+        assertThrows(AccessDeniedException.class, () -> service.delete(other, 42L, 11L));
+        assertTrue(service.delete(author, 42L, 11L).deleted());
+        assertTrue(service.delete(manager, 42L, 11L).deleted());
+        verifyNoInteractions(events);
     }
 
     @Test void deletedMessageEditIsNotFound() {

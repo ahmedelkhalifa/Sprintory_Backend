@@ -143,6 +143,18 @@ class NotificationEmailsTest {
     }
 
     @Test
+    void aChatMentionEmailIsAboutTheProjectAndLinksToIt() {
+        emails.queue(17L, NotificationType.MENTIONED, NotificationSubject.project(project, damir),
+                "Damir Gabaidullin mentioned you in the \"Mobile App\" chat", "@Ada Lovelace standup?");
+
+        RenderedEmail email = queued();
+        assertEquals("[Sprintory] You were mentioned in the Mobile App chat", email.subject());
+        assertTrue(email.plainText().contains("mentioned you in the \"Mobile App\" chat"), email.plainText());
+        assertTrue(email.plainText().contains("@Ada Lovelace standup?"));
+        assertTrue(email.plainText().contains("http://front/projects/15"), email.plainText());
+    }
+
+    @Test
     void everyTypeHasASubject() {
         for (NotificationType type : NotificationType.values()) {
             NotificationSubject subject = new NotificationSubject(workspace, project, task, damir);

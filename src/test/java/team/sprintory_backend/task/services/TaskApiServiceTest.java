@@ -103,7 +103,8 @@ class TaskApiServiceTest {
         service = new TaskApiService(access, taskRepository, projectRepository, projectMemberRepository,
                 columnRepository, userRepository,
                 new ProjectBoardStrategies(List.of(new ScrumBoardStrategy(), new KanbanBoardStrategy())),
-                history, auditLog, events, new RichTextParser(JsonMapper.builder().build()), mentions);
+                history, auditLog, events,
+                new TaskContent(new RichTextParser(JsonMapper.builder().build()), mentions, events));
         user = User.builder().id(42L).firstName("Ada").lastName("Lovelace")
                 .email("ada@example.com").build();
 

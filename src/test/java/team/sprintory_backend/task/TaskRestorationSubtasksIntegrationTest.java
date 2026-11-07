@@ -23,6 +23,7 @@ import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectBoardService;
 import team.sprintory_backend.project.services.ProjectService;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.api.TaskListOrder;
 import team.sprintory_backend.task.api.TaskSearchFilters;
 import team.sprintory_backend.task.dto.CreateSubtaskRequest;
@@ -45,7 +46,7 @@ import team.sprintory_backend.workspace.repositories.WorkspaceRepository;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** PMP-131/132: real Postgres, V9 migration, permissions, cascade provenance and board invariants. */
+/** PMP-131/132: real Postgres, V10 migration, permissions, cascade provenance and board invariants. */
 @Transactional
 class TaskRestorationSubtasksIntegrationTest extends AbstractIntegrationTest {
     private static final TaskSearchFilters ALL = new TaskSearchFilters(null,null,null,null,null,null);
@@ -204,9 +205,29 @@ class TaskRestorationSubtasksIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, statusMoves(child.id()));
     }
 
+    @Test
+    void deletingAColumnIntoDoneNeedsConfirmationForParentsWithOpenSubtasks() {
+        TaskResponse p = parent("Parent");
+        var ids = boards.get(owner, projectId).columns();
+        Long review = boards.add(owner, projectId, new CreateBoardColumnRequest("Review",
+                BoardColumnCategory.IN_PROGRESS, ids.get(2).id())).columns().stream()
+                .filter(c -> c.name().equals("Review")).findFirst().orElseThrow().id();
+        Long done = ids.stream().filter(c -> c.name().equals("Done")).findFirst().orElseThrow().id();
+        tasks.moveOnBoard(owner, projectId, p.id(), new MoveTaskRequest(review, null));
+        subtasks.create(owner, projectId, p.id(), new CreateSubtaskRequest("Open child", null, null, null));
+
+        assertThrows(OpenSubtasksConfirmationRequiredException.class,
+                () -> boards.delete(owner, projectId, review, new DeleteBoardColumnRequest(done)));
+        assertEquals("Review", tasks.get(owner, projectId, p.id()).statusName());
+
+        boards.delete(owner, projectId, review, new DeleteBoardColumnRequest(done, true));
+        em.flush(); em.clear();
+        assertEquals("Done", tasks.get(owner, projectId, p.id()).statusName());
+    }
+
     /** How many of the task's history entries are status moves. */
     private long statusMoves(Long taskId) {
-        return tasks.history(owner, projectId, taskId, PageRequest.of(0, 100)).content().stream()
+        return tasks.history(owner, projectId, taskId, TaskHistoryOrder.NEWEST, PageRequest.of(0, 100)).content().stream()
                 .filter(entry -> entry.field() == TaskHistoryField.STATUS).count();
     }
 

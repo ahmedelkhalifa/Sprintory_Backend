@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import team.sprintory_backend.notification.events.Mentioned;
+import team.sprintory_backend.notification.events.ProjectChatMentioned;
 import team.sprintory_backend.notification.events.PasswordReset;
 import team.sprintory_backend.notification.events.ProjectMemberAdded;
 import team.sprintory_backend.notification.events.ProjectRolesChanged;
@@ -93,6 +94,14 @@ public class NotificationListener {
     public void on(Mentioned event) {
         deliver(NotificationType.MENTIONED, NotificationSubject.task(event.task(), event.actor()),
                 event.userIds(), NotificationMessages.mentioned(event.actor(), event.task()),
+                NotificationMessages.excerpt(event.plainText()));
+    }
+
+    /** A chat has no task: the notification is about the project and opens it. */
+    @EventListener
+    public void on(ProjectChatMentioned event) {
+        deliver(NotificationType.MENTIONED, NotificationSubject.project(event.project(), event.actor()),
+                event.userIds(), NotificationMessages.mentionedInChat(event.actor(), event.project()),
                 NotificationMessages.excerpt(event.plainText()));
     }
 

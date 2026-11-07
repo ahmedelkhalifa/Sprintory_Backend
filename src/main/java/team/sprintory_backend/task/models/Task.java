@@ -116,6 +116,7 @@ public class Task extends BaseEntity {
     /** Null for a top-level task; a subtask cannot become a parent. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_task_id")
+    @OnDelete(action = OnDeleteAction.CASCADE)
     private Task parent;
 
     /** Time estimate for subtasks only, in minutes. Parent tasks use story points. */

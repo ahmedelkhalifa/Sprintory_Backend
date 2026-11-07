@@ -12,11 +12,7 @@ import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
-import team.sprintory_backend.common.richtext.InvalidRichTextException;
 import team.sprintory_backend.common.richtext.RichTextDocument;
-import team.sprintory_backend.common.richtext.RichTextParser;
-import team.sprintory_backend.mention.services.MentionService;
-import team.sprintory_backend.notification.events.Mentioned;
 import team.sprintory_backend.notification.events.TaskAssigned;
 import team.sprintory_backend.notification.events.TaskCreated;
 import team.sprintory_backend.project.models.Project;
@@ -27,6 +23,7 @@ import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectAccess;
 import team.sprintory_backend.project.strategy.ProjectBoardStrategies;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.api.TaskListOrder;
 import team.sprintory_backend.task.api.TaskSearchFilters;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
@@ -48,10 +45,7 @@ import team.sprintory_backend.user.repositories.UserRepository;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Set;
@@ -79,8 +73,7 @@ public class TaskApiService {
     private final TaskStatusHistoryService statusHistory;
     private final AuditLogService auditLog;
     private final ApplicationEventPublisher events;
-    private final RichTextParser richText;
-    private final MentionService mentions;
+    private final TaskContent content;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -92,9 +85,8 @@ public class TaskApiService {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
         User assignee = (request.assigneeId() == null) ? null : requireAssignee(projectId, request.assigneeId());
         // Check the description and its mentions before anything is written.
-        RichTextDocument description = parseDescription(request.description());
-        Set<Long> mentioned = (description == null) ? Set.of()
-                : mentions.newlyMentionedUserIds(project, description, null);
+        RichTextDocument description = content.parseDescription(request.description());
+        Set<Long> mentioned = content.newMentions(project, description, null);
         // Lock before selecting a column: a concurrent board edit could soft-delete or reorder
         // the old first column. Keep the selection and insert in the same locked transaction.
         projectRepository.incrementTaskNumber(projectId);
@@ -114,7 +106,7 @@ public class TaskApiService {
                 .assignee(assignee)
                 .estimate(request.estimate())
                 .description(description == null ? null : description.json())
-                .labels(normalizeLabels(request.labels()))
+                .labels(TaskContent.normalizeLabels(request.labels()))
                 .boardPosition(boardPosition)
                 .backlogRank(backlogRank)
                 .build());
@@ -123,7 +115,7 @@ public class TaskApiService {
         if (assignee != null) {
             events.publishEvent(new TaskAssigned(task, user, assignee));
         }
-        publishMentions(task, user, mentioned, description);
+        content.publishMentions(task, user, mentioned, description);
         return TaskResponse.from(task);
     }
 
@@ -166,9 +158,9 @@ public class TaskApiService {
         }
         TaskSnapshot before = TaskSnapshot.of(task);
         // Check a new description and its newly added mentions before anything changes.
-        RichTextDocument description = request.clearDescription() ? null : parseDescription(request.description());
-        Set<Long> mentioned = (description == null) ? Set.of()
-                : mentions.newlyMentionedUserIds(project, description, storedDescription(task));
+        RichTextDocument description = request.clearDescription() ? null
+                : content.parseDescription(request.description());
+        Set<Long> mentioned = content.newMentions(project, description, task);
         boolean changedColumn = false;
 
         if (request.title() != null) {
@@ -216,7 +208,7 @@ public class TaskApiService {
         }
         if (request.labels() != null) {
             task.getLabels().clear();
-            task.getLabels().addAll(normalizeLabels(request.labels()));
+            task.getLabels().addAll(TaskContent.normalizeLabels(request.labels()));
         }
         // One history entry per field that really changed; the status move was recorded above.
         statusHistory.recordChanges(task, before, TaskSnapshot.of(task), user);
@@ -225,7 +217,7 @@ public class TaskApiService {
         if (newAssignee != null) {
             events.publishEvent(new TaskAssigned(task, user, newAssignee));
         }
-        publishMentions(task, user, mentioned, description);
+        content.publishMentions(task, user, mentioned, description);
         return changedColumn ? saved.withWipWarning(wipWarning(projectId, task.getStatus())) : saved;
     }
 
@@ -376,8 +368,9 @@ public class TaskApiService {
 
     /** One page of the task's activity feed, oldest first (docs/task-history-docs.md §2). */
     @Transactional(readOnly = true)
-    public PageResponse<TaskHistoryEntryResponse> history(User user, Long projectId, Long taskId, Pageable pageable) {
-        return statusHistory.list(user, projectId, taskId, pageable);
+    public PageResponse<TaskHistoryEntryResponse> history(User user, Long projectId, Long taskId,
+                                                          TaskHistoryOrder order, Pageable pageable) {
+        return statusHistory.list(user, projectId, taskId, order, pageable);
     }
 
     private WipWarning wipWarning(Long projectId, ProjectBoardColumn column) {
@@ -440,50 +433,4 @@ public class TaskApiService {
                 .orElseThrow(() -> new IllegalStateException("Project " + projectId + " has no board columns."));
     }
 
-    /** Rich text is kept as sent; a blank description means none. */
-    private RichTextDocument parseDescription(String description) {
-        if (description == null || description.isBlank()) {
-            return null;
-        }
-        RichTextDocument document = richText.parse(description);
-        return document.isEmpty() ? null : document;
-    }
-
-    /**
-     * The stored description, to tell new mentions from old ones. A description saved before
-     * 4 Nov 2026 may be plain text; it holds no mentions, so every mention in the new one is new.
-     */
-    private RichTextDocument storedDescription(Task task) {
-        if (task.getDescription() == null) {
-            return null;
-        }
-        try {
-            return richText.parse(task.getDescription());
-        } catch (InvalidRichTextException e) {
-            return null;
-        }
-    }
-
-    /** Tells the newly mentioned people (PMP-136); the listener drops the author and non-members. */
-    private void publishMentions(Task task, User user, Set<Long> mentioned, RichTextDocument description) {
-        if (!mentioned.isEmpty()) {
-            events.publishEvent(new Mentioned(task, user, mentioned, description.plainText()));
-        }
-    }
-
-    /** Trimmed; duplicates that differ only in case collapse into the first spelling. */
-    private static Set<String> normalizeLabels(List<String> labels) {
-        Set<String> result = new LinkedHashSet<>();
-        if (labels == null) {
-            return result;
-        }
-        Set<String> seen = new HashSet<>();
-        for (String label : labels) {
-            String trimmed = label.trim();
-            if (seen.add(trimmed.toLowerCase(Locale.ROOT))) {
-                result.add(trimmed);
-            }
-        }
-        return result;
-    }
 }

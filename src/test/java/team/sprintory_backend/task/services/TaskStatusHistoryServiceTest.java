@@ -18,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
@@ -28,6 +29,7 @@ import team.sprintory_backend.project.models.ProjectBoardColumn;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.services.ProjectAccess;
 import team.sprintory_backend.project.services.ProjectAccessResult;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.dto.TaskHistoryEntryResponse;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.models.TaskHistoryEntry;
@@ -229,22 +231,28 @@ class TaskStatusHistoryServiceTest {
     // --- reading ---
 
     @Test
-    void listReturnsOnePageOldestFirst() {
+    void listReturnsOnePageInTheRequestedOrder() {
         when(access.require(PROJECT_ID, user, ProjectPermission.VIEW_WORK))
                 .thenReturn(new ProjectAccessResult(null, null, null, Set.of(ProjectPermission.VIEW_WORK)));
         when(taskRepository.findByIdAndProjectId(5L, PROJECT_ID)).thenReturn(Optional.of(task));
         TaskHistoryEntry entry = TaskHistoryEntry.builder().id(9L).task(task).type(TaskHistoryType.CREATED)
                 .actorId(42L).actorName("Ada Lovelace").build();
-        PageRequest page = PageRequest.of(0, 20);
-        when(historyRepository.findByTaskIdOrderByOccurredAtAscIdAsc(5L, page))
-                .thenReturn(new PageImpl<>(List.of(entry), page, 1));
+        PageRequest newest = PageRequest.of(1, 20, TaskHistoryOrder.NEWEST.sort());
+        when(historyRepository.findByTaskId(5L, newest)).thenReturn(new PageImpl<>(List.of(entry), newest, 21));
 
-        PageResponse<TaskHistoryEntryResponse> response = service.list(user, PROJECT_ID, 5L, page);
+        PageResponse<TaskHistoryEntryResponse> response = service.list(user, PROJECT_ID, 5L,
+                TaskHistoryOrder.NEWEST, PageRequest.of(1, 20));
 
-        assertEquals(1, response.totalElements());
+        assertEquals(21, response.totalElements());
         TaskHistoryEntryResponse first = response.content().get(0);
         assertEquals(TaskHistoryType.CREATED, first.type());
         assertEquals(new TaskHistoryEntryResponse.Actor(42L, "Ada Lovelace"), first.actor());
+
+        PageRequest oldest = PageRequest.of(0, 20, TaskHistoryOrder.OLDEST.sort());
+        when(historyRepository.findByTaskId(5L, oldest)).thenReturn(new PageImpl<>(List.of(entry), oldest, 1));
+        assertEquals(1, service.list(user, PROJECT_ID, 5L, TaskHistoryOrder.OLDEST,
+                PageRequest.of(0, 20, Sort.by("actorName"))).totalElements(), "a stray sort is replaced");
+        verify(historyRepository).findByTaskId(5L, oldest);
     }
 
     @Test
@@ -253,7 +261,8 @@ class TaskStatusHistoryServiceTest {
                 .thenReturn(new ProjectAccessResult(null, null, null, Set.of(ProjectPermission.VIEW_WORK)));
         when(taskRepository.findByIdAndProjectId(5L, PROJECT_ID)).thenReturn(Optional.empty());
 
-        assertThrows(ResourceNotFoundException.class, () -> service.list(user, PROJECT_ID, 5L, PageRequest.of(0, 20)));
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.list(user, PROJECT_ID, 5L, TaskHistoryOrder.NEWEST, PageRequest.of(0, 20)));
         verifyNoInteractions(historyRepository);
     }
 
@@ -262,7 +271,8 @@ class TaskStatusHistoryServiceTest {
         when(access.require(PROJECT_ID, user, ProjectPermission.VIEW_WORK))
                 .thenThrow(new AccessDeniedException("Project permission required: VIEW_WORK"));
 
-        assertThrows(AccessDeniedException.class, () -> service.list(user, PROJECT_ID, 5L, PageRequest.of(0, 20)));
+        assertThrows(AccessDeniedException.class,
+                () -> service.list(user, PROJECT_ID, 5L, TaskHistoryOrder.NEWEST, PageRequest.of(0, 20)));
         verifyNoInteractions(historyRepository, taskRepository);
     }
 

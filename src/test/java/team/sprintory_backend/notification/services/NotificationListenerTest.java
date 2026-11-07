@@ -17,6 +17,7 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import team.sprintory_backend.notification.events.Mentioned;
+import team.sprintory_backend.notification.events.ProjectChatMentioned;
 import team.sprintory_backend.notification.events.PasswordReset;
 import team.sprintory_backend.notification.events.ProjectMemberAdded;
 import team.sprintory_backend.notification.events.ProjectRolesChanged;
@@ -294,6 +295,27 @@ class NotificationListenerTest {
         when(preferences.isEnabled(17L, NotificationCategory.MENTION, NotificationChannel.IN_APP)).thenReturn(false);
 
         listener.on(new Mentioned(task, damir, Set.of(17L), "hi"));
+
+        verifyNoInteractions(notifications);
+    }
+
+    @Test
+    void aChatMentionNotifiesTheMentionedMembersAboutTheProject() {
+        listener.on(new ProjectChatMentioned(project, damir, 700L, Set.of(31L, 17L, 99L), "@Ada Lovelace standup?"));
+
+        verify(notifications).create(17L, NotificationType.MENTIONED, NotificationSubject.project(project, damir),
+                "Damir Gabaidullin mentioned you in the \"Mobile App\" chat", "@Ada Lovelace standup?");
+        verifyNotNotified(31L); // the author
+        verifyNotNotified(99L); // not a project member
+        verify(emails).queue(eq(17L), eq(NotificationType.MENTIONED), eq(NotificationSubject.project(project, damir)),
+                any(), eq("@Ada Lovelace standup?"));
+    }
+
+    @Test
+    void aChatMentionWithMentionsTurnedOffInAppCreatesNothing() {
+        when(preferences.isEnabled(17L, NotificationCategory.MENTION, NotificationChannel.IN_APP)).thenReturn(false);
+
+        listener.on(new ProjectChatMentioned(project, damir, 700L, Set.of(17L), "hi"));
 
         verifyNoInteractions(notifications);
     }
