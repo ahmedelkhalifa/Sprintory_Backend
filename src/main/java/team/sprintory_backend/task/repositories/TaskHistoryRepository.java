@@ -10,6 +10,6 @@ import team.sprintory_backend.task.models.TaskHistoryEntry;
 @Repository
 public interface TaskHistoryRepository extends JpaRepository<TaskHistoryEntry, Long> {
 
-    /** One page of a task's feed, oldest first; ties broken by id. Pass an unsorted pageable. */
-    Page<TaskHistoryEntry> findByTaskIdOrderByOccurredAtAscIdAsc(Long taskId, Pageable pageable);
+    /** One page of a task's feed, in the pageable's sort (always a {@code TaskHistoryOrder}'s). */
+    Page<TaskHistoryEntry> findByTaskId(Long taskId, Pageable pageable);
 }

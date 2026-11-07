@@ -23,6 +23,7 @@ import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectBoardService;
 import team.sprintory_backend.project.services.ProjectService;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.api.TaskListOrder;
 import team.sprintory_backend.task.api.TaskSearchFilters;
 import team.sprintory_backend.task.dto.CreateSubtaskRequest;
@@ -226,7 +227,7 @@ class TaskRestorationSubtasksIntegrationTest extends AbstractIntegrationTest {
 
     /** How many of the task's history entries are status moves. */
     private long statusMoves(Long taskId) {
-        return tasks.history(owner, projectId, taskId, PageRequest.of(0, 100)).content().stream()
+        return tasks.history(owner, projectId, taskId, TaskHistoryOrder.NEWEST, PageRequest.of(0, 100)).content().stream()
                 .filter(entry -> entry.field() == TaskHistoryField.STATUS).count();
     }
 

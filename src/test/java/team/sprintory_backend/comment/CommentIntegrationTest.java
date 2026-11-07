@@ -19,6 +19,7 @@ import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectService;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.dto.TaskHistoryEntryResponse;
 import team.sprintory_backend.task.models.TaskHistoryType;
 import team.sprintory_backend.task.services.TaskApiService;
@@ -221,8 +222,7 @@ class CommentIntegrationTest extends AbstractIntegrationTest {
     }
 
     private TaskHistoryEntryResponse lastHistoryEntry() {
-        List<TaskHistoryEntryResponse> feed = tasks.history(owner, projectId, taskId, PageRequest.of(0, 100)).content();
-        return feed.get(feed.size() - 1);
+        return tasks.history(owner, projectId, taskId, TaskHistoryOrder.NEWEST, PageRequest.of(0, 1)).content().get(0);
     }
 
     private long notifications(User recipient, String type) {

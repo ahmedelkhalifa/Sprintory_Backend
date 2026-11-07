@@ -15,6 +15,7 @@ import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectService;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.dto.CreateSubtaskRequest;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
 import team.sprintory_backend.task.dto.TaskHistoryEntryResponse;
@@ -202,15 +203,41 @@ class TaskHistoryIntegrationTest extends AbstractIntegrationTest {
         TaskResponse task = tasks.create(owner, projectId,
                 new CreateTaskRequest("Fix login", null, null, null, null, null, null));
 
-        assertEquals(1, tasks.history(viewer, projectId, task.id(), PageRequest.of(0, 20)).totalElements());
+        assertEquals(1, tasks.history(viewer, projectId, task.id(), TaskHistoryOrder.NEWEST,
+                PageRequest.of(0, 20)).totalElements());
         assertThrows(ResourceNotFoundException.class,
-                () -> tasks.history(outsider, projectId, task.id(), PageRequest.of(0, 20)));
+                () -> tasks.history(outsider, projectId, task.id(), TaskHistoryOrder.NEWEST, PageRequest.of(0, 20)));
+    }
+
+    @Test
+    void theFeedIsNewestFirstByDefaultOrOldestFirstOnRequestAndPagesNeverOverlap() {
+        TaskResponse task = tasks.create(owner, projectId,
+                new CreateTaskRequest("Fix login", null, TaskPriority.LOW, null, null, null, null));
+        tasks.update(owner, projectId, task.id(), new UpdateTaskRequest(null, null, TaskPriority.HIGH,
+                null, null, null, null, null, false, false, false));
+        tasks.update(owner, projectId, task.id(), new UpdateTaskRequest("Fix login on Safari", null, null,
+                null, null, null, null, null, false, false, false));
+
+        TaskHistoryOrder byDefault = TaskHistoryOrder.fromQuery(null);
+        List<TaskHistoryEntryResponse> first = tasks.history(owner, projectId, task.id(), byDefault,
+                PageRequest.of(0, 2)).content();
+        List<TaskHistoryEntryResponse> second = tasks.history(owner, projectId, task.id(), byDefault,
+                PageRequest.of(1, 2)).content();
+        assertEquals(List.of(TaskHistoryField.TITLE, TaskHistoryField.PRIORITY),
+                first.stream().map(TaskHistoryEntryResponse::field).toList());
+        assertEquals(List.of(TaskHistoryType.CREATED), second.stream().map(TaskHistoryEntryResponse::type).toList());
+
+        assertEquals(List.of(TaskHistoryType.CREATED, TaskHistoryType.FIELD_CHANGED, TaskHistoryType.FIELD_CHANGED),
+                tasks.history(owner, projectId, task.id(), TaskHistoryOrder.fromQuery("Oldest"),
+                        PageRequest.of(0, 20)).content().stream().map(TaskHistoryEntryResponse::type).toList());
+        assertEquals(TaskHistoryField.PRIORITY, feed(task.id()).get(1).field());
     }
 
     // --- helpers ---
 
+    /** The whole feed, oldest first, so the tests read it in the order things happened. */
     private List<TaskHistoryEntryResponse> feed(Long taskId) {
-        return tasks.history(owner, projectId, taskId, PageRequest.of(0, 100)).content();
+        return tasks.history(owner, projectId, taskId, TaskHistoryOrder.OLDEST, PageRequest.of(0, 100)).content();
     }
 
     private void member(User user, ProjectRole role) {

@@ -6,11 +6,14 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
+import team.sprintory_backend.exceptionHandler.BadRequestException;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.api.TaskListOrder;
 import team.sprintory_backend.task.api.TaskSearchFilters;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
 import team.sprintory_backend.task.dto.MoveTaskRequest;
 import team.sprintory_backend.task.dto.ReorderBacklogRequest;
+import team.sprintory_backend.task.dto.TaskHistoryEntryResponse;
 import team.sprintory_backend.task.dto.TaskResponse;
 import team.sprintory_backend.task.dto.UpdateTaskRequest;
 import team.sprintory_backend.task.models.TaskPriority;
@@ -81,6 +84,20 @@ class TaskControllerTest {
 
         when(service.restore(user, 3L, 42L)).thenReturn(task);
         assertSame(task, controller.restore(principal, 3L, 42L));
+    }
+
+    @Test
+    void historyParsesTheOrderAndDropsSort() {
+        var result = new PageResponse<>(List.<TaskHistoryEntryResponse>of(), 1, 10, 0, 0);
+        when(service.history(user, 3L, 42L, TaskHistoryOrder.NEWEST, PageRequest.of(1, 10))).thenReturn(result);
+        when(service.history(user, 3L, 42L, TaskHistoryOrder.OLDEST, PageRequest.of(1, 10))).thenReturn(result);
+
+        assertSame(result, controller.history(principal, 3L, 42L, null,
+                PageRequest.of(1, 10, org.springframework.data.domain.Sort.by("occurredAt"))));
+        assertSame(result, controller.history(principal, 3L, 42L, "oldest", PageRequest.of(1, 10)));
+        assertThrows(BadRequestException.class,
+                () -> controller.history(principal, 3L, 42L, "sideways", PageRequest.of(0, 20)));
+        verify(service, never()).history(user, 3L, 42L, TaskHistoryOrder.NEWEST, PageRequest.of(0, 20));
     }
 
     @Test

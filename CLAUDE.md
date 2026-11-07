@@ -175,6 +175,7 @@ Contracts: `docs/comments-docs.md`, `docs/mentions-docs.md` (also the rich-text 
 - **History is append-only and stores display snapshots.** `TaskHistoryEntry` is `@Immutable`; values are names, not ids; `actor_id` has no foreign key. Never store description or comment text, a token or a link. A new `TaskHistoryType` or `TaskHistoryField` needs a migration changing `ck_task_history_type` / `ck_task_history_field` and its row in task-history-docs §3.
 - **Comments are soft-deleted but stay listed** as "Comment deleted" placeholders, so `TaskComment` has **no** `@SQLRestriction`: check `isDeleted()` and never return the body of a deleted comment. Only the author edits (with `COMMENT`); the author or `MODERATE_COMMENTS` (Project Manager only) deletes. Saving the same text is not an edit.
 - Existing tests that read task history filter to STATUS entries, because every task now also has a CREATED entry.
+- `GET /history` is newest first by default; `?order=oldest` (`task/api/TaskHistoryOrder`) reverses it. Like the task list, it uses `order`, never Spring's `?sort=`, which is dropped by `Pageables.withoutSort`.
 
 ## Project chat (R26 part B, PMP-137)
 

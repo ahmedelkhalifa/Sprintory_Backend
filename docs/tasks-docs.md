@@ -238,11 +238,11 @@ One drag and drop in the Scrum product backlog (R13): puts the task right after 
 
 ### 3.8 Read a task's history
 
-`GET /api/v1/projects/{projectId}/tasks/{taskId}/history?page=&size=`
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/history?order=&page=&size=`
 
 - **Who:** project members with `VIEW_WORK`, including Viewers. Workspace admins not in the project cannot read tasks or task history.
-- **Response `200`:** `PageResponse<TaskHistoryEntryResponse>`, oldest first: creation, every field change (old → new), status moves, deleted comments and subtasks.
-- **Errors:** `401`, `403`, `404` as in §3.3.
+- **Response `200`:** `PageResponse<TaskHistoryEntryResponse>`: creation, every field change (old → new), status moves, deleted comments and subtasks. Newest first by default; `?order=oldest` gives them as they happened (since 7 Nov 2026).
+- **Errors:** `400` for an unknown `order`; `401`, `403`, `404` as in §3.3.
 - **The full contract is [task-history-docs.md](./task-history-docs.md).** Until 4 Nov 2026 this endpoint returned a plain array of status moves; see its §2.
 
 ### How the order is stored

@@ -23,6 +23,7 @@ import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectAccess;
 import team.sprintory_backend.project.strategy.ProjectBoardStrategies;
+import team.sprintory_backend.task.api.TaskHistoryOrder;
 import team.sprintory_backend.task.api.TaskListOrder;
 import team.sprintory_backend.task.api.TaskSearchFilters;
 import team.sprintory_backend.task.dto.CreateTaskRequest;
@@ -367,8 +368,9 @@ public class TaskApiService {
 
     /** One page of the task's activity feed, oldest first (docs/task-history-docs.md §2). */
     @Transactional(readOnly = true)
-    public PageResponse<TaskHistoryEntryResponse> history(User user, Long projectId, Long taskId, Pageable pageable) {
-        return statusHistory.list(user, projectId, taskId, pageable);
+    public PageResponse<TaskHistoryEntryResponse> history(User user, Long projectId, Long taskId,
+                                                          TaskHistoryOrder order, Pageable pageable) {
+        return statusHistory.list(user, projectId, taskId, order, pageable);
     }
 
     private WipWarning wipWarning(Long projectId, ProjectBoardColumn column) {
