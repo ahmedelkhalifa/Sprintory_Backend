@@ -77,6 +77,11 @@ public class Project extends BaseEntity {
     @Column(name = "lifecycle_status", nullable = false, length = 20)
     private ProjectLifecycleState lifecycleStatus = ProjectLifecycleState.ACTIVE;
 
+    /** Project default sprint length; 14 days until the settings UI supports editing it. */
+    @Builder.Default
+    @Column(name = "sprint_length_days", nullable = false)
+    private int sprintLengthDays = 14;
+
     @Column(name = "last_task_number", nullable = false, updatable = false)
     private int lastTaskNumber;
 

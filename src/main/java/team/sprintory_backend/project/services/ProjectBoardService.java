@@ -34,6 +34,7 @@ public class ProjectBoardService {
     private final ProjectRepository projectRepository;
     private final TaskRepository taskRepository;
     private final TaskStatusHistoryService history;
+    private final team.sprintory_backend.sprint.repositories.SprintRepository sprintRepository;
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void initialize(Project project) {
@@ -65,7 +66,12 @@ public class ProjectBoardService {
                         taskRepository.countByProjectIdAndStatusIdAndParentIsNotNull(projectId, c.getId())))
                 .toList();
         return new ProjectBoardResponse(projectId, project.getTemplate(), strategy.backlogEnabled(),
-                strategy.sprintsEnabled(), strategy.wipLimitsEnabled(), null, columns);
+                strategy.sprintsEnabled(), strategy.wipLimitsEnabled(),
+                project.getTemplate() == ProjectTemplate.SCRUM
+                    ? sprintRepository.findFirstByProjectIdAndStatus(projectId,
+                        team.sprintory_backend.sprint.models.SprintStatus.ACTIVE)
+                        .map(team.sprintory_backend.sprint.models.Sprint::getId).orElse(null)
+                    : null, columns);
     }
 
     @Transactional

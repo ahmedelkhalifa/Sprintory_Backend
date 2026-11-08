@@ -33,6 +33,9 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
     @EntityGraph(attributePaths = {"status", "assignee"})
     Page<Task> findAll(Specification<Task> spec, Pageable pageable);
 
+    /** Sprint order; the parent owns the assignment, and subtasks follow it. */
+    List<Task> findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(Long sprintId);
+
     /** Only live top-level tasks count for board WIP. */
     long countByProjectIdAndStatusIdAndParentIsNull(Long projectId, Long statusId);
 

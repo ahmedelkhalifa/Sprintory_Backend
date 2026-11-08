@@ -73,6 +73,21 @@ public class ExceptionHandler {
                 e.getMessage(), request);
     }
 
+    @org.springframework.web.bind.annotation.ExceptionHandler(
+            team.sprintory_backend.sprint.exceptions.SprintAlreadyActiveException.class)
+    public ResponseEntity<ErrorResponse> handleSprintAlreadyActive(HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.SPRINT_ALREADY_ACTIVE,
+                "Another sprint is already active.", request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(
+            team.sprintory_backend.sprint.exceptions.SprintConflictException.class)
+    public ResponseEntity<ErrorResponse> handleSprintConflict(
+            team.sprintory_backend.sprint.exceptions.SprintConflictException e,
+            HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.CONFLICT, e.getMessage(), request);
+    }
+
     @org.springframework.web.bind.annotation.ExceptionHandler(BadRequestException.class)
     public ResponseEntity<ErrorResponse> handleBadRequest(BadRequestException e, HttpServletRequest request) {
         return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.BAD_REQUEST, e.getMessage(), request);

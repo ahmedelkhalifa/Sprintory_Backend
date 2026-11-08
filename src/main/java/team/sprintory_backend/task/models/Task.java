@@ -104,6 +104,14 @@ public class Task extends BaseEntity {
     @Column(name = "backlog_rank", nullable = false)
     private long backlogRank;
 
+    /** Parent sprint assignment; subtasks inherit this from their parent. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sprint_id")
+    private team.sprintory_backend.sprint.models.Sprint sprint;
+
+    @Column(name = "sprint_position")
+    private Long sprintPosition;
+
     /** Free-text tags; batch-loaded so a page of tasks does not run one query per row. */
     @Builder.Default
     @ElementCollection
