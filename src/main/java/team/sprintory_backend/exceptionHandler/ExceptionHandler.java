@@ -15,6 +15,11 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import team.sprintory_backend.attachment.exceptions.FileTooLargeException;
+import team.sprintory_backend.attachment.exceptions.FileTypeNotAllowedException;
+import team.sprintory_backend.attachment.exceptions.TooManyFilesException;
+import team.sprintory_backend.attachment.services.AttachmentService;
 import team.sprintory_backend.common.richtext.InvalidRichTextException;
 import team.sprintory_backend.mention.exceptions.InvalidMentionException;
 import team.sprintory_backend.notification.email.EmailDeliveryException;
@@ -137,6 +142,29 @@ public class ExceptionHandler {
     public ResponseEntity<ErrorResponse> handleInvalidMention(InvalidMentionException e,
                                                               HttpServletRequest request) {
         return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.INVALID_MENTION, e.getMessage(), request);
+    }
+
+    /**
+     * A file over 20 MB (attachments-docs §3.1): refused by the service, or already by the
+     * servlet's multipart limit before the controller runs. Both give the same answer.
+     */
+    @org.springframework.web.bind.annotation.ExceptionHandler({
+            FileTooLargeException.class, MaxUploadSizeExceededException.class})
+    public ResponseEntity<ErrorResponse> handleFileTooLarge(HttpServletRequest request) {
+        return body(HttpStatus.PAYLOAD_TOO_LARGE.value(), ErrorCode.FILE_TOO_LARGE,
+                AttachmentService.FILE_TOO_LARGE, request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(TooManyFilesException.class)
+    public ResponseEntity<ErrorResponse> handleTooManyFiles(TooManyFilesException e, HttpServletRequest request) {
+        return body(HttpStatus.BAD_REQUEST.value(), ErrorCode.TOO_MANY_FILES, e.getMessage(), request);
+    }
+
+    /** Not on the allow-list, content not matching the extension, or macros (attachments-docs §3.1). */
+    @org.springframework.web.bind.annotation.ExceptionHandler(FileTypeNotAllowedException.class)
+    public ResponseEntity<ErrorResponse> handleFileTypeNotAllowed(FileTypeNotAllowedException e,
+                                                                  HttpServletRequest request) {
+        return body(HttpStatus.UNSUPPORTED_MEDIA_TYPE.value(), ErrorCode.FILE_TYPE_NOT_ALLOWED, e.getMessage(), request);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(InvalidTokenException.class)

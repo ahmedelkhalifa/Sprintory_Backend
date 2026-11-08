@@ -96,6 +96,20 @@ class ExceptionHandlerTest {
                 400, ErrorCode.BAD_REQUEST, "Invalid value for 'teamId'.");
     }
 
+    @Test
+    void attachmentRefusalsAnswer413_400And415() {
+        assertError(handler.handleFileTooLarge(request),
+                413, ErrorCode.FILE_TOO_LARGE, "File too large (max 20 MB).");
+        assertError(handler.handleTooManyFiles(
+                        new team.sprintory_backend.attachment.exceptions.TooManyFilesException(
+                                "You can upload at most 5 files at once."), request),
+                400, ErrorCode.TOO_MANY_FILES, "You can upload at most 5 files at once.");
+        assertError(handler.handleFileTypeNotAllowed(
+                        new team.sprintory_backend.attachment.exceptions.FileTypeNotAllowedException(
+                                "setup.exe: this file type is not allowed."), request),
+                415, ErrorCode.FILE_TYPE_NOT_ALLOWED, "setup.exe: this file type is not allowed.");
+    }
+
     /** Stands in for a controller method with a numeric path variable. */
     @SuppressWarnings("unused")
     private static void endpoint(Long teamId) {
