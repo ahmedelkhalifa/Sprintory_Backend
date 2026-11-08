@@ -14,6 +14,9 @@ FROM eclipse-temurin:17-jre
 WORKDIR /app
 
 RUN groupadd --system spring && useradd --system --gid spring spring
+# Attachment files (R25). The compose volume is mounted here; a new volume copies this folder's
+# owner, so the app can write to it without running as root.
+RUN mkdir -p /app/data/attachments && chown -R spring:spring /app/data
 COPY --from=build /app/target/*.jar app.jar
 USER spring
 

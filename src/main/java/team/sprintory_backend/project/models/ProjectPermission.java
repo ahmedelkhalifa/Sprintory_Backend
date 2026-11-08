@@ -32,7 +32,10 @@ public enum ProjectPermission {
     EDIT_TASKS,
     /** Comment on tasks, and edit or delete one's own comments (R10). */
     COMMENT,
-    /** Delete anyone's comment, never edit it (R10, PMP-133). Project Manager only. */
+    /**
+     * Delete anyone's comment, chat message or attachment, never edit it (R10 PMP-133, PMP-137,
+     * R25 PMP-141). Project Manager only.
+     */
     MODERATE_COMMENTS,
     /** Edit project charter goals, scope and stakeholders (PMP-116). */
     EDIT_CHARTER,

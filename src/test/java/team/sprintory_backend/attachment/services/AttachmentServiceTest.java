@@ -10,6 +10,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
+import team.sprintory_backend.attachment.dto.AttachmentFile;
 import team.sprintory_backend.attachment.dto.AttachmentResponse;
 import team.sprintory_backend.attachment.exceptions.FileTooLargeException;
 import team.sprintory_backend.attachment.exceptions.FileTypeNotAllowedException;
@@ -28,6 +29,7 @@ import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.task.services.TaskStatusHistoryService;
 import team.sprintory_backend.user.models.User;
+import team.sprintory_backend.workspace.exceptions.WorkspaceArchivedException;
 import team.sprintory_backend.workspace.models.Workspace;
 import team.sprintory_backend.workspace.models.WorkspaceMember;
 
@@ -335,7 +337,150 @@ class AttachmentServiceTest {
         verifyNoInteractions(attachmentRepository);
     }
 
+    // --- download and preview ---
+
+    @Test
+    void aViewerDownloadsTheStoredFile() throws IOException {
+        givenVisible(grace, VIEW_WORK);
+        TaskAttachment pdf = givenStored(1L, ada, AttachmentType.PDF, PDF);
+
+        AttachmentFile file = service.download(grace, 1L);
+
+        assertEquals(pdf.getFileName(), file.fileName());
+        assertEquals("application/pdf", file.contentType());
+        assertEquals(PDF.length, file.sizeBytes());
+        assertArrayEquals(PDF, file.content().getContentAsByteArray());
+    }
+
+    @Test
+    void imagesHaveAPreviewAndOtherFilesDoNot() throws IOException {
+        givenVisible(grace, VIEW_WORK);
+        byte[] png = png(40, 30);
+        givenStored(1L, ada, AttachmentType.PNG, png);
+        givenStored(2L, ada, AttachmentType.PDF, PDF);
+
+        AttachmentFile preview = service.preview(grace, 1L);
+        ResourceNotFoundException e = assertThrows(ResourceNotFoundException.class, () -> service.preview(grace, 2L));
+
+        assertEquals("image/png", preview.contentType());
+        assertArrayEquals(png, preview.content().getContentAsByteArray());
+        assertEquals("Attachment not found.", e.getMessage());
+    }
+
+    @Test
+    void aMissingOrDeletedAttachmentOrOneOnADeletedTaskIsNotFound() {
+        when(attachmentRepository.findLiveWithTaskById(1L)).thenReturn(Optional.empty());
+
+        for (var call : List.<org.junit.jupiter.api.function.Executable>of(
+                () -> service.download(ada, 1L), () -> service.preview(ada, 1L), () -> service.delete(ada, 1L))) {
+            ResourceNotFoundException e = assertThrows(ResourceNotFoundException.class, call);
+            assertEquals("Attachment not found.", e.getMessage());
+        }
+        verifyNoInteractions(access, history);
+    }
+
+    @Test
+    void someoneWhoCannotSeeTheProjectGetsTheSameNotFoundAsForAMissingAttachment() throws IOException {
+        givenStored(1L, ada, AttachmentType.PDF, PDF);
+        when(access.require(PROJECT_ID, grace, VIEW_WORK)).thenThrow(new ResourceNotFoundException("Project not found."));
+
+        for (var call : List.<org.junit.jupiter.api.function.Executable>of(
+                () -> service.download(grace, 1L), () -> service.preview(grace, 1L), () -> service.delete(grace, 1L))) {
+            ResourceNotFoundException e = assertThrows(ResourceNotFoundException.class, call);
+            assertEquals("Attachment not found.", e.getMessage(), "nothing tells it apart from a missing one");
+        }
+    }
+
+    @Test
+    void aWorkspaceAdminOutsideTheProjectIsForbidden() throws IOException {
+        givenStored(1L, ada, AttachmentType.PDF, PDF);
+        when(access.require(PROJECT_ID, grace, VIEW_WORK)).thenThrow(new AccessDeniedException("no VIEW_WORK"));
+
+        assertThrows(AccessDeniedException.class, () -> service.download(grace, 1L));
+        assertThrows(AccessDeniedException.class, () -> service.delete(grace, 1L));
+        verifyNoInteractions(history);
+    }
+
+    // --- delete ---
+
+    @Test
+    void theUploaderDeletesTheirOwnAttachmentAndHistoryRecordsIt() throws IOException {
+        givenVisible(ada, VIEW_WORK, EDIT_TASKS);
+        TaskAttachment own = givenStored(1L, ada, AttachmentType.PDF, PDF);
+
+        service.delete(ada, 1L);
+
+        assertNotNull(own.getDeletedAt());
+        assertEquals(42L, own.getDeletedById());
+        verify(attachmentRepository).save(own);
+        verify(history).recordAttachmentRemoved(task, own, ada);
+        assertEquals(1, storedFiles().size(), "the file stays until the nightly clean-up");
+    }
+
+    @Test
+    void theProjectManagerDeletesAnyonesAttachmentEvenOfADeletedAccount() throws IOException {
+        givenVisible(grace, VIEW_WORK, EDIT_TASKS, MODERATE_COMMENTS);
+        TaskAttachment others = givenStored(1L, ada, AttachmentType.PDF, PDF);
+        TaskAttachment orphan = givenStored(2L, null, AttachmentType.PDF, PDF);
+
+        service.delete(grace, 1L);
+        service.delete(grace, 2L);
+
+        assertNotNull(others.getDeletedAt());
+        assertNotNull(orphan.getDeletedAt());
+        assertEquals(9L, others.getDeletedById());
+        verify(history).recordAttachmentRemoved(task, others, grace);
+        verify(history).recordAttachmentRemoved(task, orphan, grace);
+    }
+
+    @Test
+    void anotherMemberCannotDeleteSomeoneElsesAttachment() throws IOException {
+        givenVisible(grace, VIEW_WORK, EDIT_TASKS);
+        TaskAttachment others = givenStored(1L, ada, AttachmentType.PDF, PDF);
+
+        AccessDeniedException e = assertThrows(AccessDeniedException.class, () -> service.delete(grace, 1L));
+
+        assertEquals("Only the uploader or the Project Manager can delete an attachment.", e.getMessage());
+        assertNull(others.getDeletedAt());
+        verify(attachmentRepository, never()).save(any());
+        verifyNoInteractions(history);
+    }
+
+    @Test
+    void anUploaderWhoBecameAViewerCannotDeleteTheirOldAttachment() throws IOException {
+        givenVisible(ada, VIEW_WORK);
+        TaskAttachment own = givenStored(1L, ada, AttachmentType.PDF, PDF);
+
+        assertThrows(AccessDeniedException.class, () -> service.delete(ada, 1L));
+        assertNull(own.getDeletedAt());
+    }
+
+    @Test
+    void nobodyDeletesInAnArchivedWorkspace() throws IOException {
+        workspace.setArchivedAt(Instant.now());
+        givenVisible(grace, VIEW_WORK, EDIT_TASKS, MODERATE_COMMENTS);
+        TaskAttachment others = givenStored(1L, ada, AttachmentType.PDF, PDF);
+
+        assertThrows(WorkspaceArchivedException.class, () -> service.delete(grace, 1L));
+
+        assertNull(others.getDeletedAt());
+        verify(attachmentRepository, never()).save(any());
+        verifyNoInteractions(history);
+    }
+
     // --- helpers ---
+
+    /** An attachment of the task whose file really is in the store. */
+    private TaskAttachment givenStored(Long id, User uploader, AttachmentType type, byte[] content) throws IOException {
+        Path temp = storage.createTempFile();
+        Files.write(temp, content);
+        TaskAttachment attachment = TaskAttachment.builder().id(id).task(task).uploader(uploader)
+                .fileName("file-" + id + "." + type.extensions().get(0)).fileType(type)
+                .sizeBytes((long) content.length).originalSizeBytes((long) content.length)
+                .storageKey(storage.store(temp)).build();
+        when(attachmentRepository.findLiveWithTaskById(id)).thenReturn(Optional.of(attachment));
+        return attachment;
+    }
 
     private void givenActive(User user, ProjectPermission... permissions) {
         when(access.requireActive(PROJECT_ID, user, permissions[0])).thenReturn(result(permissions));

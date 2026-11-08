@@ -67,6 +67,8 @@ public class SecurityConfig {
                     config.addAllowedHeader("*");
                     config.addAllowedMethod("*");
                     config.setAllowCredentials(true);
+                    // Lets a fetch() of an attachment download read the file name (attachments-docs §3.4)
+                    config.addExposedHeader("Content-Disposition");
                     return config;
                 }))
                 .sessionManagement(s ->

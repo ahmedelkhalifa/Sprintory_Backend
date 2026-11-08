@@ -13,8 +13,10 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Instant;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * Attachments on the local disk under {@code app.attachments.dir} (env {@code ATTACHMENTS_DIR}).
@@ -105,6 +107,48 @@ public class LocalAttachmentStorage implements AttachmentStorage {
             Files.deleteIfExists(tempFile);
         } catch (IOException e) {
             log.warn("Could not delete temporary upload file {}: {}", tempFile, e.toString());
+        }
+    }
+
+    @Override
+    public Stream<StoredFile> storedFiles() {
+        try {
+            return Files.walk(root, 3)
+                    .filter(file -> !file.startsWith(tempDir))
+                    .filter(file -> isKeyFile(file) && Files.isRegularFile(file))
+                    .map(file -> new StoredFile(file.getFileName().toString(), lastModified(file)));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot list the attachment folder " + root, e);
+        }
+    }
+
+    @Override
+    public int deleteTempFilesOlderThan(Instant cutoff) {
+        int deleted = 0;
+        try (Stream<Path> files = Files.list(tempDir)) {
+            for (Path file : (Iterable<Path>) files::iterator) {
+                if (Files.isRegularFile(file) && lastModified(file).isBefore(cutoff)) {
+                    Files.deleteIfExists(file);
+                    deleted++;
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot clean the temporary upload folder " + tempDir, e);
+        }
+        return deleted;
+    }
+
+    /** Named like a key and sitting exactly where that key's file belongs. */
+    private boolean isKeyFile(Path file) {
+        String name = file.getFileName().toString();
+        return KEY.matcher(name).matches() && file.equals(pathOf(name));
+    }
+
+    private static Instant lastModified(Path file) {
+        try {
+            return Files.getLastModifiedTime(file).toInstant();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot read the time of " + file, e);
         }
     }
 

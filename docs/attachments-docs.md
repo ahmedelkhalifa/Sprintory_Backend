@@ -1,6 +1,6 @@
 # Sprintory — Task attachments API contract (R25, PMP-30)
 
-**Status:** contract agreed, backend not built yet (PMP-141, with the storage and validation of PMP-33, branch `features/attachments`, 7 Nov 2026). Frontend (PMP-142) and acceptance testing (PMP-143) can start against this file. See [§9 Implementation status](#9-implementation-status).
+**Status:** backend implemented and tested, including against PostgreSQL over real HTTP (PMP-141, with the storage and validation of PMP-33, branch `features/attachments`, 8 Nov 2026). Frontend (PMP-142) and acceptance testing (PMP-143) open. See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/projects/{projectId}/tasks/{taskId}/attachments` and `/api/v1/attachments/{attachmentId}/**`.
 **Related:** [Tasks](./tasks-docs.md) (subtasks, delete and restore), [Task history](./task-history-docs.md) ("attachment added / removed"), [Comments](./comments-docs.md) (same moderation rule), [Roles and permissions](./roles-docs.md), [Workspaces](./workspaces-docs.md) (archiving), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Deployment](./deployment.md) (the storage volume), [Requirements](./requirements.md) R25, R38.
 
@@ -256,7 +256,12 @@ The task history shows `ATTACHMENT_ADDED` as "**Ada** attached *login-flow.webp*
   - `uploader_id` → `users`, `ON DELETE SET NULL`. The attachment survives a deleted account, and the uploader shows as `null`.
   - `deleted_by_id` has **no** foreign key, like the audit log's `actor_id`.
 - **Files** live on disk under `app.attachments.dir` (env `ATTACHMENTS_DIR`), named by `storage_key` only and spread over sub-folders (`ab/cd/<uuid>`). In production that directory is a Docker volume, backed up with the database ([deployment.md](./deployment.md)).
-- **Clean-up:** a nightly job deletes the files of attachments soft-deleted more than 30 days ago (`app.attachments.retention-days`), and files whose row no longer exists (left over after a workspace was deleted permanently).
+- **Clean-up** (`AttachmentCleanupJob`, nightly at 04:10):
+  1. rows of attachments soft-deleted more than 30 days ago (`app.attachments.retention-days`) are removed for good; the task history keeps the file name;
+  2. stored files that no row points at are deleted: those of step 1, and those left after a workspace was deleted permanently (its rows go with the cascade);
+  3. temporary files of crashed uploads are deleted.
+
+  Files younger than one day are never deleted in steps 2 and 3, because an upload stores its file a moment before its row is committed. Files in the folder that are not named like a key are never touched. Until step 1, a deleted attachment's row and file still exist, but no endpoint returns them.
 - **Leaving a project does not touch attachments.** No cleanup is needed in `ProjectService.removeMember` or `WorkspaceService.removeMember`.
 - **Migration:** `V14__task_attachments.sql`, which also adds `ATTACHMENT_ADDED` and `ATTACHMENT_REMOVED` to `ck_task_history_type`.
 - **Code:** `attachment/{models,repositories,services,controllers,dto,exceptions,storage}`. `AttachmentService` holds the rules, `FileTypeDetector` the type checks, `ImageOptimizer` the WebP conversion, `AttachmentStorage` / `LocalAttachmentStorage` the files.
@@ -289,7 +294,7 @@ The task history shows `ATTACHMENT_ADDED` as "**Ada** attached *login-flow.webp*
 
 ## 9. Implementation status
 
-As of 7 Nov 2026, on branch `features/attachments`:
+As of 8 Nov 2026, on branch `features/attachments`:
 
 | Part | Status |
 | --- | --- |
@@ -297,12 +302,13 @@ As of 7 Nov 2026, on branch `features/attachments`:
 | `task_attachments` table (`V14__task_attachments.sql`), `TaskAttachment`, `AttachmentType`, repository, the two history types | Done; validated against PostgreSQL by the context test |
 | `FileTypeDetector` (allow-list, content check, macros) | Done; `FileTypeDetectorTest` (30) |
 | `ImageOptimizer` (WebP conversion, EXIF orientation, size and pixel limits) | Done; `ImageOptimizerTest` (9) |
-| `AttachmentStorage` / `LocalAttachmentStorage` (PMP-33) | Done; `LocalAttachmentStorageTest` (16) |
-| Docker volume, deployment notes (PMP-33) | Not started |
-| `AttachmentService`: upload and list (§3.1–§3.3), file names, rollback clean-up, `ATTACHMENT_ADDED` | Done; `AttachmentServiceTest` (16), `AttachmentFileNamesTest` (7), `TaskStatusHistoryServiceTest` |
-| `AttachmentService`: download, preview, delete (§3.4–§3.6), `ATTACHMENT_REMOVED` | Not started (the history writer is done) |
-| `AttachmentController`, the five endpoints, error mapping | Not started |
-| Nightly clean-up job | Not started |
+| `AttachmentStorage` / `LocalAttachmentStorage` (PMP-33) | Done; `LocalAttachmentStorageTest` (18) |
+| Docker volume, deployment notes (PMP-33) | Done: `sprintory-attachments` volume and `ATTACHMENTS_DIR` in `deploy/docker-compose.yml`, folder owned by the image's `spring` user, backup and proxy notes in [deployment.md](./deployment.md). Checked in a local image build: a new volume is writable and the WebP tests pass on Linux x86_64. |
+| `AttachmentService`: every rule of §1–§3 (upload, list, download, preview, delete), file names, rollback clean-up, both history entries | Done; `AttachmentServiceTest` (26), `AttachmentFileNamesTest` (7), `TaskStatusHistoryServiceTest` |
+| `AttachmentController`, the five endpoints and their headers, error mapping, multipart limits, CORS `Content-Disposition` | Done; `AttachmentControllerTest` (5), `ExceptionHandlerTest` |
+| Acceptance criteria over real HTTP (running server, Tomcat limits, security headers, PostgreSQL) | Done; `AttachmentHttpIntegrationTest` (9): upload and open, WebP conversion, path in the name, disguised and forbidden types, 20 MB, 5 files, Viewer / other Member / uploader / PM, non-members and workspace admin, deleted and restored task, nightly clean-up |
+| Manual run in the browser with the frontend | Open |
+| Nightly clean-up job | Done; `AttachmentCleanupJobTest` (5), `LocalAttachmentStorageTest`, and against PostgreSQL in `AttachmentHttpIntegrationTest` |
 | Frontend (PMP-142) and acceptance test (PMP-143) | Not started |
 
 ---
@@ -317,5 +323,5 @@ As of 7 Nov 2026, on branch `features/attachments`:
 | 7 Nov 2026 | PNG, JPEG and WebP images are compressed to WebP (long side ≤ 2560 px, quality 80), only kept if smaller. GIFs are not converted. |
 | 7 Nov 2026 | Images get an inline `/preview` endpoint used for thumbnails; there is no separate thumbnail file. Downloads are always `Content-Disposition: attachment`. |
 | 7 Nov 2026 | Files are stored on a local Docker volume under random UUIDs; the user's file name is display text only. |
-| 7 Nov 2026 | Delete is soft and leaves an `ATTACHMENT_REMOVED` history entry; files of deleted attachments are removed from disk after 30 days. |
+| 7 Nov 2026 | Delete is soft and leaves an `ATTACHMENT_REMOVED` history entry; after 30 days the row and its file are removed for good by the nightly clean-up. |
 | 7 Nov 2026 | Upload is all-or-nothing: one refused file refuses the request. |

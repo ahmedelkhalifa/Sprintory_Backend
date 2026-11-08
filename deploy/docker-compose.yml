@@ -30,6 +30,12 @@ services:
       DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
       DB_USERNAME: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Attachment files live in the attachments volume below (docs/attachments-docs.md §6).
+      ATTACHMENTS_DIR: /app/data/attachments
+      # Java defaults to 25% of the RAM; converting a large photo to WebP needs ~200 MB of heap.
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=60
+    volumes:
+      - attachments-data:/app/data/attachments
     depends_on:
       db:
         condition: service_healthy
@@ -51,6 +57,9 @@ services:
 
 volumes:
   db-data:
+  # A fixed name, so backups can address it without the compose project prefix.
+  attachments-data:
+    name: sprintory-attachments
   npm-data:
   npm-letsencrypt:
 

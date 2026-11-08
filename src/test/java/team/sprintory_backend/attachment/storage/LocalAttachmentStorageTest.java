@@ -11,6 +11,11 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -116,6 +121,39 @@ class LocalAttachmentStorageTest {
         storage.deleteTemp(null);
 
         assertFalse(Files.exists(temp));
+    }
+
+    @Test
+    void storedFilesListsOnlyKeyFilesInTheirOwnPlace() throws IOException {
+        LocalAttachmentStorage storage = storage();
+        String first = storage.store(tempWith(storage, CONTENT));
+        String second = storage.store(tempWith(storage, CONTENT));
+        tempWith(storage, CONTENT);                                            // an upload in progress
+        Files.write(storage.root().resolve("README.txt"), CONTENT);            // put there by hand
+        String misplaced = "3fa2b6c1-0d4e-4f7a-9b8c-1d2e3f4a5b6c";
+        Files.createDirectories(storage.root().resolve("zz"));
+        Files.write(storage.root().resolve("zz").resolve(misplaced), CONTENT); // not where its key belongs
+
+        List<String> keys;
+        try (Stream<AttachmentStorage.StoredFile> files = storage.storedFiles()) {
+            keys = files.map(AttachmentStorage.StoredFile::key).sorted().toList();
+        }
+
+        assertEquals(Stream.of(first, second).sorted().toList(), keys);
+    }
+
+    @Test
+    void deleteTempFilesOlderThanKeepsUploadsInProgress() throws IOException {
+        LocalAttachmentStorage storage = storage();
+        Path crashed = tempWith(storage, CONTENT);
+        Files.setLastModifiedTime(crashed, FileTime.from(Instant.now().minus(Duration.ofDays(2))));
+        Path running = tempWith(storage, CONTENT);
+
+        int deleted = storage.deleteTempFilesOlderThan(Instant.now().minus(Duration.ofDays(1)));
+
+        assertEquals(1, deleted);
+        assertFalse(Files.exists(crashed));
+        assertTrue(Files.exists(running));
     }
 
     private LocalAttachmentStorage storage() {

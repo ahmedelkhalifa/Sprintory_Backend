@@ -1,11 +1,13 @@
 package team.sprintory_backend.attachment.services;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
+import team.sprintory_backend.attachment.dto.AttachmentFile;
 import team.sprintory_backend.attachment.dto.AttachmentResponse;
 import team.sprintory_backend.attachment.exceptions.FileTooLargeException;
 import team.sprintory_backend.attachment.exceptions.TooManyFilesException;
@@ -23,6 +25,7 @@ import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.task.services.TaskStatusHistoryService;
 import team.sprintory_backend.user.models.User;
+import team.sprintory_backend.workspace.services.WorkspaceAccess;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -52,7 +55,8 @@ public class AttachmentService {
 
     public static final int MAX_FILES = 5;
     public static final long MAX_FILE_BYTES = 20L * 1024 * 1024;
-    static final String FILE_TOO_LARGE = "File too large (max 20 MB).";
+    /** Also the answer to the servlet's own multipart limit (see ExceptionHandler). */
+    public static final String FILE_TOO_LARGE = "File too large (max 20 MB).";
 
     private final ProjectAccess projectAccess;
     private final TaskRepository taskRepository;
@@ -111,6 +115,74 @@ public class AttachmentService {
             // Stored files were moved away already; this removes what a refusal or failure left.
             prepared.forEach(file -> storage.deleteTemp(file.path()));
         }
+    }
+
+    /** The file for a download (§3.4). */
+    @Transactional(readOnly = true)
+    public AttachmentFile download(User user, Long attachmentId) {
+        return open(user, attachmentId, false);
+    }
+
+    /** The image for an inline preview (§3.5); anything that is not an image is not found. */
+    @Transactional(readOnly = true)
+    public AttachmentFile preview(User user, Long attachmentId) {
+        return open(user, attachmentId, true);
+    }
+
+    /**
+     * Soft delete by the uploader (with EDIT_TASKS) or the Project Manager (MODERATE_COMMENTS),
+     * in an active workspace. The file stays on disk until the nightly clean-up; the task's
+     * history records the file name.
+     */
+    @Transactional
+    public void delete(User user, Long attachmentId) {
+        TaskAttachment attachment = requireAttachment(attachmentId);
+        Task task = attachment.getTask();
+        ProjectAccessResult access = requireAccess(task, user);
+        if (!mayDelete(attachment, access, user)) {
+            throw new AccessDeniedException("Only the uploader or the Project Manager can delete an attachment.");
+        }
+        WorkspaceAccess.requireNotArchived(access.workspaceMember());
+
+        attachment.setDeletedAt(Instant.now());
+        attachment.setDeletedById(user.getId());
+        attachmentRepository.save(attachment);
+        history.recordAttachmentRemoved(task, attachment, user);
+    }
+
+    // --- download steps ---
+
+    private AttachmentFile open(User user, Long attachmentId, boolean imagesOnly) {
+        TaskAttachment attachment = requireAttachment(attachmentId);
+        requireAccess(attachment.getTask(), user);
+        AttachmentType type = attachment.getFileType();
+        if (imagesOnly && !type.isImage()) {
+            throw attachmentNotFound();
+        }
+        return new AttachmentFile(attachment.getFileName(), type.mimeType(), attachment.getSizeBytes(),
+                storage.load(attachment.getStorageKey()));
+    }
+
+    /** Missing, deleted, and on a deleted task all give the same 404. */
+    private TaskAttachment requireAttachment(Long attachmentId) {
+        return attachmentRepository.findLiveWithTaskById(attachmentId).orElseThrow(AttachmentService::attachmentNotFound);
+    }
+
+    /**
+     * VIEW_WORK in the attachment's project. Someone who cannot see the project gets the same
+     * 404 as for a missing attachment, so ids reveal nothing; a workspace admin who is not in
+     * the project gets 403, as on every task endpoint.
+     */
+    private ProjectAccessResult requireAccess(Task task, User user) {
+        try {
+            return projectAccess.require(task.getProject().getId(), user, ProjectPermission.VIEW_WORK);
+        } catch (ResourceNotFoundException e) {
+            throw attachmentNotFound();
+        }
+    }
+
+    private static ResourceNotFoundException attachmentNotFound() {
+        return new ResourceNotFoundException("Attachment not found.");
     }
 
     // --- upload steps ---
