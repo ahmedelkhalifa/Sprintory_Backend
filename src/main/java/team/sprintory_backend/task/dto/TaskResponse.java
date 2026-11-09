@@ -30,14 +30,16 @@ public record TaskResponse(
         Long parentTaskId,
         Integer estimateMinutes,
         int subtaskTotal,
-        int subtaskDone
+        int subtaskDone,
+        /** "Carried over ×N" (PMP-41): ended sprints this task left unfinished; 0 for subtasks. */
+        int carriedOverCount
 ) {
     public TaskResponse(Long id, Long projectId, String key, String title, TaskType type,
                         TaskPriority priority, Long statusId, String statusName, Long assigneeId,
                         Integer estimate, List<String> labels, String description, Long sprintId,
                         Instant createdAt, Instant updatedAt) {
         this(id, projectId, key, title, type, priority, statusId, statusName, assigneeId,
-                estimate, labels, description, sprintId, createdAt, updatedAt, null, null, null, 0, 0);
+                estimate, labels, description, sprintId, createdAt, updatedAt, null, null, null, 0, 0, 0);
     }
 
     /** Preserve the PMP-125 16-argument constructor for existing callers. */
@@ -47,19 +49,19 @@ public record TaskResponse(
                         Instant createdAt, Instant updatedAt, WipWarning wipWarning) {
         this(id, projectId, key, title, type, priority, statusId, statusName, assigneeId,
                 estimate, labels, description, sprintId, createdAt, updatedAt, wipWarning,
-                null, null, 0, 0);
+                null, null, 0, 0, 0);
     }
 
     public TaskResponse withProgress(int total, int done) {
         return new TaskResponse(id, projectId, key, title, type, priority, statusId, statusName,
                 assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt,
-                wipWarning, parentTaskId, estimateMinutes, total, done);
+                wipWarning, parentTaskId, estimateMinutes, total, done, carriedOverCount);
     }
 
     public TaskResponse withWipWarning(WipWarning warning) {
         return new TaskResponse(id, projectId, key, title, type, priority, statusId, statusName,
                 assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt, warning,
-                parentTaskId, estimateMinutes, subtaskTotal, subtaskDone);
+                parentTaskId, estimateMinutes, subtaskTotal, subtaskDone, carriedOverCount);
     }
 
     /** Labels sorted for stable order; sprintId reflects the parent sprint for subtasks. */
@@ -73,7 +75,8 @@ public record TaskResponse(
                         ? (task.getSprint() == null ? null : task.getSprint().getId())
                         : (task.getParent().getSprint() == null ? null : task.getParent().getSprint().getId())),
                 toInstant(task.getCreatedAt()), toInstant(task.getUpdatedAt()), null,
-                task.getParent() == null ? null : task.getParent().getId(), task.getEstimateMinutes(), 0, 0);
+                task.getParent() == null ? null : task.getParent().getId(), task.getEstimateMinutes(), 0, 0,
+                task.getParent() == null ? task.getCarryOverCount() : 0);
     }
 
     /** The audit columns are local date-times written in the server's zone. */

@@ -34,9 +34,23 @@ public class Sprint extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private SprintStatus status = SprintStatus.PLANNED;
+    /** When the sprint ended, closed or cancelled. */
     private Instant completedAt;
     private Integer committedPoints;
+    /** Story points of DONE items, frozen at the end (also kept for a cancelled sprint). */
     private Integer completedPoints;
+    /** Story points of the items that were carried over, frozen at the end. */
+    private Integer unfinishedPoints;
+    /** Close only: "Sprint Goal achieved?". */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private SprintGoalAchieved goalAchieved;
+    /** Close only: optional note next to the goal answer. */
+    @Column(columnDefinition = "text")
+    private String outcomeNote;
+    /** Cancel only: the required reason. */
+    @Column(columnDefinition = "text")
+    private String cancelReason;
 
     public Sprint(Project project, int number, String name, String goal, Integer capacity, LocalDate startDate, LocalDate endDate) {
         this.project = project;

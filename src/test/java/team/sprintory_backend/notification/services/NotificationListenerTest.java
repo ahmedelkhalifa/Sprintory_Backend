@@ -24,6 +24,7 @@ import team.sprintory_backend.notification.events.ProjectRolesChanged;
 import team.sprintory_backend.notification.events.RepeatedLoginFailures;
 import team.sprintory_backend.notification.events.SprintCancelled;
 import team.sprintory_backend.notification.events.SprintCompleted;
+import team.sprintory_backend.notification.events.SprintOverdue;
 import team.sprintory_backend.notification.events.SprintStarted;
 import team.sprintory_backend.notification.events.TaskAssigned;
 import team.sprintory_backend.notification.events.TaskCommented;
@@ -368,6 +369,37 @@ class NotificationListenerTest {
                 "Damir Gabaidullin completed \"MOB Sprint 4\" in \"Mobile App\"");
         verifyNotified(17L, NotificationType.SPRINT_CANCELLED,
                 "Damir Gabaidullin cancelled \"MOB Sprint 5\" in \"Mobile App\"");
+    }
+
+    @Test
+    void anOverdueSprintRemindsOnlyTheScrumMastersWhoAreStillMembers() {
+        when(projectMembers.findUserIdsByProjectIdAndRole(PROJECT_ID, ProjectRole.SCRUM_MASTER))
+                .thenReturn(List.of(18L, 99L));
+
+        listener.on(new SprintOverdue(project, "MOB Sprint 3", 2));
+
+        verifyNotified(18L, NotificationType.SPRINT_OVERDUE,
+                "\"MOB Sprint 3\" in \"Mobile App\" ended 2 days ago and is still active. "
+                        + "Close it to carry over unfinished work.");
+        verify(notifications).create(eq(18L), eq(NotificationType.SPRINT_OVERDUE),
+                eq(NotificationSubject.project(project, null)), anyString(), isNull());
+        verify(emails).queue(eq(18L), eq(NotificationType.SPRINT_OVERDUE), any(), anyString(), isNull());
+        verifyNotNotified(17L);
+        verifyNotNotified(31L);
+        verifyNotNotified(99L);
+    }
+
+    @Test
+    void anOverdueReminderRespectsTheSprintPreference() {
+        when(projectMembers.findUserIdsByProjectIdAndRole(PROJECT_ID, ProjectRole.SCRUM_MASTER)).thenReturn(List.of(18L));
+        when(preferences.isEnabled(18L, NotificationCategory.SPRINT, NotificationChannel.EMAIL)).thenReturn(false);
+
+        listener.on(new SprintOverdue(project, "MOB Sprint 3", 1));
+
+        verifyNotified(18L, NotificationType.SPRINT_OVERDUE,
+                "\"MOB Sprint 3\" in \"Mobile App\" ended 1 day ago and is still active. "
+                        + "Close it to carry over unfinished work.");
+        verifyNoInteractions(emails);
     }
 
     // --- invitation ---

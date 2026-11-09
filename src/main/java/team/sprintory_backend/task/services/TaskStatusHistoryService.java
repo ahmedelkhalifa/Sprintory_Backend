@@ -136,6 +136,15 @@ public class TaskStatusHistoryService {
         }
     }
 
+    /**
+     * An unfinished task left an ended sprint (PMP-41): {@code to} is the destination sprint's
+     * name, null for the backlog; {@code refId} is the source sprint.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordCarriedOver(Task task, String from, String to, User actor, Long sourceSprintId) {
+        save(task, TaskHistoryType.CARRIED_OVER, null, from, to, sourceSprintId, actor);
+    }
+
     /** The task or subtask was restored after a delete (PMP-131). */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordRestored(Task task, User actor) {

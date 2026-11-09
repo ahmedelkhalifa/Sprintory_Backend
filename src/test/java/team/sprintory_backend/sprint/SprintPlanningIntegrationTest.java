@@ -33,13 +33,14 @@ import java.util.List;
 import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Real PostgreSQL + Flyway V15; each method rolls back its data after execution. */
+/** Real PostgreSQL + Flyway (V15, V16); each method rolls back its data after execution. */
 @Transactional
 class SprintPlanningIntegrationTest extends AbstractIntegrationTest {
     @Autowired private EntityManager em;
     @Autowired private SprintService sprints;
     @Autowired private SprintRepository sprintRepository;
     @Autowired private SprintCommitmentRepository commitments;
+    @Autowired private SprintOutcomeRepository outcomes;
     @Autowired private ProjectService projects;
     @Autowired private ProjectBoardService boards;
     @Autowired private ProjectRepository projectRepository;
@@ -184,7 +185,7 @@ class SprintPlanningIntegrationTest extends AbstractIntegrationTest {
             Task task = taskRepository.findById(item.id()).orElseThrow();
             task.setStatus(em.getReference(ProjectBoardColumn.class, done.id()));
             em.flush();
-            sprints.complete(sm, sprint.id(), new CompleteSprintRequest(null, false));
+            sprints.complete(sm, sprint.id(), closing(null, false));
         }
         SprintResponse planned = create("Next goal");
         CapacitySuggestionResponse suggestion = sprints.suggestion(viewer, planned.id());
@@ -248,7 +249,7 @@ class SprintPlanningIntegrationTest extends AbstractIntegrationTest {
         SprintResponse current = create("Goal");
         sprints.move(sm, scrumId, new MoveSprintTaskRequest(item.id(), current.id(), null));
         sprints.start(sm, current.id(), null);
-        sprints.complete(sm, current.id(), null);
+        sprints.complete(sm, current.id(), closing(null, false));
         assertThrows(SprintConflictException.class, () -> sprints.update(sm, current.id(), req("Changed")));
         assertThrows(SprintConflictException.class, () -> sprints.delete(sm, current.id()));
         // The completed sprint's original planned end is no longer a date barrier.
@@ -262,16 +263,136 @@ class SprintPlanningIntegrationTest extends AbstractIntegrationTest {
         SprintResponse planned = create("Planned");
         sprints.move(sm, scrumId, new MoveSprintTaskRequest(unfinished.id(), running.id(), null));
         sprints.start(sm, running.id(), null);
-        CompleteSprintResponse finished = sprints.complete(sm, running.id(), new CompleteSprintRequest(planned.id(), false));
+        CompleteSprintResponse finished = sprints.complete(sm, running.id(), closing(planned.id(), false));
         assertEquals(1, finished.carriedOver());
         assertEquals(planned.id(), tasks.get(pm, scrumId, unfinished.id()).sprintId());
         TaskResponse second = createTask("More work", 6);
         sprints.move(sm, scrumId, new MoveSprintTaskRequest(second.id(), planned.id(), null));
         sprints.start(sm, planned.id(), null);
-        CompleteSprintResponse newSprint = sprints.complete(sm, planned.id(), new CompleteSprintRequest(null, true));
+        CompleteSprintResponse newSprint = sprints.complete(sm, planned.id(), closing(null, true));
         assertEquals(2, newSprint.carriedOver());
         assertNotNull(newSprint.toSprint());
         assertEquals(newSprint.toSprint().id(), tasks.get(pm, scrumId, second.id()).sprintId());
+    }
+
+    @Test void closeSendsUnfinishedWorkToTheTopOfTheBacklogAndFreezesTheResult() {
+        TaskResponse waiting = createTask("Already in the backlog", 1);
+        TaskResponse first = createTask("First", 3);
+        TaskResponse second = createTask("Second", 2);
+        TaskResponse done = createTask("Done", 8);
+        SprintResponse sprint = create("Goal");
+        sprints.move(sm, scrumId, new MoveSprintTaskRequest(first.id(), sprint.id(), null));
+        sprints.move(sm, scrumId, new MoveSprintTaskRequest(second.id(), sprint.id(), first.id()));
+        sprints.move(sm, scrumId, new MoveSprintTaskRequest(done.id(), sprint.id(), second.id()));
+        TaskResponse child = subtasks.create(pm, scrumId, first.id(), new CreateSubtaskRequest("Child", null, null, 30));
+        sprints.start(sm, sprint.id(), null);
+        var doneColumn = boards.get(pm, scrumId).columns().stream()
+                .filter(c -> c.category() == BoardColumnCategory.DONE).findFirst().orElseThrow();
+        taskRepository.findById(done.id()).orElseThrow().setStatus(em.getReference(ProjectBoardColumn.class, doneColumn.id()));
+        em.flush();
+
+        // PMP-40: the board shows the active sprint next to the project-wide counts.
+        var board = boards.get(sm, scrumId);
+        assertEquals(13, board.activeSprint().totalPoints());
+        assertEquals(8, board.activeSprint().donePoints());
+        var todoColumn = board.columns().stream().filter(c -> c.id().equals(first.statusId())).findFirst().orElseThrow();
+        assertEquals(2L, todoColumn.sprintTaskCount());
+        assertEquals(1L, todoColumn.sprintSubtaskCount());
+        assertEquals(3, todoColumn.taskCount(), "the backlog task still counts project-wide");
+
+        assertThrows(EarlyCloseConfirmationRequiredException.class, () -> sprints.complete(sm, sprint.id(),
+                new CompleteSprintRequest(null, false, SprintGoalAchieved.PARTIALLY, null, false)));
+        assertThrows(AccessDeniedException.class, () -> sprints.complete(pm, sprint.id(), closing(null, false)));
+        CompleteSprintResponse closed = sprints.complete(sm, sprint.id(),
+                new CompleteSprintRequest(null, false, SprintGoalAchieved.PARTIALLY, " Ran out of time ", true));
+        em.flush();
+        em.clear();
+
+        assertEquals(2, closed.carriedOver());
+        assertEquals(SprintStatus.COMPLETED, closed.sprint().status());
+        assertEquals(8, closed.sprint().completedPoints());
+        assertEquals(5, closed.sprint().unfinishedPoints());
+        assertEquals(SprintGoalAchieved.PARTIALLY, closed.sprint().goalAchieved());
+        assertEquals("Ran out of time", closed.sprint().goalNote());
+        var backlog = tasks.list(pm, scrumId, new team.sprintory_backend.task.api.TaskSearchFilters(
+                        null, null, null, null, null, null, null, true),
+                team.sprintory_backend.task.api.TaskListOrder.BACKLOG, PageRequest.of(0, 100)).content();
+        assertEquals(List.of(first.id(), second.id(), waiting.id()), backlog.stream().map(TaskResponse::id).toList(),
+                "unfinished work goes to the top, in sprint order");
+        assertNull(subtasks.list(viewer, scrumId, first.id()).get(0).sprintId(), "the subtask moves with its parent");
+        assertEquals(1, tasks.get(pm, scrumId, first.id()).carriedOverCount());
+        assertEquals(0, tasks.get(pm, scrumId, done.id()).carriedOverCount());
+        assertEquals(0, tasks.get(pm, scrumId, child.id()).carriedOverCount());
+        assertEquals(sprint.id(), tasks.get(pm, scrumId, done.id()).sprintId(), "done work stays linked");
+        var entry = tasks.history(pm, scrumId, first.id(), team.sprintory_backend.task.api.TaskHistoryOrder.NEWEST,
+                PageRequest.of(0, 20)).content().stream()
+                .filter(e -> e.type() == TaskHistoryType.CARRIED_OVER).findFirst().orElseThrow();
+        assertEquals(sprint.name(), entry.oldValue());
+        assertNull(entry.newValue(), "to the backlog");
+        assertEquals(sprint.id(), entry.refId());
+        assertEquals(List.of(SprintOutcome.Result.CARRIED_OVER, SprintOutcome.Result.CARRIED_OVER, SprintOutcome.Result.DONE),
+                outcomes.findBySprintIdOrderByPositionAsc(sprint.id()).stream().map(SprintOutcome::getOutcome).toList());
+
+        // A later estimate change never touches the frozen result.
+        taskRepository.findById(done.id()).orElseThrow().setEstimate(13);
+        em.flush();
+        assertEquals(8, sprints.get(viewer, sprint.id()).completedPoints());
+        assertThrows(SprintConflictException.class, () -> sprints.move(sm, scrumId,
+                new MoveSprintTaskRequest(waiting.id(), sprint.id(), null)), "an ended sprint takes no items");
+    }
+
+    @Test void onlyTheProductOwnerOrProjectManagerCancelsAndNeedsAReason() {
+        User po = user("Polly", "Owner", "pmp41-po@test.invalid");
+        User dev = user("Dev", "Eloper", "pmp41-dev@test.invalid");
+        for (User u : List.of(po, dev)) {
+            workspaceMembers.save(WorkspaceMember.builder().workspace(ws).user(u).role(Role.WORKSPACE_MEMBER).build());
+        }
+        add(po, ProjectRole.PRODUCT_OWNER);
+        add(dev, ProjectRole.MEMBER);
+        em.flush();
+        TaskResponse waiting = createTask("Already in the backlog", 1);
+        TaskResponse open = createTask("Open", 5);
+        TaskResponse done = createTask("Done", 12);
+        SprintResponse sprint = create("Goal");
+        sprints.move(sm, scrumId, new MoveSprintTaskRequest(open.id(), sprint.id(), null));
+        sprints.move(sm, scrumId, new MoveSprintTaskRequest(done.id(), sprint.id(), open.id()));
+        sprints.start(sm, sprint.id(), null);
+        var doneColumn = boards.get(pm, scrumId).columns().stream()
+                .filter(c -> c.category() == BoardColumnCategory.DONE).findFirst().orElseThrow();
+        taskRepository.findById(done.id()).orElseThrow().setStatus(em.getReference(ProjectBoardColumn.class, doneColumn.id()));
+        em.flush();
+
+        CancelSprintRequest why = new CancelSprintRequest("Goal became obsolete");
+        for (User denied : List.of(sm, dev, viewer)) {
+            assertThrows(AccessDeniedException.class, () -> sprints.cancel(denied, sprint.id(), why), denied.getEmail());
+        }
+        assertThrows(ResourceNotFoundException.class, () -> sprints.cancel(outsider, sprint.id(), why));
+        assertThrows(BadRequestException.class, () -> sprints.cancel(po, sprint.id(), new CancelSprintRequest(" ")));
+
+        CompleteSprintResponse cancelled = sprints.cancel(po, sprint.id(), why);
+        em.flush();
+        em.clear();
+
+        assertEquals(SprintStatus.CANCELLED, cancelled.sprint().status());
+        assertEquals("Goal became obsolete", cancelled.sprint().cancelReason());
+        assertEquals(12, cancelled.sprint().completedPoints());
+        assertEquals(1, cancelled.carriedOver());
+        assertEquals(sprint.id(), tasks.get(pm, scrumId, done.id()).sprintId(), "done items stay linked");
+        var backlog = tasks.list(pm, scrumId, new team.sprintory_backend.task.api.TaskSearchFilters(
+                        null, null, null, null, null, null, null, true),
+                team.sprintory_backend.task.api.TaskListOrder.BACKLOG, PageRequest.of(0, 100)).content();
+        assertEquals(List.of(open.id(), waiting.id()), backlog.stream().map(TaskResponse::id).toList());
+        assertEquals(1, tasks.get(pm, scrumId, open.id()).carriedOverCount());
+        assertTrue(sprints.list(viewer, scrumId).stream().noneMatch(s -> s.id().equals(sprint.id())));
+
+        // The PM may cancel too, and a cancelled sprint never counts toward velocity.
+        SprintResponse second = create("Second");
+        sprints.move(sm, scrumId, new MoveSprintTaskRequest(open.id(), second.id(), null));
+        sprints.start(sm, second.id(), null);
+        sprints.cancel(pm, second.id(), why);
+        em.flush();
+        assertNull(sprints.suggestion(viewer, create("Third").id()).suggestedCapacity(),
+                "no completed sprint yet: no velocity suggestion");
     }
 
     @Test void deletingAndRestoringActiveSprintTaskWritesBothHistories() {
@@ -297,7 +418,7 @@ class SprintPlanningIntegrationTest extends AbstractIntegrationTest {
         sprints.move(sm, scrumId, new MoveSprintTaskRequest(item.id(), sprint.id(), null));
         sprints.start(sm, sprint.id(), null);
         tasks.delete(pm, scrumId, item.id());
-        sprints.complete(sm, sprint.id(), null);
+        sprints.complete(sm, sprint.id(), closing(null, false));
         assertNull(tasks.restore(pm, scrumId, item.id()).sprintId());
     }
 
@@ -315,6 +436,10 @@ class SprintPlanningIntegrationTest extends AbstractIntegrationTest {
 
     private SprintRequest req(String goal) { return new SprintRequest(null, goal, null, null, null); }
     private SprintResponse create(String goal) { return sprints.create(sm, scrumId, req(goal)); }
+    /** A close that answers the goal question and confirms closing before the end date. */
+    private CompleteSprintRequest closing(Long carryOverSprintId, boolean createSprint) {
+        return new CompleteSprintRequest(carryOverSprintId, createSprint, SprintGoalAchieved.YES, null, true);
+    }
     private TaskResponse createTask(String title, Integer estimate) {
         return tasks.create(pm, scrumId, new CreateTaskRequest(title, TaskType.STORY, TaskPriority.MEDIUM,
                 null, estimate, List.of(), null));

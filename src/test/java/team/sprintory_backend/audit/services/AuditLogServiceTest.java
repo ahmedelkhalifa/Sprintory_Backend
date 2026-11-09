@@ -46,6 +46,7 @@ import team.sprintory_backend.audit.models.AuditTarget;
 import team.sprintory_backend.audit.models.AuditTargetType;
 import team.sprintory_backend.audit.repositories.AuditLogRepository;
 import team.sprintory_backend.project.models.Project;
+import team.sprintory_backend.sprint.models.Sprint;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.team.models.Team;
 import team.sprintory_backend.user.models.User;
@@ -192,6 +193,9 @@ class AuditLogServiceTest {
                 AuditTarget.invitation("bob@example.com"));
         assertEquals(new AuditTarget(AuditTargetType.WORKSPACE, 4L, "Acme"), AuditTarget.workspace(workspace));
         assertEquals(new AuditTarget(AuditTargetType.PROJECT, 15L, "Mobile App"), AuditTarget.project(project));
+        Sprint sprint = new Sprint(project, 3, "MOB Sprint 3", "", null, null, null);
+        sprint.setId(7L);
+        assertEquals(new AuditTarget(AuditTargetType.SPRINT, 7L, "MOB Sprint 3"), AuditTarget.sprint(sprint));
     }
 
     @Test
@@ -199,9 +203,11 @@ class AuditLogServiceTest {
         assertEquals(AuditArea.WORKSPACE, AuditAction.MEMBER_LEFT.area());
         assertEquals(AuditArea.TEAM, AuditAction.TEAM_MEMBER_ADDED.area());
         assertEquals(AuditArea.PROJECT, AuditAction.PROJECT_ROLES_CHANGED.area());
+        assertEquals(AuditArea.PROJECT, AuditAction.SPRINT_COMPLETED.area());
+        assertEquals(AuditArea.PROJECT, AuditAction.SPRINT_CANCELLED.area());
         assertEquals(AuditArea.TASK, AuditAction.TASK_RESTORED.area());
         assertEquals(AuditArea.SECURITY, AuditAction.LOGIN_FAILED_REPEATED.area());
-        assertEquals(20, AuditAction.values().length, "a new action needs a migration and a row in the docs");
+        assertEquals(22, AuditAction.values().length, "a new action needs a migration and a row in the docs");
     }
 
     // --- reading the log ---

@@ -20,6 +20,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.BatchSize;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.annotations.SQLRestriction;
@@ -113,6 +114,12 @@ public class Task extends BaseEntity {
 
     @Column(name = "sprint_position")
     private Long sprintPosition;
+
+    /** "Carried over ×N": how many ended sprints this task left unfinished (PMP-41). Parents only. */
+    @Builder.Default
+    @ColumnDefault("0")
+    @Column(name = "carry_over_count", nullable = false)
+    private int carryOverCount = 0;
 
     /** Free-text tags; batch-loaded so a page of tasks does not run one query per row. */
     @Builder.Default

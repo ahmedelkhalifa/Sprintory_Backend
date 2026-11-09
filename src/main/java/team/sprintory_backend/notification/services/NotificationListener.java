@@ -15,7 +15,9 @@ import team.sprintory_backend.notification.events.ProjectRolesChanged;
 import team.sprintory_backend.notification.events.RepeatedLoginFailures;
 import team.sprintory_backend.notification.events.SprintCancelled;
 import team.sprintory_backend.notification.events.SprintCompleted;
+import team.sprintory_backend.notification.events.SprintOverdue;
 import team.sprintory_backend.notification.events.SprintStarted;
+import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.notification.events.TaskAssigned;
 import team.sprintory_backend.notification.events.TaskCommented;
 import team.sprintory_backend.notification.events.TaskCreated;
@@ -139,6 +141,14 @@ public class NotificationListener {
     public void on(SprintCancelled event) {
         notifyProject(NotificationType.SPRINT_CANCELLED, event.project(), event.actor(),
                 NotificationMessages.sprintCancelled(event.actor(), event.project(), event.sprintName()));
+    }
+
+    /** The daily reminder (PMP-41) goes to the Scrum Masters only; it has no actor. */
+    @EventListener
+    public void on(SprintOverdue event) {
+        deliver(NotificationType.SPRINT_OVERDUE, NotificationSubject.project(event.project(), null),
+                projectMembers.findUserIdsByProjectIdAndRole(event.project().getId(), ProjectRole.SCRUM_MASTER),
+                NotificationMessages.sprintOverdue(event.project(), event.sprintName(), event.daysOverdue()), null);
     }
 
     // --- workspace and security: no project, so no member filter ---

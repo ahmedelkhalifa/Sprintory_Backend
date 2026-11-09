@@ -23,6 +23,10 @@ public enum AuditAction {
     PROJECT_MEMBER_ADDED(AuditArea.PROJECT),
     PROJECT_MEMBER_REMOVED(AuditArea.PROJECT),
     PROJECT_ROLES_CHANGED(AuditArea.PROJECT),
+    /** A sprint was closed (PMP-41); the target is the sprint. */
+    SPRINT_COMPLETED(AuditArea.PROJECT),
+    /** A sprint was cancelled (PMP-41); the changes include the reason. */
+    SPRINT_CANCELLED(AuditArea.PROJECT),
 
     TASK_DELETED(AuditArea.TASK),
     /** Written by the task restore endpoint (PMP-131). */

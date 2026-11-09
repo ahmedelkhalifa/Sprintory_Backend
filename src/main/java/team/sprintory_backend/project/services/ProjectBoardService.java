@@ -1,6 +1,9 @@
 package team.sprintory_backend.project.services;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -63,18 +66,41 @@ public class ProjectBoardService {
             throw new ResourceNotFoundException("Project board not found.");
         }
         ProjectBoardTemplateStrategy strategy = strategies.forTemplate(project.getTemplate());
+        boolean scrum = project.getTemplate() == ProjectTemplate.SCRUM;
+        Sprint sprint = scrum
+                ? sprintRepository.findFirstByProjectIdAndStatus(projectId, SprintStatus.ACTIVE).orElse(null)
+                : null;
+        // PMP-40: the Scrum board shows the active sprint's cards; the project-wide counts stay for
+        // WIP and for the column-delete target rule.
+        List<Task> sprintItems = sprint == null ? List.of()
+                : taskRepository.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(sprint.getId());
         List<ProjectBoardColumnResponse> columns = active(projectId).stream()
                 .map(c -> ProjectBoardColumnResponse.from(c,
                         taskRepository.countByProjectIdAndStatusIdAndParentIsNull(projectId, c.getId()),
-                        taskRepository.countByProjectIdAndStatusIdAndParentIsNotNull(projectId, c.getId())))
+                        taskRepository.countByProjectIdAndStatusIdAndParentIsNotNull(projectId, c.getId()),
+                        scrum ? sprintItems.stream().filter(t -> t.getStatus().getId().equals(c.getId())).count() : null,
+                        !scrum ? null : sprint == null ? 0L
+                                : taskRepository.countByProjectIdAndStatusIdAndParentSprintId(projectId, c.getId(), sprint.getId())))
                 .toList();
         return new ProjectBoardResponse(projectId, project.getTemplate(), strategy.backlogEnabled(),
                 strategy.sprintsEnabled(), strategy.wipLimitsEnabled(),
-                project.getTemplate() == ProjectTemplate.SCRUM
-                    ? sprintRepository.findFirstByProjectIdAndStatus(projectId,
-                        SprintStatus.ACTIVE)
-                        .map(Sprint::getId).orElse(null)
-                    : null, columns);
+                sprint == null ? null : sprint.getId(), columns,
+                sprint == null ? null : summary(sprint, sprintItems));
+    }
+
+    /** The Scrum board header (PMP-40). Done means a DONE-category column; no partial credit. */
+    private static ActiveSprintSummary summary(Sprint sprint, List<Task> items) {
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        int total = 0;
+        int done = 0;
+        for (Task task : items) {
+            int points = task.getEstimate() == null ? 0 : task.getEstimate();
+            total += points;
+            if (task.getStatus().getCategory() == BoardColumnCategory.DONE) done += points;
+        }
+        int daysLeft = (int) Math.max(0, ChronoUnit.DAYS.between(today, sprint.getEndDate()));
+        return new ActiveSprintSummary(sprint.getId(), sprint.getName(), sprint.getGoal(), sprint.getStartDate(),
+                sprint.getEndDate(), daysLeft, today.isAfter(sprint.getEndDate()), total, done);
     }
 
     @Transactional

@@ -47,6 +47,9 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
 
     long countByParentId(Long parentId);
 
+    /** Live subtasks in the column whose parent is in the sprint: the Scrum board's subtask count (PMP-40). */
+    long countByProjectIdAndStatusIdAndParentSprintId(Long projectId, Long statusId, Long sprintId);
+
     /** Active child tasks with this status, for column deletion UI (not WIP). */
     long countByProjectIdAndStatusIdAndParentIsNotNull(Long projectId, Long statusId);
 
@@ -70,16 +73,19 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
             + "group by t.parent_task_id", nativeQuery = true)
     List<Object[]> findSubtaskProgress(@Param("parentIds") Collection<Long> parentIds);
 
-    /** Deleted tasks cannot be fetched by JPA because Task has @SQLRestriction. */
+    /**
+     * Deleted tasks cannot be fetched by JPA because Task has @SQLRestriction. A task whose sprint
+     * has ended (closed or cancelled) comes back to the backlog, never into read-only work.
+     */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(value = """
             update tasks t set deleted_at = null, deleted_with_parent_id = null,
                 updated_at = now(), updated_by = :actor,
                 sprint_id = case when exists (
-                    select 1 from sprints s where s.id = t.sprint_id and s.status = 'COMPLETED'
+                    select 1 from sprints s where s.id = t.sprint_id and s.status in ('COMPLETED', 'CANCELLED')
                 ) then null else t.sprint_id end,
                 sprint_position = case when exists (
-                    select 1 from sprints s where s.id = t.sprint_id and s.status = 'COMPLETED'
+                    select 1 from sprints s where s.id = t.sprint_id and s.status in ('COMPLETED', 'CANCELLED')
                 ) then null else t.sprint_position end,
                 status_column_id = case when exists (
                     select 1 from project_board_columns c
@@ -100,10 +106,10 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
             update tasks t set deleted_at = null, deleted_with_parent_id = null,
                 updated_at = now(), updated_by = :actor,
                 sprint_id = case when exists (
-                    select 1 from sprints s where s.id = t.sprint_id and s.status = 'COMPLETED'
+                    select 1 from sprints s where s.id = t.sprint_id and s.status in ('COMPLETED', 'CANCELLED')
                 ) then null else t.sprint_id end,
                 sprint_position = case when exists (
-                    select 1 from sprints s where s.id = t.sprint_id and s.status = 'COMPLETED'
+                    select 1 from sprints s where s.id = t.sprint_id and s.status in ('COMPLETED', 'CANCELLED')
                 ) then null else t.sprint_position end,
                 status_column_id = case when exists (
                     select 1 from project_board_columns c
@@ -141,6 +147,11 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
     /** The highest backlog rank in the project, or null if it has no tasks. */
     @Query("select max(t.backlogRank) from Task t where t.project.id = :projectId and t.parent is null")
     Long findMaxBacklogRank(@Param("projectId") Long projectId);
+
+    /** The first rank of the Scrum backlog (top-level, in no sprint); null when it is empty. */
+    @Query("select min(t.backlogRank) from Task t where t.project.id = :projectId and t.parent is null "
+            + "and t.sprint is null")
+    Long findMinBacklogRankOfBacklog(@Param("projectId") Long projectId);
 
     /**
      * The task right after {@code position} in a column, ignoring {@code taskId} (the one being

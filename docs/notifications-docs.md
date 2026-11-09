@@ -282,8 +282,9 @@ Every `type` value, its preference `category`, who receives it and what it links
 | `PROJECT_MEMBER_ADDED` | `PROJECT_MEMBERSHIP` | You are added to a project, directly or through a team (`POST /projects/{id}/members`, `/teams`). The creator of a new project gets nothing (they are the actor). | the added person | no | `PROJECT` | *Damir Gabaidullin added you to the project "Mobile App"* |
 | `PROJECT_ROLES_CHANGED` | `PROJECT_MEMBERSHIP` | Your project roles change (`PUT /projects/{id}/members/{userId}/roles`) and the set actually differs | the person whose roles changed | no | `PROJECT` | *Damir Gabaidullin changed your roles in "Mobile App" to Project Manager, Member* |
 | `SPRINT_STARTED` | `SPRINT` | A sprint is started. **Published by PMP-119 at sprint start.** | every project member | no | `PROJECT` | *Damir Gabaidullin started "MOB Sprint 4" in "Mobile App"* |
-| `SPRINT_COMPLETED` | `SPRINT` | A sprint is closed. **Produced once PMP-122 ships.** | every project member | no | `PROJECT` | *Damir Gabaidullin completed "MOB Sprint 4" in "Mobile App"* |
-| `SPRINT_CANCELLED` | `SPRINT` | A sprint is cancelled. **Produced once PMP-122 ships.** | every project member | no | `PROJECT` | *Damir Gabaidullin cancelled "MOB Sprint 4" in "Mobile App"* |
+| `SPRINT_COMPLETED` | `SPRINT` | A sprint is closed. **Published by PMP-41 at close.** | every project member | no | `PROJECT` | *Damir Gabaidullin completed "MOB Sprint 4" in "Mobile App"* |
+| `SPRINT_CANCELLED` | `SPRINT` | A sprint is cancelled. **Published by PMP-41 at cancel**; the reason is never sent. | every project member | no | `PROJECT` | *Damir Gabaidullin cancelled "MOB Sprint 4" in "Mobile App"* |
+| `SPRINT_OVERDUE` | `SPRINT` | Daily at 09:00 UTC while the active sprint is past its end date (`SprintReminderJob`, PMP-41). No actor. | the project's **Scrum Masters** only | no | `PROJECT` | *"MOB Sprint 3" in "Mobile App" ended 2 days ago and is still active. Close it to carry over unfinished work.* |
 | `WORKSPACE_INVITATION` | `INVITATION` 🔒 | An admin invites your email to a workspace (`POST /workspaces/{id}/invitations`) **and the email already has an account**. An email with no account gets only the invitation email. | the invited account | no | `NONE` | *Ada Lovelace invited you to the workspace "Acme". Open the invitation email to join.* |
 | `PASSWORD_RESET` | `SECURITY` 🔒 | Your password was changed through the "forgot password" link | you (`actor: null`) | no | `NONE` | *Your password was changed. If this wasn't you, reset it again now and contact your workspace admin.* |
 | `LOGIN_FAILED_REPEATED` | `SECURITY` 🔒 | 5 wrong passwords for your account within 15 minutes (the same detection as the audit log's `LOGIN_FAILED_REPEATED`) | you (`actor: null`) | no | `NONE` | *There were 5 failed sign-in attempts on your account. If this wasn't you, change your password.* |
@@ -310,7 +311,7 @@ The matrix the preferences page shows, in this order, with the defaults. **A use
 | `COMMENT` | `TASK_COMMENTED` | on | off | no |
 | `STATUS_CHANGE` | `TASK_STATUS_CHANGED` | on | off | no |
 | `PROJECT_MEMBERSHIP` | `PROJECT_MEMBER_ADDED`, `PROJECT_ROLES_CHANGED` | on | off | no |
-| `SPRINT` | `SPRINT_STARTED`, `SPRINT_COMPLETED`, `SPRINT_CANCELLED` | on | off | no |
+| `SPRINT` | `SPRINT_STARTED`, `SPRINT_COMPLETED`, `SPRINT_CANCELLED`, `SPRINT_OVERDUE` | on | off | no |
 | `INVITATION` | `WORKSPACE_INVITATION` | on | on | **yes** |
 | `SECURITY` | `PASSWORD_RESET`, `LOGIN_FAILED_REPEATED` | on | on | **yes** |
 
@@ -388,6 +389,7 @@ Emails contain the task key, title, the excerpt if any, a link to the item, and 
    | `PROJECT_MEMBER_ADDED` | `[Sprintory] You were added to Mobile App` |
    | `PROJECT_ROLES_CHANGED` | `[Sprintory] Your roles in Mobile App changed` |
    | `SPRINT_STARTED` / `SPRINT_COMPLETED` / `SPRINT_CANCELLED` | `[Sprintory] A sprint started in Mobile App` / `… was completed in …` / `… was cancelled in …` |
+   | `SPRINT_OVERDUE` | `[Sprintory] A sprint is past its end date in Mobile App` |
    | `PASSWORD_RESET` | `[Sprintory] Your password was changed` |
    | `LOGIN_FAILED_REPEATED` | `[Sprintory] Failed sign-in attempts on your account` |
    | `WORKSPACE_INVITATION` | not sent by notifications: the invitation email is the email |
@@ -479,7 +481,7 @@ As of 4 Nov 2026, on branch `features/notifications`:
 | Manual end-to-end run with Mailpit (the acceptance criteria) | Not done yet |
 | Producers for comments (PMP-133) and mentions (PMP-136) | Done (5 Nov 2026), against [comments-docs.md](./comments-docs.md) and [mentions-docs.md](./mentions-docs.md). Posting publishes `TaskCommented`; editing a comment and creating or editing a task or subtask description publish `Mentioned` with the newly added ids only |
 | Chat mentions (PMP-137) | Done (6 Nov 2026). `ChatService` publishes `ProjectChatMentioned` on send and edit, with the newly added ids only; `NotificationListenerTest`, `NotificationEmailsTest`, and `MentionIntegrationTest` end to end on PostgreSQL |
-| Producers for sprints (PMP-119, PMP-122) | Waiting for those features. They only publish the event ([§15](#15-notes-for-backend-developers)) |
+| Producers for sprints (PMP-119, PMP-41) | Done: start, close and cancel publish their events; `SprintReminderJob` publishes `SprintOverdue` daily (V16 adds the type) |
 | Frontend (PMP-114) and acceptance test (PMP-115) | Not started |
 
 ---
@@ -501,6 +503,7 @@ As of 4 Nov 2026, on branch `features/notifications`:
 | 3 Nov 2026 | Emails go through a persisted outbox with retries (1 min, 5 min, 15 min, 1 h, 6 h, then `FAILED`). Frontend routes in emails are configuration properties. |
 | 3 Nov 2026 | Retention: 90 days for notifications and finished outbox rows, cleaned nightly. This is a team choice. |
 | 3 Nov 2026 | `SPRINT_CANCELLED` is defined next to started and completed, because PMP-41 notifies members on cancel too. Comment, mention and sprint types are defined now, so those features need no migration. |
+| 9 Nov 2026 | `SPRINT_OVERDUE` (PMP-41, V16): a daily reminder to the **Scrum Masters only** while the active sprint is past its end date, in the `SPRINT` category so the same switch controls it. |
 | 6 Nov 2026 | A chat mention is its own event, `ProjectChatMentioned`, not `Mentioned` with an optional task: a chat has no task, and `Mentioned` keeps its task. It reuses the `MENTIONED` type and the `MENTION` preference (no migration), and the notification is about the project. |
 
 ---
@@ -519,11 +522,16 @@ events.publishEvent(new Mentioned(task, user, newlyMentionedUserIds, plainText))
 // PMP-137, mentions in a chat message (only the newly added ids):
 events.publishEvent(new ProjectChatMentioned(project, user, messageId, newlyMentionedUserIds, plainText));
 
-// PMP-119 / PMP-122, after the state change:
+// PMP-119 / PMP-41 (SprintService), after the state change:
 events.publishEvent(new SprintStarted(project, user, sprint.getName()));
 events.publishEvent(new SprintCompleted(project, user, sprint.getName()));
 events.publishEvent(new SprintCancelled(project, user, sprint.getName()));
+
+// PMP-41 SprintReminderJob, daily at 09:00 UTC, one transaction per overdue active sprint:
+events.publishEvent(new SprintOverdue(sprint.getProject(), sprint.getName(), daysOverdue));
 ```
+
+`SprintOverdue` has no actor; the listener sends it only to the members holding `SCRUM_MASTER` (`ProjectMemberRepository.findUserIdsByProjectIdAndRole`). The job runs once a day, so a Scrum Master gets at most one reminder per sprint per day; it re-reads the sprint inside its transaction and skips one closed since the query.
 
 Rules:
 1. **Publish only real changes.** For example, "assigned to the same person" publishes nothing.

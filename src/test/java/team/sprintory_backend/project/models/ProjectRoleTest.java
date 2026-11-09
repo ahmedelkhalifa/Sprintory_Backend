@@ -20,9 +20,10 @@ class ProjectRoleTest {
     void everyRoleHasExactlyThePermissionsOfTheMatrix() {
         Map<ProjectRole, Set<ProjectPermission>> matrix = Map.of(
                 PROJECT_MANAGER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, EDIT_SETTINGS, ARCHIVE_PROJECT,
-                        MANAGE_MEMBERS, MANAGE_ROLES, CONFIGURE_BOARD, EDIT_TASKS, COMMENT, MODERATE_COMMENTS,
+                        MANAGE_MEMBERS, MANAGE_ROLES, CONFIGURE_BOARD, CANCEL_SPRINTS, EDIT_TASKS, COMMENT,
+                        MODERATE_COMMENTS, EDIT_CHARTER, LOG_TIME),
+                PRODUCT_OWNER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, CANCEL_SPRINTS, EDIT_TASKS, COMMENT,
                         EDIT_CHARTER, LOG_TIME),
-                PRODUCT_OWNER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, EDIT_TASKS, COMMENT, EDIT_CHARTER, LOG_TIME),
                 SCRUM_MASTER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_SPRINTS, EDIT_TASKS, COMMENT, LOG_TIME),
                 MEMBER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, EDIT_TASKS, COMMENT, LOG_TIME),
                 VIEWER, EnumSet.of(VIEW_PROJECT, VIEW_WORK));
@@ -73,7 +74,7 @@ class ProjectRoleTest {
     void permissionsOfCombinesAllRoles() {
         Set<ProjectPermission> combined = ProjectRole.permissionsOf(List.of(PRODUCT_OWNER, SCRUM_MASTER));
 
-        assertEquals(EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, MANAGE_SPRINTS,
+        assertEquals(EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, MANAGE_SPRINTS, CANCEL_SPRINTS,
                 EDIT_TASKS, COMMENT, EDIT_CHARTER, LOG_TIME), combined);
     }
 
@@ -135,6 +136,18 @@ class ProjectRoleTest {
                     role.permissions().contains(EDIT_CHARTER), role.name());
         }
         assertFalse(ProjectPermission.WORKSPACE_ADMIN.contains(EDIT_CHARTER));
+    }
+
+    // --- PMP-41 cancel a sprint ---
+
+    @Test
+    void onlyTheProductOwnerAndProjectManagerCancelSprints() {
+        for (ProjectRole role : ProjectRole.values()) {
+            assertEquals(role == PRODUCT_OWNER || role == PROJECT_MANAGER,
+                    role.permissions().contains(CANCEL_SPRINTS), role.name());
+        }
+        assertFalse(SCRUM_MASTER.permissions().contains(CANCEL_SPRINTS), "the Scrum Master closes, never cancels");
+        assertFalse(ProjectPermission.WORKSPACE_ADMIN.contains(CANCEL_SPRINTS), "admins do not see project work");
     }
 
     // --- story 6 acceptance criterion 14 ---

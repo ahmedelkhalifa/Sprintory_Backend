@@ -65,10 +65,22 @@ public class SprintController {
         return sprints.start(principal.getUser(), sprintId, body);
     }
 
+    @GetMapping("/sprints/{sprintId}/close-preview")
+    public CloseSprintPreviewResponse closePreview(@AuthenticationPrincipal AppUserDetails principal,
+            @PathVariable Long sprintId) {
+        return sprints.closePreview(principal.getUser(), sprintId);
+    }
+
     @PostMapping("/sprints/{sprintId}/complete")
     public CompleteSprintResponse complete(@AuthenticationPrincipal AppUserDetails principal,
-            @PathVariable Long sprintId, @RequestBody(required = false) CompleteSprintRequest body) {
+            @PathVariable Long sprintId, @Valid @RequestBody CompleteSprintRequest body) {
         return sprints.complete(principal.getUser(), sprintId, body);
+    }
+
+    @PostMapping("/sprints/{sprintId}/cancel")
+    public CompleteSprintResponse cancel(@AuthenticationPrincipal AppUserDetails principal,
+            @PathVariable Long sprintId, @Valid @RequestBody CancelSprintRequest body) {
+        return sprints.cancel(principal.getUser(), sprintId, body);
     }
 
     @PostMapping("/projects/{projectId}/sprints/move")

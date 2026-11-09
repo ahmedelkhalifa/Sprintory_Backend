@@ -77,6 +77,11 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
                                                           @Param("userId") Long userId);
 
     /** How many members of the project hold the role, e.g. for "at least one Project Manager". */
+    /** The members holding {@code role}, e.g. the Scrum Masters for the overdue-sprint reminder. */
+    @Query("select distinct pm.user.id from ProjectMember pm join pm.roles r "
+            + "where pm.project.id = :projectId and r = :role")
+    List<Long> findUserIdsByProjectIdAndRole(@Param("projectId") Long projectId, @Param("role") ProjectRole role);
+
     @Query("select count(pm) from ProjectMember pm join pm.roles r where pm.project.id = :projectId and r = :role")
     long countByProjectIdAndRole(@Param("projectId") Long projectId, @Param("role") ProjectRole role);
 

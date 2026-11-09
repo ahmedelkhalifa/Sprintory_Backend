@@ -44,12 +44,34 @@ class SprintControllerTest {
         assertEquals(ErrorCode.SPRINT_ALREADY_ACTIVE, response.getBody().getCode());
     }
 
+    @Test void earlyCloseMapsTo409WithItsOwnCode() {
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getRequestURI()).thenReturn("/api/v1/sprints/6/complete");
+        var response = new ExceptionHandler().handleEarlyClose(
+                new team.sprintory_backend.sprint.exceptions.EarlyCloseConfirmationRequiredException(
+                        java.time.LocalDate.of(2026, 11, 20)), request);
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals(ErrorCode.EARLY_CLOSE_CONFIRMATION_REQUIRED, response.getBody().getCode());
+        assertTrue(response.getBody().getMessage().contains("confirmEarlyClose=true"));
+    }
+
     @Test void archivedWorkspaceMapsTo409() {
         HttpServletRequest request = mock(HttpServletRequest.class);
         when(request.getRequestURI()).thenReturn("/api/v1/sprints/6");
         var response = new ExceptionHandler().handleWorkspaceArchived(request);
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertEquals(ErrorCode.WORKSPACE_ARCHIVED, response.getBody().getCode());
+    }
+
+    @Test void closePreviewDelegatesToTheService() {
+        controller.closePreview(principal, 6L);
+        verify(service).closePreview(actor, 6L);
+    }
+
+    @Test void cancelDelegatesToTheService() {
+        var body = new team.sprintory_backend.sprint.dto.CancelSprintRequest("Goal became obsolete");
+        controller.cancel(principal, 6L, body);
+        verify(service).cancel(actor, 6L, body);
     }
 
     @Test void sprintLengthUsesTypedResponse() {

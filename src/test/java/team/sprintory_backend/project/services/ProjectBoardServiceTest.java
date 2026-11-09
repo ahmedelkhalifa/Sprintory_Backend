@@ -34,6 +34,7 @@ class ProjectBoardServiceTest {
     private TaskStatusHistoryService history;
     private ProjectRepository projects;
     private List<ProjectBoardColumn> live;
+    private team.sprintory_backend.sprint.repositories.SprintRepository sprints;
 
     @BeforeEach
     void setUp() {
@@ -43,6 +44,7 @@ class ProjectBoardServiceTest {
         access = mock(ProjectAccess.class);
         history = mock(TaskStatusHistoryService.class);
         projects = mock(ProjectRepository.class);
+        sprints = mock(team.sprintory_backend.sprint.repositories.SprintRepository.class);
         project = Project.builder().id(projectId).template(ProjectTemplate.KANBAN).build();
         ProjectBoard board = new ProjectBoard(project);
         live = new ArrayList<>();
@@ -60,7 +62,7 @@ class ProjectBoardServiceTest {
         when(access.requireVisible(projectId, pm)).thenReturn(granted);
         service = new ProjectBoardService(boards, columns,
                 new ProjectBoardStrategies(List.of(new KanbanBoardStrategy(), new ScrumBoardStrategy())),
-                access, projects, tasks, history, mock(team.sprintory_backend.sprint.repositories.SprintRepository.class));
+                access, projects, tasks, history, sprints);
     }
 
     @Test
@@ -73,6 +75,82 @@ class ProjectBoardServiceTest {
         assertTrue(column.wipExceeded());
         when(tasks.countByProjectIdAndStatusIdAndParentIsNull(projectId, 3L)).thenReturn(3L);
         assertFalse(service.get(pm, projectId).columns().get(2).wipExceeded());
+    }
+
+    // --- PMP-40: the Scrum board shows the active sprint ---
+
+    private team.sprintory_backend.sprint.models.Sprint activeSprint(java.time.LocalDate end) {
+        project.setTemplate(ProjectTemplate.SCRUM);
+        var sprint = new team.sprintory_backend.sprint.models.Sprint(project, 3, "SPR Sprint 3", "Ship login",
+                null, end.minusDays(13), end);
+        sprint.setId(30L);
+        sprint.setStatus(team.sprintory_backend.sprint.models.SprintStatus.ACTIVE);
+        when(sprints.findFirstByProjectIdAndStatus(projectId, team.sprintory_backend.sprint.models.SprintStatus.ACTIVE))
+                .thenReturn(Optional.of(sprint));
+        return sprint;
+    }
+
+    private Task card(long id, ProjectBoardColumn status, Integer estimate) {
+        return Task.builder().id(id).project(project).status(status).estimate(estimate).build();
+    }
+
+    @Test
+    void scrumBoardCountsOnlyTheActiveSprintNextToTheProjectWideCounts() {
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        activeSprint(today.plusDays(4));
+        when(tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(30L))
+                .thenReturn(List.of(card(10, live.get(1), 5), card(11, live.get(1), null), card(12, live.get(3), 8)));
+        when(tasks.countByProjectIdAndStatusIdAndParentIsNull(projectId, 2L)).thenReturn(7L); // backlog tasks too
+        when(tasks.countByProjectIdAndStatusIdAndParentSprintId(projectId, 2L, 30L)).thenReturn(3L);
+
+        ProjectBoardResponse board = service.get(pm, projectId);
+
+        ProjectBoardColumnResponse todo = board.columns().get(1);
+        assertEquals(7, todo.taskCount(), "project-wide count stays for WIP and column delete");
+        assertEquals(2L, todo.sprintTaskCount());
+        assertEquals(3L, todo.sprintSubtaskCount());
+        assertEquals(1L, board.columns().get(3).sprintTaskCount());
+        assertEquals(0L, board.columns().get(2).sprintTaskCount());
+        assertEquals(30L, board.activeSprintId());
+        ActiveSprintSummary summary = board.activeSprint();
+        assertEquals("SPR Sprint 3", summary.name());
+        assertEquals("Ship login", summary.goal());
+        assertEquals(today.plusDays(4), summary.endDate());
+        assertEquals(4, summary.daysLeft());
+        assertFalse(summary.overdue());
+        assertEquals(13, summary.totalPoints());
+        assertEquals(8, summary.donePoints(), "only the DONE column counts; no partial credit");
+    }
+
+    @Test
+    void anOverdueSprintShowsZeroDaysLeftAndTheOverdueFlag() {
+        activeSprint(java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(2));
+        ActiveSprintSummary summary = service.get(pm, projectId).activeSprint();
+        assertEquals(0, summary.daysLeft());
+        assertTrue(summary.overdue());
+        assertEquals(0, summary.totalPoints());
+    }
+
+    @Test
+    void aScrumBoardWithoutAnActiveSprintShowsNoCards() {
+        project.setTemplate(ProjectTemplate.SCRUM);
+        when(tasks.countByProjectIdAndStatusIdAndParentIsNull(projectId, 2L)).thenReturn(7L);
+
+        ProjectBoardResponse board = service.get(pm, projectId);
+
+        assertNull(board.activeSprintId());
+        assertNull(board.activeSprint());
+        assertEquals(7, board.columns().get(1).taskCount());
+        assertTrue(board.columns().stream().allMatch(c -> c.sprintTaskCount() == 0L && c.sprintSubtaskCount() == 0L));
+        verify(tasks, never()).findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(any());
+    }
+
+    @Test
+    void aKanbanBoardHasNoSprintCountsOrSummary() {
+        ProjectBoardResponse board = service.get(pm, projectId);
+        assertNull(board.activeSprint());
+        assertTrue(board.columns().stream().allMatch(c -> c.sprintTaskCount() == null && c.sprintSubtaskCount() == null));
+        verifyNoInteractions(sprints);
     }
 
     @Test

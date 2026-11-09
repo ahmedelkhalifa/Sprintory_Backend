@@ -57,6 +57,7 @@ The creator of a workspace is its first admin; people who accept an invitation j
 | `CONFIGURE_BOARD` | Board columns, categories and WIP limits | R16 / PMP-125 | ✓ | | | | | ✓ |
 | `MANAGE_BACKLOG` | Order and prioritize the backlog | R13 | | ✓ | | | | |
 | `MANAGE_SPRINTS` | Plan, start and close sprints | R14, R15 | | | ✓ | | | |
+| `CANCEL_SPRINTS` | Cancel an active sprint whose goal became obsolete | R15 / PMP-41 | ✓ | ✓ | | | | |
 | `EDIT_TASKS` | Create, edit and delete tasks | Story 9 | ✓ | ✓ | ✓ | ✓ | | |
 | `COMMENT` | Comment on tasks; edit and delete own comments | R10 | ✓ | ✓ | ✓ | ✓ | | |
 | `MODERATE_COMMENTS` | Delete anyone's comment, chat message or attachment (never edit it) | R10 / PMP-133, R25 / PMP-141 | ✓ | | | | | |
@@ -64,8 +65,9 @@ The creator of a workspace is its first admin; people who accept an invitation j
 | `LOG_TIME` | Log time on tasks | R19 | ✓ | ✓ | ✓ | ✓ | | |
 
 - **WS Admin** is what a workspace admin gets in **every** project of their workspace, whether or not they are a member of it. They manage the project but **do not see its work** unless they are a member (story 7). An admin who is also a project member gets the admin column plus their project roles combined.
-- **Strict Scrum roles:** only the Product Owner orders the backlog and only the Scrum Master runs sprints. A Project Manager who should do either gives themselves that role too.
-- **Enforced today:** the R02 and R03 permissions, `VIEW_WORK` (tasks/history and normal board reads), `EDIT_SETTINGS` (`PATCH /projects/{id}`), `CONFIGURE_BOARD` (PMP-125 board mutations and admin configuration read), `EDIT_TASKS` (task create, edit, delete, board moves), `MANAGE_BACKLOG` (backlog reordering), and from PMP-133 `COMMENT` and `MODERATE_COMMENTS` (comments). See [board-docs.md](./board-docs.md), [tasks-docs.md](./tasks-docs.md) and [comments-docs.md](./comments-docs.md). The charter uses `EDIT_CHARTER` (PMP-116, see [project-charter-docs.md](./project-charter-docs.md)). Attachments (PMP-141) use `VIEW_WORK` to list and download, `EDIT_TASKS` to upload and delete one's own, and `MODERATE_COMMENTS` to delete anyone's (see [attachments-docs.md](./attachments-docs.md)). The others are defined ahead of their features; each feature checks its permission when it is built.
+- **Strict Scrum roles:** only the Product Owner orders the backlog and only the Scrum Master runs sprints (plan, start, close). A Project Manager who should do either gives themselves that role too.
+- **Cancelling a sprint** (PMP-41) is the Product Owner's call, with the Project Manager as an override; the Scrum Master, Developers and Viewers get `403`, through the UI and the API. Workspace admins who are not members cannot cancel either.
+- **Enforced today:** the R02 and R03 permissions, `VIEW_WORK` (tasks/history and normal board reads), `EDIT_SETTINGS` (`PATCH /projects/{id}`), `CONFIGURE_BOARD` (PMP-125 board mutations and admin configuration read), `EDIT_TASKS` (task create, edit, delete, board moves), `MANAGE_BACKLOG` (backlog reordering), `MANAGE_SPRINTS` and `CANCEL_SPRINTS` (sprints, see [sprints-docs.md](./sprints-docs.md)), and from PMP-133 `COMMENT` and `MODERATE_COMMENTS` (comments). See [board-docs.md](./board-docs.md), [tasks-docs.md](./tasks-docs.md) and [comments-docs.md](./comments-docs.md). The charter uses `EDIT_CHARTER` (PMP-116, see [project-charter-docs.md](./project-charter-docs.md)). Attachments (PMP-141) use `VIEW_WORK` to list and download, `EDIT_TASKS` to upload and delete one's own, and `MODERATE_COMMENTS` to delete anyone's (see [attachments-docs.md](./attachments-docs.md)). The others are defined ahead of their features; each feature checks its permission when it is built.
 - The matrix is fixed in code (`ProjectRole`), not configurable per workspace.
 
 ### Examples
@@ -105,7 +107,7 @@ Example project response for a Scrum Master who is also Product Owner:
   "name": "Mobile App",
   "template": "SCRUM",
   "roles": ["PRODUCT_OWNER", "SCRUM_MASTER"],
-  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "MANAGE_BACKLOG", "MANAGE_SPRINTS", "EDIT_TASKS", "COMMENT", "LOG_TIME"]
+  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "MANAGE_BACKLOG", "MANAGE_SPRINTS", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "EDIT_CHARTER", "LOG_TIME"]
 }
 ```
 
