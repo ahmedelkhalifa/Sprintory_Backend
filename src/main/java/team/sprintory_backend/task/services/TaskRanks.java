@@ -6,7 +6,7 @@ package team.sprintory_backend.task.services;
  * When two neighbours have no room left between them, the caller renumbers the whole list once.
  * Ranks may be negative (a task moved before the first one).
  */
-final class TaskRanks {
+public final class TaskRanks {
 
     static final long GAP = 1_000_000L;
 
@@ -16,6 +16,20 @@ final class TaskRanks {
     /** The rank for the last place: after {@code highest}, or {@link #GAP} in an empty list. */
     static long last(Long highest) {
         return highest == null ? GAP : highest + GAP;
+    }
+
+    /**
+     * Ranks for {@code count} tasks placed at the top of a list, in the given order, above
+     * {@code lowest} (the current first rank; null for an empty list). Used when an ended sprint
+     * returns its unfinished work to the top of the backlog (PMP-41).
+     */
+    public static long[] above(Long lowest, int count) {
+        long first = (lowest == null ? 0 : lowest) - GAP * count;
+        long[] ranks = new long[count];
+        for (int i = 0; i < count; i++) {
+            ranks[i] = first + GAP * i;
+        }
+        return ranks;
     }
 
     /**

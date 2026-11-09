@@ -19,5 +19,11 @@ public enum TaskHistoryType {
     /** An attachment was deleted (R25); {@code oldValue} is its file name, {@code refId} the attachment id. */
     ATTACHMENT_REMOVED,
     /** Added to or removed from a sprint; old/new values are sprint name snapshots. */
-    SPRINT_SCOPE_CHANGED
+    SPRINT_SCOPE_CHANGED,
+    /**
+     * Left an ended sprint unfinished (PMP-41); {@code oldValue} is the source sprint's name,
+     * {@code newValue} the destination sprint's name (null for the backlog), {@code refId} the
+     * source sprint id.
+     */
+    CARRIED_OVER
 }

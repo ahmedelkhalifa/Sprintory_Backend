@@ -65,6 +65,13 @@ public final class NotificationMessages {
         return name(actor) + " cancelled " + quoted(sprintName) + " in " + quoted(project.getName());
     }
 
+    /** "MOB Sprint 3" in "Mobile App" ended 2 days ago and is still active. Close it to carry over unfinished work. */
+    public static String sprintOverdue(Project project, String sprintName, long daysOverdue) {
+        return quoted(sprintName) + " in " + quoted(project.getName()) + " ended "
+                + (daysOverdue == 1 ? "1 day" : daysOverdue + " days")
+                + " ago and is still active. Close it to carry over unfinished work.";
+    }
+
     public static String invited(User inviter, Workspace workspace) {
         return name(inviter) + " invited you to the workspace " + quoted(workspace.getName())
                 + ". Open the invitation email to join.";

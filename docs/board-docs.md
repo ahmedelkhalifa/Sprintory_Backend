@@ -237,7 +237,7 @@ The frontend implementation is **PMP-126**, not part of this backend delivery.
 - **Subtasks:** PMP-132 excludes child tasks from WIP counts and board cards. Deleting a column still moves live child tasks along with their parent cards, preserving individual status histories.
 - **PMP-132 API:** `ProjectBoardColumnResponse.subtaskCount` counts live children separately. It does not affect `taskCount` or WIP. When deleting a column, the frontend requests a relocation target if `taskCount + subtaskCount > 0`.
 - **Status history only, in PMP-125.** PMP-133 extends it to every task field change, deleted comments and subtasks ([task-history-docs.md](./task-history-docs.md)).
-- **Sprint lifecycle (PMP-119).** `activeSprintId` is the currently ACTIVE Scrum sprint, or `null` without one. See [sprints-docs.md](./sprints-docs.md).
+- **Sprint lifecycle (PMP-119, PMP-40).** `activeSprintId` is the currently ACTIVE Scrum sprint, or `null` without one, and `activeSprint` its header summary (name, goal, dates, `daysLeft`, `overdue`, total and done points). Each Scrum column also has `sprintTaskCount` / `sprintSubtaskCount`, the active sprint's cards; `taskCount` / `subtaskCount` stay project-wide so the delete rule above still sees backlog tasks. Kanban columns have `null` there. See [projects-docs.md §3.8](./projects-docs.md) and [sprints-docs.md](./sprints-docs.md).
 - **No client UI changes in PMP-125.** PMP-126 integrates these endpoints, then PMP-127 verifies end-to-end acceptance.
 
 ---

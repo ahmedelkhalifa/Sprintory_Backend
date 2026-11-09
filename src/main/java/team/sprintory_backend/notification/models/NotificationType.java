@@ -14,6 +14,8 @@ public enum NotificationType {
     SPRINT_STARTED(NotificationCategory.SPRINT),
     SPRINT_COMPLETED(NotificationCategory.SPRINT),
     SPRINT_CANCELLED(NotificationCategory.SPRINT),
+    /** Daily, to the Scrum Masters, while the active sprint is past its end date (PMP-41). */
+    SPRINT_OVERDUE(NotificationCategory.SPRINT),
     WORKSPACE_INVITATION(NotificationCategory.INVITATION),
     PASSWORD_RESET(NotificationCategory.SECURITY),
     LOGIN_FAILED_REPEATED(NotificationCategory.SECURITY);

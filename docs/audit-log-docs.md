@@ -63,7 +63,7 @@ Any other method on these paths (`POST`, `PUT`, `PATCH`, `DELETE`) answers `405`
     "email": "ada@example.com"                 // snapshot at the time of the action
   },
   "target": {                                  // what the action was done to; never null
-    "type": "USER",                            // WORKSPACE | TEAM | PROJECT | TASK | USER | INVITATION
+    "type": "USER",                            // WORKSPACE | TEAM | PROJECT | SPRINT | TASK | USER | INVITATION
     "id": 23,                                  // null only for INVITATION
     "name": "Linus Torvalds"                   // snapshot; for INVITATION the invited email
   },
@@ -208,6 +208,8 @@ For every project action, `project` is the project concerned.
 | `PROJECT_MEMBER_ADDED` | Someone adds people to the project, directly (`POST /projects/{id}/members`) or through a team (`POST /projects/{id}/teams`). One entry per person actually added; people already in the project are skipped. | the person who added them | `USER` (the added person) | the project | `roles`: null → `MEMBER`; plus, when added through a team, `viaTeam`: null → team name | *Ada added Linus Torvalds to "Mobile App" (via team "Backend")* |
 | `PROJECT_MEMBER_REMOVED` | Someone removes a person from the project (`DELETE /projects/{id}/members/{userId}`) | the person who removed them | `USER` (the removed person) | the project | `roles`: their roles → null | *Ada removed Linus Torvalds from "Mobile App"* |
 | `PROJECT_ROLES_CHANGED` | Someone changes a member's project roles (`PUT /projects/{id}/members/{userId}/roles`) and the set actually changes | the person who changed them | `USER` (whose roles changed) | the project | `roles`: old set → new set | *Ada changed Linus Torvalds's roles in "Mobile App" from Member to Project Manager, Member* |
+| `SPRINT_COMPLETED` | The Scrum Master closes the active sprint (`POST /sprints/{id}/complete`, PMP-41). Not written when the close is refused (early close without confirmation, missing goal answer). | the Scrum Master | `SPRINT` (name at the time, e.g. `MOB Sprint 4`) | the project | `status`: `ACTIVE` → `COMPLETED`; `completedPoints`: null → points; `unfinishedPoints`: null → points; `goalAchieved`: null → `YES` / `PARTIALLY` / `NO`; `carriedOver`: null → e.g. `3 items to the backlog` / `1 item to MOB Sprint 5` | *Sam closed "MOB Sprint 4" in "Mobile App": 20 points done, goal partially achieved* |
+| `SPRINT_CANCELLED` | The Product Owner or Project Manager cancels the active sprint (`POST /sprints/{id}/cancel`, PMP-41) | the person who cancelled | `SPRINT` | the project | `status`: `ACTIVE` → `CANCELLED`; `reason`: null → the reason (free text, ≤ 1000 characters); `completedPoints`, `unfinishedPoints`, `carriedOver` as for a close | *Polly cancelled "MOB Sprint 4" in "Mobile App": "Goal became obsolete"* |
 
 ### 4.4 Tasks (`area: "TASK"`)
 
@@ -256,7 +258,7 @@ These actions write **no** audit entry (by decision, see [§13](#13-decisions)):
 | `actor.id` | number | never | The user id. It stays valid for filtering after the person leaves. |
 | `actor.name` | string | never | `firstName lastName` at the time. |
 | `actor.email` | string | never | Email at the time. |
-| `target.type` | string enum | never | `WORKSPACE`, `TEAM`, `PROJECT`, `TASK`, `USER`, `INVITATION`. |
+| `target.type` | string enum | never | `WORKSPACE`, `TEAM`, `PROJECT`, `SPRINT`, `TASK`, `USER`, `INVITATION`. |
 | `target.id` | number | only for `INVITATION` | Do **not** turn a target into a link without checking it still exists: teams can be deleted, people can leave, tasks can be deleted. |
 | `target.name` | string | never | Snapshot. Person: `firstName lastName`; task: `KEY title`; invitation: the email. |
 | `project` | object | yes | Set for `PROJECT` and `TASK` area actions only. |
@@ -415,4 +417,5 @@ Every service test also checks that a refused or no-op action writes no entry (a
 | 2 Nov 2026 | Reading the log needs the workspace admin role (`WorkspaceAccess.requireAdmin`), not a project permission. Archived workspaces remain readable. |
 | 2 Nov 2026 | An actors endpoint feeds the actor filter, because the members list no longer contains people who left. |
 | 2 Nov 2026 | `TASK_RESTORED` is defined now so PMP-131 needs no migration. |
+| 9 Nov 2026 | `SPRINT_COMPLETED` / `SPRINT_CANCELLED` and the `SPRINT` target type (PMP-41, V16). They sit in the `PROJECT` area, so the project filter finds them. A cancel's reason is logged because PMP-41 asks for it; the close note is not. |
 | 2 Nov 2026 | The story's criterion "a Member changes another member's project role" is read as "whoever holds `MANAGE_ROLES`" (the Project Manager or a workspace admin); members cannot change roles. |

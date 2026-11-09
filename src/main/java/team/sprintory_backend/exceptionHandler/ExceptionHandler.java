@@ -83,6 +83,15 @@ public class ExceptionHandler {
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(
+            team.sprintory_backend.sprint.exceptions.EarlyCloseConfirmationRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleEarlyClose(
+            team.sprintory_backend.sprint.exceptions.EarlyCloseConfirmationRequiredException e,
+            HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.EARLY_CLOSE_CONFIRMATION_REQUIRED,
+                e.getMessage(), request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(
             SprintConflictException.class)
     public ResponseEntity<ErrorResponse> handleSprintConflict(
             SprintConflictException e,

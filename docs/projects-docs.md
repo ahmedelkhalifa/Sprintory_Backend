@@ -363,16 +363,19 @@ The board is created together with the project (3.1). What it starts with depend
     "wipLimitsEnabled": false,
     "activeSprintId": null,
     "columns": [
-      { "id": 1, "name": "To Do", "position": 0, "wipLimit": null, "category": "TODO", "taskCount": 0, "wipExceeded": false },
-      { "id": 2, "name": "In Progress", "position": 1, "wipLimit": null, "category": "IN_PROGRESS", "taskCount": 0, "wipExceeded": false },
-      { "id": 3, "name": "In Review", "position": 2, "wipLimit": null, "category": "IN_PROGRESS", "taskCount": 0, "wipExceeded": false },
-      { "id": 4, "name": "Done", "position": 3, "wipLimit": null, "category": "DONE", "taskCount": 0, "wipExceeded": false }
-    ]
+      { "id": 1, "name": "To Do", "position": 0, "wipLimit": null, "category": "TODO", "taskCount": 0, "wipExceeded": false, "subtaskCount": 0, "sprintTaskCount": 0, "sprintSubtaskCount": 0 },
+      { "id": 2, "name": "In Progress", "position": 1, "wipLimit": null, "category": "IN_PROGRESS", "taskCount": 0, "wipExceeded": false, "subtaskCount": 0, "sprintTaskCount": 0, "sprintSubtaskCount": 0 },
+      { "id": 3, "name": "In Review", "position": 2, "wipLimit": null, "category": "IN_PROGRESS", "taskCount": 0, "wipExceeded": false, "subtaskCount": 0, "sprintTaskCount": 0, "sprintSubtaskCount": 0 },
+      { "id": 4, "name": "Done", "position": 3, "wipLimit": null, "category": "DONE", "taskCount": 0, "wipExceeded": false, "subtaskCount": 0, "sprintTaskCount": 0, "sprintSubtaskCount": 0 }
+    ],
+    "activeSprint": null
   }
   ```
 - **Fields:**
   - `backlogEnabled`, `sprintsEnabled`, `wipLimitsEnabled` come from the template, not from the database. They tell the frontend which pages and controls to show.
   - `activeSprintId` is the ACTIVE Scrum sprint ID, or `null` when none exists (PMP-119).
+  - `activeSprint` (PMP-40) is the Scrum board header, or `null` (Kanban, or no active sprint): `{id, name, goal, startDate, endDate, daysLeft, overdue, totalPoints, donePoints}`. `daysLeft` is the calendar days from today (UTC) to `endDate`, 0 on the last day and after it; `overdue` is true once `endDate` has passed. The points are the story points of the sprint's top-level items, and of those in a `DONE`-category column (no partial credit).
+  - `sprintTaskCount` / `sprintSubtaskCount` (PMP-40, Scrum only) count the column's top-level tasks of the active sprint and the subtasks whose parent is in it: the cards the Scrum board shows. They are `0` without an active sprint and `null` for Kanban. `taskCount` / `subtaskCount` stay project-wide (backlog included), because WIP and the column-delete target rule use them.
   - `columns` are sorted by `position` (0-based). A column's `id` stays stable across renaming, recategorization and reordering. `category` describes TODO/IN_PROGRESS/DONE semantics; `taskCount` is the unfiltered number of active tasks in that column; `wipExceeded` marks a soft limit violation.
 - **PMP-125:** Column create/update/order/soft-delete and Kanban WIP configuration require `CONFIGURE_BOARD`. See [board-docs.md](./board-docs.md) for the endpoints, payloads and rules.
 - **Errors:**
@@ -549,7 +552,7 @@ When `WorkspaceResponse.archivedAt` is set, show projects read-only and hide **C
 | Story 7 (R04) | Applies this document's visibility rule to everything inside a project, through `ProjectAccess` and `VIEW_WORK`. Admins manage membership but see project work only if they are members. |
 | Story 8 (R06) | **Done:** key, description, template board and default columns, settings (3.9). |
 | Story 9 (R09) | **Done:** tasks with keys built from the project key (`MOB-42`), status = a board column, order on the board and in the backlog. See [tasks-docs.md](./tasks-docs.md). |
-| R13–R15 | Sprint planning and the sprint lifecycle; `activeSprintId` on the board gets a value. (Backlog reordering already exists, [tasks-docs.md §3.7](./tasks-docs.md#37-reorder-the-backlog-scrum).) |
+| R13–R15 | Sprint planning and the sprint lifecycle (built: PMP-119, PMP-40, PMP-41); the board carries `activeSprintId`, `activeSprint` and the sprint counts. (Backlog reordering already exists, [tasks-docs.md §3.7](./tasks-docs.md#37-reorder-the-backlog-scrum).) |
 | R16 / PMP-125 | **Implemented in backend:** column create/rename/reorder/category/soft-delete and Kanban WIP limits (`CONFIGURE_BOARD`); deletion rehomes tasks and records history. See [board-docs.md](./board-docs.md). |
 | R30 | Completing and archiving a project (`ARCHIVE_PROJECT`). |
 

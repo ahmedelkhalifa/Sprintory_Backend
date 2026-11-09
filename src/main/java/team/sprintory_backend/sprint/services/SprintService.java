@@ -10,6 +10,7 @@ import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.notification.events.SprintStarted;
+import team.sprintory_backend.notification.events.SprintCancelled;
 import team.sprintory_backend.notification.events.SprintCompleted;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.BoardColumnCategory;
@@ -28,6 +29,12 @@ import team.sprintory_backend.sprint.models.*;
 import team.sprintory_backend.sprint.repositories.*;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
+import team.sprintory_backend.task.services.TaskRanks;
+import team.sprintory_backend.task.services.TaskStatusHistoryService;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
@@ -56,6 +63,9 @@ public class SprintService {
     private final ApplicationEventPublisher events;
     private final ProjectService projectSettings;
     private final SprintScopeHistoryWriter scopeWriter;
+    private final SprintOutcomeRepository outcomes;
+    private final TaskStatusHistoryService taskHistory;
+    private final AuditLogService audit;
 
     @Transactional(readOnly = true)
     public int projectSprintLength(User actor, Long projectId) {
@@ -78,7 +88,9 @@ public class SprintService {
     @Transactional(readOnly = true)
     public List<SprintResponse> list(User actor, Long projectId) {
         readable(actor, projectId);
-        return sprints.findByProjectIdAndStatusNotOrderByNumberAsc(projectId, SprintStatus.COMPLETED)
+        // Ended sprints (closed or cancelled) are read through GET /sprints/{id}.
+        return sprints.findByProjectIdAndStatusInOrderByNumberAsc(projectId,
+                        List.of(SprintStatus.PLANNED, SprintStatus.ACTIVE))
                 .stream().map(this::response).toList();
     }
 
@@ -91,7 +103,7 @@ public class SprintService {
 
     @Transactional
     public SprintResponse create(User actor, Long projectId, SprintRequest request) {
-        Project project = writable(actor, projectId);
+        Project project = writable(actor, projectId, ProjectPermission.MANAGE_SPRINTS);
         if (Boolean.TRUE.equals(request.clearCapacity()) && request.capacity() != null) {
             throw new BadRequestException("Cannot set and clear capacity together.");
         }
@@ -106,8 +118,8 @@ public class SprintService {
 
     @Transactional
     public SprintResponse update(User actor, Long sprintId, SprintRequest request) {
-        Sprint sprint = writableSprint(actor, sprintId);
-        if (sprint.getStatus() == SprintStatus.COMPLETED) throw new SprintConflictException("A completed sprint can't be changed.");
+        Sprint sprint = writableSprint(actor, sprintId, ProjectPermission.MANAGE_SPRINTS);
+        if (sprint.getStatus().isEnded()) throw new SprintConflictException("An ended sprint can't be changed.");
         if (request.name() != null) sprint.setName(requiredName(request.name()));
         if (request.goal() != null) sprint.setGoal(trim(request.goal()));
         if (Boolean.TRUE.equals(request.clearCapacity())) {
@@ -129,7 +141,7 @@ public class SprintService {
 
     @Transactional
     public void delete(User actor, Long sprintId) {
-        Sprint sprint = writableSprint(actor, sprintId);
+        Sprint sprint = writableSprint(actor, sprintId, ProjectPermission.MANAGE_SPRINTS);
         if (sprint.getStatus() != SprintStatus.PLANNED) throw new SprintConflictException("Only a planned sprint can be deleted.");
         // Keep managed live tasks in sync with the native bulk update (which must also
         // unlink soft-deleted tasks hidden by Task's @SQLRestriction).
@@ -145,7 +157,7 @@ public class SprintService {
 
     @Transactional
     public SprintResponse start(User actor, Long sprintId, StartSprintRequest request) {
-        Sprint sprint = writableSprint(actor, sprintId);
+        Sprint sprint = writableSprint(actor, sprintId, ProjectPermission.MANAGE_SPRINTS);
         Project project = sprint.getProject();
         if (sprint.getStatus() != SprintStatus.PLANNED) throw new SprintConflictException("Only a planned sprint can be started.");
         if (sprints.findFirstByProjectIdAndStatus(project.getId(), SprintStatus.ACTIVE).isPresent()) {
@@ -179,17 +191,17 @@ public class SprintService {
 
     @Transactional
     public void move(User actor, Long projectId, MoveSprintTaskRequest request) {
-        writable(actor, projectId);
+        writable(actor, projectId, ProjectPermission.MANAGE_SPRINTS);
         Task task = tasks.findByIdAndProjectId(request.taskId(), projectId)
                 .orElseThrow(() -> new ResourceNotFoundException("Task not found."));
         if (task.getParent() != null) throw new BadRequestException("Subtasks follow their parent and cannot be planned separately.");
         Sprint source = task.getSprint();
         Sprint target = request.sprintId() == null ? null : findInProject(projectId, request.sprintId());
-        if (source != null && source.getStatus() == SprintStatus.COMPLETED) {
-            throw new SprintConflictException("Tasks from a completed sprint cannot be moved.");
+        if (source != null && source.getStatus().isEnded()) {
+            throw new SprintConflictException("Tasks from an ended sprint cannot be moved.");
         }
-        if (target != null && target.getStatus() == SprintStatus.COMPLETED) {
-            throw new SprintConflictException("A completed sprint can't accept work.");
+        if (target != null && target.getStatus().isEnded()) {
+            throw new SprintConflictException("An ended sprint can't accept work.");
         }
         if (Objects.equals(source == null ? null : source.getId(), request.sprintId()) &&
                 target == null) return;
@@ -237,59 +249,202 @@ public class SprintService {
         }
     }
 
+    /**
+     * Close the active sprint (PMP-41, Scrum Master). One transaction: the split, the frozen
+     * points and outcomes, the carry-over, the audit entry and the notification all happen or
+     * none does, so a failure leaves the sprint ACTIVE.
+     */
     @Transactional
     public CompleteSprintResponse complete(User actor, Long sprintId, CompleteSprintRequest request) {
-        Sprint sprint = writableSprint(actor, sprintId);
+        Sprint sprint = writableSprint(actor, sprintId, ProjectPermission.MANAGE_SPRINTS);
         Project project = sprint.getProject();
-        if (sprint.getStatus() != SprintStatus.ACTIVE) throw new SprintConflictException("Only an active sprint can be completed.");
-        Long nextId = request == null ? null : request.carryOverSprintId();
-        boolean createNew = request != null && Boolean.TRUE.equals(request.createSprint());
+        if (sprint.getStatus() != SprintStatus.ACTIVE) throw new SprintConflictException("Only an active sprint can be closed.");
+        if (request == null || request.goalAchieved() == null) {
+            throw new BadRequestException("Answer whether the Sprint Goal was achieved.");
+        }
+        Long nextId = request.carryOverSprintId();
+        boolean createNew = Boolean.TRUE.equals(request.createSprint());
         if (nextId != null && createNew) throw new BadRequestException("Choose an existing sprint or create a new one, not both.");
         Sprint next = null;
         if (nextId != null) {
             next = findInProject(project.getId(), nextId);
             if (next.getStatus() != SprintStatus.PLANNED) throw new BadRequestException("Unfinished work can only move to a planned sprint.");
         }
-        List<Task> selected = tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(sprintId);
-        List<Task> unfinished = new ArrayList<>();
-        int completedPoints = 0;
-        for (Task task : selected) {
-            if (task.getStatus().getCategory() == BoardColumnCategory.DONE) {
-                completedPoints += task.getEstimate() == null ? 0 : task.getEstimate();
-            } else unfinished.add(task);
+        if (LocalDate.now(ZoneOffset.UTC).isBefore(sprint.getEndDate())
+                && !Boolean.TRUE.equals(request.confirmEarlyClose())) {
+            throw new EarlyCloseConfirmationRequiredException(sprint.getEndDate());
         }
-        // Mark completion before generating follow-up dates: a sprint completed early
-        // no longer occupies its originally planned remaining days.
-        sprint.setStatus(SprintStatus.COMPLETED);
-        sprint.setCompletedAt(Instant.now());
+        Split split = split(sprintId);
+        // End it before generating follow-up dates: a sprint stops occupying dates on the day it
+        // ends, so the new sprint can start today.
+        end(sprint, SprintStatus.COMPLETED, split);
+        sprint.setGoalAchieved(request.goalAchieved());
+        sprint.setOutcomeNote(request.goalNote() == null || request.goalNote().isBlank() ? null : request.goalNote().trim());
         if (createNew) {
             int number = sprints.maxNumber(project.getId()) + 1;
-            LocalDate[] dates = nextDates(project, effectiveEnd(sprint));
+            LocalDate[] dates = nextDates(project, LocalDate.now(ZoneOffset.UTC));
             validateDates(project.getId(), null, dates[0], dates[1]);
             next = sprints.saveAndFlush(new Sprint(project, number, project.getKey() + " Sprint " + number,
                     "", null, dates[0], dates[1]));
         }
-        // Preserve the completed sprint's DONE tasks; move unfinished items to the front of next.
-        if (next != null) {
-            List<Task> destination = new ArrayList<>(tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(next.getId()));
-            destination.removeAll(unfinished);
-            unfinished.addAll(destination);
-            for (int i = 0; i < unfinished.size(); i++) {
-                Task task = unfinished.get(i);
-                task.setSprint(next);
-                task.setSprintPosition((long) (i + 1));
-            }
-        } else {
-            for (Task task : unfinished) { task.setSprint(null); task.setSprintPosition(null); }
-        }
-        sprint.setCompletedPoints(completedPoints);
+        carryOver(sprint, split, next, actor);
         sprints.saveAndFlush(sprint);
         tasks.flush();
+        audit.record(project.getWorkspace(), actor, AuditAction.SPRINT_COMPLETED, AuditTarget.sprint(sprint), project,
+                AuditChange.of("status", SprintStatus.ACTIVE.name(), SprintStatus.COMPLETED.name()),
+                AuditChange.of("completedPoints", null, String.valueOf(sprint.getCompletedPoints())),
+                AuditChange.of("unfinishedPoints", null, String.valueOf(sprint.getUnfinishedPoints())),
+                AuditChange.of("goalAchieved", null, request.goalAchieved().name()),
+                AuditChange.of("carriedOver", null, carriedOverSummary(split, next)));
         events.publishEvent(new SprintCompleted(project, actor, sprint.getName()));
-        return new CompleteSprintResponse(response(sprint),
-                (int) selected.stream().filter(t -> t.getStatus().getCategory() !=
-                        BoardColumnCategory.DONE).count(),
+        return new CompleteSprintResponse(response(sprint), split.unfinished().size(),
                 next == null ? null : response(next));
+    }
+
+    /**
+     * Cancel the active sprint because its goal became obsolete (PMP-41): Product Owner, or the
+     * Project Manager as an override. No destination choice: unfinished work goes to the top of
+     * the backlog. Done items stay linked and the points are still frozen, so reports stay
+     * accurate, but velocity reads COMPLETED sprints only, so this one never counts.
+     */
+    @Transactional
+    public CompleteSprintResponse cancel(User actor, Long sprintId, CancelSprintRequest request) {
+        Sprint sprint = writableSprint(actor, sprintId, ProjectPermission.CANCEL_SPRINTS);
+        Project project = sprint.getProject();
+        if (sprint.getStatus() != SprintStatus.ACTIVE) throw new SprintConflictException("Only an active sprint can be cancelled.");
+        if (request == null || request.reason() == null || request.reason().isBlank()) {
+            throw new BadRequestException("Give a reason for cancelling the sprint.");
+        }
+        String reason = request.reason().trim();
+        Split split = split(sprintId);
+        end(sprint, SprintStatus.CANCELLED, split);
+        sprint.setCancelReason(reason);
+        carryOver(sprint, split, null, actor);
+        sprints.saveAndFlush(sprint);
+        tasks.flush();
+        audit.record(project.getWorkspace(), actor, AuditAction.SPRINT_CANCELLED, AuditTarget.sprint(sprint), project,
+                AuditChange.of("status", SprintStatus.ACTIVE.name(), SprintStatus.CANCELLED.name()),
+                AuditChange.of("reason", null, reason),
+                AuditChange.of("completedPoints", null, String.valueOf(sprint.getCompletedPoints())),
+                AuditChange.of("unfinishedPoints", null, String.valueOf(sprint.getUnfinishedPoints())),
+                AuditChange.of("carriedOver", null, carriedOverSummary(split, null)));
+        events.publishEvent(new SprintCancelled(project, actor, sprint.getName()));
+        return new CompleteSprintResponse(response(sprint), split.unfinished().size(), null);
+    }
+
+    /** Status, end time and the frozen points: the same for close and cancel. */
+    private static void end(Sprint sprint, SprintStatus status, Split split) {
+        sprint.setStatus(status);
+        sprint.setCompletedAt(Instant.now());
+        sprint.setCompletedPoints(split.donePoints());
+        sprint.setUnfinishedPoints(split.unfinishedPoints());
+    }
+
+    /**
+     * Moves the unfinished top-level items of an ended sprint (PMP-41), in sprint order, with
+     * their subtasks (they follow the parent's sprint). {@code destination} null means the top of
+     * the backlog. Done items stay linked to the ended sprint. Each moved item gets
+     * "Carried over ×N" and a history entry; every item gets a frozen outcome row.
+     */
+    private void carryOver(Sprint source, Split split, Sprint destination, User actor) {
+        List<Task> unfinished = split.unfinished();
+        if (destination != null) {
+            // The carried-over items go first, ahead of what the destination already holds.
+            List<Task> order = new ArrayList<>(unfinished);
+            for (Task task : tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(destination.getId())) {
+                if (!order.contains(task)) order.add(task);
+            }
+            for (int i = 0; i < order.size(); i++) {
+                order.get(i).setSprint(destination);
+                order.get(i).setSprintPosition((long) (i + 1));
+            }
+        } else if (!unfinished.isEmpty()) {
+            // Read the backlog's first rank before the moved items join it.
+            long[] ranks = TaskRanks.above(tasks.findMinBacklogRankOfBacklog(source.getProject().getId()),
+                    unfinished.size());
+            for (int i = 0; i < unfinished.size(); i++) {
+                Task task = unfinished.get(i);
+                task.setSprint(null);
+                task.setSprintPosition(null);
+                task.setBacklogRank(ranks[i]);
+            }
+        }
+        String to = destination == null ? null : destination.getName();
+        for (Task task : unfinished) {
+            task.setCarryOverCount(task.getCarryOverCount() + 1);
+            taskHistory.recordCarriedOver(task, source.getName(), to, actor, source.getId());
+        }
+        List<SprintOutcome> rows = new ArrayList<>();
+        for (int i = 0; i < split.all().size(); i++) {
+            Task task = split.all().get(i);
+            boolean done = !unfinished.contains(task);
+            rows.add(new SprintOutcome(source, task.getId(), task.getKey(), task.getEstimate(),
+                    done ? SprintOutcome.Result.DONE : SprintOutcome.Result.CARRIED_OVER,
+                    done || destination == null ? null : destination.getId(), i));
+        }
+        outcomes.saveAll(rows);
+    }
+
+    /** For the audit entry: "3 items to the backlog", "1 item to SPR Sprint 5". */
+    private static String carriedOverSummary(Split split, Sprint destination) {
+        int n = split.unfinished().size();
+        return n + (n == 1 ? " item" : " items") + " to "
+                + (destination == null ? "the backlog" : destination.getName());
+    }
+
+    /** The close and cancel dialog (PMP-41): read-only, for anyone who can see the work. */
+    @Transactional(readOnly = true)
+    public CloseSprintPreviewResponse closePreview(User actor, Long sprintId) {
+        Sprint sprint = find(sprintId);
+        Long projectId = sprint.getProject().getId();
+        readable(actor, projectId);
+        if (sprint.getStatus() != SprintStatus.ACTIVE) {
+            throw new SprintConflictException("Only an active sprint can be closed or cancelled.");
+        }
+        Split split = split(sprintId);
+        Map<Long, Integer> openSubtasks = new HashMap<>();
+        if (!split.unfinished().isEmpty()) {
+            for (Object[] row : tasks.findSubtaskProgress(split.unfinished().stream().map(Task::getId).toList())) {
+                long total = ((Number) row[1]).longValue();
+                long done = ((Number) row[2]).longValue();
+                openSubtasks.put(((Number) row[0]).longValue(), (int) (total - done));
+            }
+        }
+        List<CloseSprintPreviewResponse.UnfinishedItem> unfinished = split.unfinished().stream()
+                .map(t -> new CloseSprintPreviewResponse.UnfinishedItem(t.getId(), t.getKey(), t.getTitle(),
+                        t.getEstimate(), t.getStatus().getName(), openSubtasks.getOrDefault(t.getId(), 0)))
+                .toList();
+        List<CloseSprintPreviewResponse.PlannedSprint> planned = sprints
+                .findByProjectIdAndStatusInOrderByNumberAsc(projectId, List.of(SprintStatus.PLANNED)).stream()
+                .map(s -> new CloseSprintPreviewResponse.PlannedSprint(s.getId(), s.getName(), s.getStartDate()))
+                .toList();
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        int daysLeft = (int) Math.max(0, ChronoUnit.DAYS.between(today, sprint.getEndDate()));
+        return new CloseSprintPreviewResponse(sprint.getId(), sprint.getName(), sprint.getEndDate(),
+                split.done().size(), split.donePoints(), split.unfinished().size(), split.unfinishedPoints(),
+                unfinished, today.isBefore(sprint.getEndDate()), daysLeft, planned);
+    }
+
+    /**
+     * Done versus unfinished top-level items, in sprint order. Done means a DONE-category column;
+     * no partial credit, so an unfinished story counts 0 points whatever its subtasks say.
+     */
+    private record Split(List<Task> all, List<Task> done, List<Task> unfinished) {
+        int donePoints() { return points(done); }
+        int unfinishedPoints() { return points(unfinished); }
+        private static int points(List<Task> items) {
+            return items.stream().mapToInt(t -> t.getEstimate() == null ? 0 : t.getEstimate()).sum();
+        }
+    }
+
+    private Split split(Long sprintId) {
+        List<Task> all = tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(sprintId);
+        List<Task> done = new ArrayList<>();
+        List<Task> unfinished = new ArrayList<>();
+        for (Task task : all) {
+            (task.getStatus().getCategory() == BoardColumnCategory.DONE ? done : unfinished).add(task);
+        }
+        return new Split(List.copyOf(all), List.copyOf(done), List.copyOf(unfinished));
     }
 
     @Transactional(readOnly = true)
@@ -315,9 +470,9 @@ public class SprintService {
 
     @Transactional
     public CapacitySuggestionResponse setAvailability(User actor, Long sprintId, Long memberId, AvailabilityRequest request) {
-        Sprint sprint = writableSprint(actor, sprintId);
+        Sprint sprint = writableSprint(actor, sprintId, ProjectPermission.MANAGE_SPRINTS);
         Project project = sprint.getProject();
-        if (sprint.getStatus() == SprintStatus.COMPLETED) throw new SprintConflictException("A completed sprint can't be changed.");
+        if (sprint.getStatus().isEnded()) throw new SprintConflictException("An ended sprint can't be changed.");
         if (!members.findCapacityUserIds(project.getId(), ProjectRole.VIEWER).contains(memberId)) {
             throw new BadRequestException("Availability can only be set for non-Viewer project members.");
         }
@@ -360,9 +515,13 @@ public class SprintService {
         return project;
     }
 
-    /** Permission checks precede the project lock; authorization is always enforced in the service. */
-    private Project writable(User actor, Long projectId) {
-        Project project = access.requireActive(projectId, actor, ProjectPermission.MANAGE_SPRINTS).project();
+    /**
+     * Permission checks precede the project lock; authorization is always enforced in the service.
+     * {@code MANAGE_SPRINTS} (Scrum Master) for everything except cancel, which needs
+     * {@code CANCEL_SPRINTS} (Product Owner, Project Manager).
+     */
+    private Project writable(User actor, Long projectId, ProjectPermission permission) {
+        Project project = access.requireActive(projectId, actor, permission).project();
         ensureScrum(project);
         if (project.getLifecycleStatus() != ProjectLifecycleState.ACTIVE) {
             throw new SprintConflictException("Sprints are read-only when the project is completed or archived.");
@@ -371,10 +530,10 @@ public class SprintService {
     }
 
     /** Lock the project row before loading the mutable sprint: prevents stale state races. */
-    private Sprint writableSprint(User actor, Long sprintId) {
+    private Sprint writableSprint(User actor, Long sprintId, ProjectPermission permission) {
         Long projectId = sprints.findProjectId(sprintId)
                 .orElseThrow(() -> new ResourceNotFoundException("Sprint not found."));
-        writable(actor, projectId);
+        writable(actor, projectId, permission);
         return findInProject(projectId, sprintId);
     }
 
@@ -405,27 +564,35 @@ public class SprintService {
             if (requestedStart == null || requestedEnd == null) throw new BadRequestException("Provide both sprint dates.");
             return new LocalDate[] { requestedStart, requestedEnd };
         }
-        return nextDates(project, LocalDate.now(ZoneOffset.UTC).minusDays(1));
+        return nextDates(project, LocalDate.now(ZoneOffset.UTC));
     }
 
-    private LocalDate[] nextDates(Project project, LocalDate notBefore) {
-        LocalDate start = notBefore.plusDays(1);
+    /** The first free dates on or after {@code earliestStart}, one sprint length long. */
+    private LocalDate[] nextDates(Project project, LocalDate earliestStart) {
+        LocalDate start = earliestStart;
         for (Sprint sprint : sprints.findByProjectIdOrderByNumberAsc(project.getId())) {
-            LocalDate occupiedThrough = effectiveEnd(sprint);
-            if (occupiedThrough != null && !occupiedThrough.isBefore(start)) {
-                start = occupiedThrough.plusDays(1);
+            LocalDate until = occupiedUntil(sprint);
+            if (until != null && until.isAfter(sprint.getStartDate()) && until.isAfter(start)) {
+                start = until;
             }
         }
         int days = project.getSprintLengthDays() > 1 ? project.getSprintLengthDays() : 14;
         return new LocalDate[] { start, start.plusDays(days - 1) };
     }
 
-    private static LocalDate effectiveEnd(Sprint sprint) {
-        if (sprint.getStatus() != SprintStatus.COMPLETED || sprint.getCompletedAt() == null) {
-            return sprint.getEndDate();
-        }
-        LocalDate closed = sprint.getCompletedAt().atZone(ZoneOffset.UTC).toLocalDate();
-        return closed.isBefore(sprint.getEndDate()) ? closed : sprint.getEndDate();
+    /**
+     * The first day a sprint no longer occupies (exclusive end); null when it has no dates. A
+     * planned or active sprint occupies its dates through {@code endDate}. An ended sprint (closed
+     * or cancelled) occupies them only up to the day it ended, not including that day, so the next
+     * sprint can start the same day, even when it ended on its last planned day. A sprint that
+     * ended on its own start day occupies nothing.
+     */
+    static LocalDate occupiedUntil(Sprint sprint) {
+        if (sprint.getStartDate() == null || sprint.getEndDate() == null) return null;
+        LocalDate planned = sprint.getEndDate().plusDays(1);
+        if (!sprint.getStatus().isEnded() || sprint.getCompletedAt() == null) return planned;
+        LocalDate ended = sprint.getCompletedAt().atZone(ZoneOffset.UTC).toLocalDate();
+        return ended.isBefore(planned) ? ended : planned;
     }
 
     private void validateDates(Long projectId, Long exceptId, LocalDate start, LocalDate end) {
@@ -436,10 +603,10 @@ public class SprintService {
             throw new BadRequestException("A sprint cannot exceed 90 calendar days.");
         }
         for (Sprint other : sprints.findByProjectIdOrderByNumberAsc(projectId)) {
-            if (other.getId().equals(exceptId) || other.getStartDate() == null || other.getEndDate() == null) continue;
-            LocalDate occupiedThrough = effectiveEnd(other);
-            if (occupiedThrough.isBefore(other.getStartDate())) continue; // cancelled before starting
-            if (!start.isAfter(occupiedThrough) && !end.isBefore(other.getStartDate())) {
+            if (other.getId().equals(exceptId)) continue;
+            LocalDate until = occupiedUntil(other);
+            if (until == null || !until.isAfter(other.getStartDate())) continue; // no dates, or occupies nothing
+            if (start.isBefore(until) && !end.isBefore(other.getStartDate())) {
                 throw new BadRequestException("Sprint dates cannot overlap another sprint.");
             }
         }

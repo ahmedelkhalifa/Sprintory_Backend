@@ -94,6 +94,7 @@ Reading needs `VIEW_WORK`.
 | `ATTACHMENT_ADDED` | a file is attached to the task or subtask, one entry per file ([attachments-docs.md §3.1](./attachments-docs.md#31-upload-files-to-a-task)) | `null` | `null` → the stored file name, e.g. `login-flow.webp` | the attachment id |
 | `ATTACHMENT_REMOVED` | an attachment is deleted, by its uploader or by the Project Manager ([attachments-docs.md §3.6](./attachments-docs.md#36-delete-an-attachment)) | `null` | the file name → `null` | the attachment id |
 | `SPRINT_SCOPE_CHANGED` | a task is added to / removed from an ACTIVE sprint, including delete/restore | `null` | old sprint name → new sprint name; either may be `null` for backlog | the sprint id |
+| `CARRIED_OVER` | an unfinished top-level task leaves a sprint that is closed or cancelled (PMP-41); one entry on the parent, its subtasks move with it | `null` | the ended sprint's name → the destination sprint's name, or `null` for the backlog | the ended (source) sprint's id |
 
 `actor` is always the person who did it. `actor.id` can belong to someone who has since left; `actor.name` is the name they had at the time.
 
@@ -127,7 +128,7 @@ Reading needs `VIEW_WORK`.
 ### 3.3 Later types
 
 Planned by later stories; each adds its `type` with a migration (§6):
-- "carried over" history markers and completion audit notes (PMP-122). Sprint `SPRINT_SCOPE_CHANGED` entries are written in PMP-119 by `TaskStatusHistoryService`.
+- none pending for sprints: `SPRINT_SCOPE_CHANGED` (PMP-119) and `CARRIED_OVER` (PMP-41, V16) are both written by `TaskStatusHistoryService`.
 
 `ATTACHMENT_ADDED` and `ATTACHMENT_REMOVED` (PMP-141) are agreed in 3.1 and arrive with `V14__task_attachments.sql`.
 

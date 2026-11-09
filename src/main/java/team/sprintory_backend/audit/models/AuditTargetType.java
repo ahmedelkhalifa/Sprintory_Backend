@@ -5,6 +5,7 @@ public enum AuditTargetType {
     WORKSPACE,
     TEAM,
     PROJECT,
+    SPRINT,
     TASK,
     USER,
     INVITATION

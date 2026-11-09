@@ -28,6 +28,11 @@ public enum ProjectPermission {
     MANAGE_BACKLOG,
     /** Plan, start and close sprints (R14, R15). */
     MANAGE_SPRINTS,
+    /**
+     * Cancel an active sprint whose goal became obsolete (R15, PMP-41). Product Owner, plus the
+     * Project Manager as an override; never the Scrum Master, who closes sprints instead.
+     */
+    CANCEL_SPRINTS,
     /** Create, edit and delete tasks (story 9). */
     EDIT_TASKS,
     /** Comment on tasks, and edit or delete one's own comments (R10). */

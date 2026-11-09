@@ -93,12 +93,13 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
   "createdAt": "2026-10-26T09:30:00Z", "updatedAt": "2026-10-26T09:30:00Z",
   "wipWarning": null,
   "parentTaskId": null, "estimateMinutes": null,
-  "subtaskTotal": 0, "subtaskDone": 0 }
+  "subtaskTotal": 0, "subtaskDone": 0, "carriedOverCount": 0 }
 ```
 
 - `labels` come back sorted. Labels are trimmed, and duplicates that differ only in case collapse into the first spelling (`["backend", "Backend"]` stores `backend`).
 - `assigneeId` is a user id; show the name from `GET /projects/{projectId}/members`.
 - `description` is a string holding TipTap JSON (`JSON.stringify(editor.getJSON())`). The response returns the backend's normalized copy. Descriptions saved before 4 Nov 2026 may still be plain text; see [mentions-docs.md §2.6](./mentions-docs.md#26-task-descriptions).
+- `carriedOverCount` is how many ended sprints (closed or cancelled) this top-level task left unfinished, shown as "Carried over ×N" (PMP-41); always `0` for subtasks.
 - `sprintId` is `null` for backlog tasks, otherwise the sprint ID. Subtasks inherit the parent sprint. Sprint planning uses dedicated endpoints rather than allowing `sprintId` in task create/update.
 - **Server-side sprint task filtering:** `GET /projects/{projectId}/tasks?sprintId=42` returns only live top-level tasks in sprint 42; `?noSprint=true` returns backlog tasks whose `sprint_id` is null. Both together give `400 BAD_REQUEST`. Filters combine with all existing task filters and run before pagination. The Scrum board uses `?sprintId={activeSprintId}`; see [sprints-docs.md §3](./sprints-docs.md#3-task-list-backlog-board-capacity).
 - Top-level responses include `subtaskTotal` and `subtaskDone` (zero until children exist); child responses have `parentTaskId`, `estimateMinutes`, and `estimate: null` (no story points). Children do not appear as separate board cards or in the main project task list.
@@ -297,7 +298,8 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 
 1. Backlog page: `GET …/tasks?order=backlog`. Only tasks with `sprintId: null` belong to the backlog; use `GET /projects/{id}/sprints` for planned and active work.
 2. Drag in the backlog: `PUT …/tasks/{taskId}/backlog-rank { afterTaskId }`, shown only when `permissions` contain `MANAGE_BACKLOG` (the Product Owner).
-3. The Scrum board shows the active sprint's tasks (R15). Until sprints exist it has no tasks.
+3. The Scrum board shows the active sprint's tasks (R15, PMP-40): `GET /projects/{projectId}/board` for the columns, `activeSprint` (the header: name, goal, dates, days left, points) and each column's `sprintTaskCount`; then `GET …/tasks?sprintId={activeSprintId}&order=board&size=100` and group by `statusId`. Moves use `PUT …/tasks/{taskId}/position` as on Kanban. With `activeSprint: null` there is no active sprint: show an empty board that links to sprint planning.
+4. Unfinished work of a closed or cancelled sprint comes back to the **top** of the backlog, and each such task shows `carriedOverCount` ("Carried over ×N", PMP-41).
 
 ---
 
