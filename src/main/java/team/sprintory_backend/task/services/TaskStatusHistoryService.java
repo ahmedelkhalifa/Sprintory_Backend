@@ -128,6 +128,14 @@ public class TaskStatusHistoryService {
         save(task, TaskHistoryType.ATTACHMENT_REMOVED, null, attachment.getFileName(), null, attachment.getId(), actor);
     }
 
+    /** A sprint membership change; null from/to means product backlog. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordSprintScopeChanged(Task task, String from, String to, User actor, Long sprintId) {
+        if (!Objects.equals(from, to)) {
+            save(task, TaskHistoryType.SPRINT_SCOPE_CHANGED, null, from, to, sprintId, actor);
+        }
+    }
+
     /** The task or subtask was restored after a delete (PMP-131). */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordRestored(Task task, User actor) {

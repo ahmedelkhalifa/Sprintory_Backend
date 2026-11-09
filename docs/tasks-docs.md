@@ -1,6 +1,6 @@
 # Sprintory — Tasks API contract (R09)
 
-**Status:** tasks with keys, story 9 fields, soft delete, filters/search and board/backlog ordering. PMP-125 adds status-change history and soft Kanban WIP warnings to task moves. PMP-131 adds task restoration and PMP-132 one-level subtasks with completion confirmation (§10). PMP-133/PMP-136 (4 Nov 2026) turn the history into a full activity feed ([task-history-docs.md](./task-history-docs.md)), add comments ([comments-docs.md](./comments-docs.md)), and make the description TipTap JSON with @mentions ([mentions-docs.md](./mentions-docs.md)); the history and comments cover subtasks too. Sprint assignment remains a separate story. See [§9 Implementation status](#9-implementation-status).
+**Status:** tasks with keys, story 9 fields, soft delete, filters/search and board/backlog ordering. PMP-125 adds status-change history and soft Kanban WIP warnings to task moves. PMP-131 adds task restoration and PMP-132 one-level subtasks with completion confirmation (§10). PMP-133/PMP-136 (4 Nov 2026) turn the history into a full activity feed ([task-history-docs.md](./task-history-docs.md)), add comments ([comments-docs.md](./comments-docs.md)), and make the description TipTap JSON with @mentions ([mentions-docs.md](./mentions-docs.md)); the history and comments cover subtasks too. Sprint assignment is implemented in PMP-119 ([sprints-docs.md](./sprints-docs.md)). See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/projects/{projectId}/tasks/**`. Comments and history have their own contracts (linked above).
 **Related:** [Projects](./projects-docs.md) (keys, board, columns), [Board configuration](./board-docs.md), [Task history](./task-history-docs.md), [Comments](./comments-docs.md), [Mentions and rich text](./mentions-docs.md), [Roles and permissions](./roles-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R09, R13, R16.
 **Audit log:** deleting or restoring a task writes an entry to the workspace's audit log ([audit-log-docs.md §4.4](./audit-log-docs.md#4-action-catalogue)). Other task edits are not audit-logged; they belong to the task's own history.
@@ -26,7 +26,7 @@ This document is the single reference for tasks end to end. If the code and this
   | Description | Optional rich text: a string holding a **TipTap JSON document**, checked and normalized by the backend, and able to @mention people and teams ([mentions-docs.md §2](./mentions-docs.md#2-rich-text-format)). No length limit. A document with no text is stored as no description. |
 
 - **New tasks start in the backlog.** What "the backlog" means depends on the template:
-  - **Scrum:** a task is in the backlog when it is **in no sprint**. Its status is still a column (the first one, To Do). The Scrum board shows only the active sprint's tasks (R15), so a backlog task is not on the board until the Scrum Master pulls it into a sprint (R14) and starts the sprint. Until sprints exist, every Scrum task is in the backlog and `sprintId` is always `null`.
+  - **Scrum:** a task is in the backlog when it is **in no sprint**. Its status is still a column (the first one, To Do). The Scrum board shows only the active sprint's tasks (R15), so a backlog task is not on the board until the Scrum Master pulls it into a sprint (R14) and starts the sprint. Sprint membership is stored on the parent task and visible as `sprintId`; backlog tasks return `null`.
   - **Kanban:** there are no sprints, so the backlog is the first **column**, "Backlog". A new task is in that column.
 - **Deleting is a soft delete.** The task disappears from the board, the backlog, every list and search, and returns `404`, but its row stays in the database. Its key is not given out again. `POST /{taskId}/restore` restores it, with permission checks and audit logging. Deleting a parent also soft-deletes its live subtasks; restoring it only restores children deleted by that cascade.
 - **Order.** Each task has a place in its board column and a place in the backlog. New tasks go last in both. Drag and drop uses two endpoints (3.6, 3.7); lists can be read in board or backlog order (`?order=`, §3.2).
@@ -53,7 +53,7 @@ All paths are under `/api/v1/projects/{projectId}/tasks`. Bodies are JSON in `ca
 | # | Method | Path | Request | Success | Permission |
 | --- | --- | --- | --- | --- | --- |
 | 3.1 | POST | `` | `CreateTaskRequest` | `201` + `TaskResponse` | `EDIT_TASKS` |
-| 3.2 | GET | `?q=&type=&priority=&statusId=&assigneeId=&label=&order=&page=&size=` | none | `200` + `PageResponse<TaskResponse>` | `VIEW_WORK` |
+| 3.2 | GET | `?q=&type=&priority=&statusId=&assigneeId=&label=&sprintId=&noSprint=&order=&page=&size=` | none | `200` + `PageResponse<TaskResponse>` | `VIEW_WORK` |
 | 3.3 | GET | `/{taskId}` | none | `200` + `TaskResponse` | `VIEW_WORK` |
 | 3.4 | PATCH | `/{taskId}` | `UpdateTaskRequest` | `200` + `TaskResponse` | `EDIT_TASKS` |
 | 3.5 | DELETE | `/{taskId}` | none | `204` | `EDIT_TASKS` |
@@ -99,7 +99,8 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
 - `labels` come back sorted. Labels are trimmed, and duplicates that differ only in case collapse into the first spelling (`["backend", "Backend"]` stores `backend`).
 - `assigneeId` is a user id; show the name from `GET /projects/{projectId}/members`.
 - `description` is a string holding TipTap JSON (`JSON.stringify(editor.getJSON())`). The response returns the backend's normalized copy. Descriptions saved before 4 Nov 2026 may still be plain text; see [mentions-docs.md §2.6](./mentions-docs.md#26-task-descriptions).
-- `sprintId` stays `null` until sprints exist (R14). Parent-to-child sprint inheritance will be integrated with the future sprint backend; the API does not yet accept `sprintId`.
+- `sprintId` is `null` for backlog tasks, otherwise the sprint ID. Subtasks inherit the parent sprint. Sprint planning uses dedicated endpoints rather than allowing `sprintId` in task create/update.
+- **Server-side sprint task filtering:** `GET /projects/{projectId}/tasks?sprintId=42` returns only live top-level tasks in sprint 42; `?noSprint=true` returns backlog tasks whose `sprint_id` is null. Both together give `400 BAD_REQUEST`. Filters combine with all existing task filters and run before pagination. The Scrum board uses `?sprintId={activeSprintId}`; see [sprints-docs.md §3](./sprints-docs.md#3-task-list-backlog-board-capacity).
 - Top-level responses include `subtaskTotal` and `subtaskDone` (zero until children exist); child responses have `parentTaskId`, `estimateMinutes`, and `estimate: null` (no story points). Children do not appear as separate board cards or in the main project task list.
 - `confirmOpenSubtasks` is an optional boolean on `PATCH /{taskId}` and `PUT /{taskId}/position`. A transition of a parent with open subtasks to a `DONE`-category column returns `409 OPEN_SUBTASKS_CONFIRMATION_REQUIRED` unless explicitly confirmed.
 - The board positions and backlog ranks are internal and never sent; lists come back already sorted (§3.2).
@@ -294,7 +295,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 
 ### 5.4 Scrum backlog and board
 
-1. Backlog page: `GET …/tasks?order=backlog`. Today every Scrum task is in the backlog (no sprints yet); later only tasks with `sprintId: null`.
+1. Backlog page: `GET …/tasks?order=backlog`. Only tasks with `sprintId: null` belong to the backlog; use `GET /projects/{id}/sprints` for planned and active work.
 2. Drag in the backlog: `PUT …/tasks/{taskId}/backlog-rank { afterTaskId }`, shown only when `permissions` contain `MANAGE_BACKLOG` (the Product Owner).
 3. The Scrum board shows the active sprint's tasks (R15). Until sprints exist it has no tasks.
 
@@ -338,7 +339,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 ## 8. Known limitations and later stories
 
 - **No undelete** and no list of deleted tasks.
-- **Sprints (R14, R15):** `sprintId` is always `null`; the Scrum board shows no tasks until sprints exist. They will reuse `backlog_rank` and `board_position`.
+- **Sprints (R14, PMP-119):** `sprintId` reports the parent task’s current sprint (subtasks inherit it). Backlog tasks return `null`; the Scrum board shows only the active sprint. See [sprints-docs.md](./sprints-docs.md).
 - **Columns (R16 / PMP-125):** board configuration and soft WIP warnings are implemented in the backend. See [board-docs.md](./board-docs.md).
 - **Subtasks (R10, PMP-132) and attachments (R25)** are later stories. Comments and the full activity history (R10) are PMP-133 ([comments-docs.md](./comments-docs.md), [task-history-docs.md](./task-history-docs.md)). Future dependent tables must cascade from `tasks`.
 
@@ -439,7 +440,7 @@ The frontend shows a warning, allows explicit confirmation, and retries the *sam
 ### 11.4 Other subsystems, current boundaries
 
 - **Kanban WIP:** only top-level tasks count; subtasks never increase column task counters or WIP warnings. Parent tasks remain in their own status columns. Column deletion still rehomes *both* active parents and active children; individual status-history entries are recorded.
-- **Sprint assignment:** `sprintId` remains `null` because the sprint domain/API is not yet implemented. When the R14 sprint feature ships, it must move all children with their parent and expose the inherited `sprintId`. This requirement cannot be fully acceptance-tested yet; do not simulate a second sprint model here.
+- **Sprint assignment:** `sprintId` is persisted on parent tasks and automatically inherited by subtasks in API responses. The Scrum Master moves top-level tasks through the sprint API; no separate child assignment is needed. See [sprints-docs.md](./sprints-docs.md).
 - **Task history:** `GET /{taskId}/history` is the full feed (PMP-133, [task-history-docs.md](./task-history-docs.md)). A subtask has its own history; its parent shows `SUBTASK_ADDED` / `SUBTASK_REMOVED`, and a restore writes `RESTORED`. A parent's cascade delete or restore writes nothing for its children. The workspace audit log still records explicit task delete/restore actions.
 - **No frontend modifications** in PMP-131/PMP-132. The comments and History tab (PMP-134, Amir) build on these endpoints.
 

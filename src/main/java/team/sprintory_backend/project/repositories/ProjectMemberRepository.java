@@ -55,6 +55,12 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
     @Query("select pm.user.id from ProjectMember pm where pm.project.id = :projectId")
     List<Long> findUserIdsByProjectId(@Param("projectId") Long projectId);
 
+    /** Members with at least one non-Viewer role; Viewer-only members never count for capacity. */
+    @Query("select distinct pm.user.id from ProjectMember pm join pm.roles r "
+            + "where pm.project.id = :projectId and r <> :viewer")
+    List<Long> findCapacityUserIds(@Param("projectId") Long projectId,
+                                   @Param("viewer") ProjectRole viewer);
+
     /** The user's membership in the project with its roles loaded, or empty if they are not in it. */
     @Query("select pm from ProjectMember pm left join fetch pm.roles "
             + "where pm.project.id = :projectId and pm.user.id = :userId")

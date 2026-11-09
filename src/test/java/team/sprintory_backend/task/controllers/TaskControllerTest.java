@@ -65,7 +65,7 @@ class TaskControllerTest {
         when(service.list(user, 3L, filters, TaskListOrder.BOARD, expectedPage)).thenReturn(result);
 
         assertSame(result, controller.list(principal, 3L, " PMP- ", "bug", "high",
-                5L, 7L, " backend ", "board", inputPage));
+                5L, 7L, " backend ", null, null, "board", inputPage));
         verify(service).list(user, 3L, filters, TaskListOrder.BOARD, expectedPage);
     }
 

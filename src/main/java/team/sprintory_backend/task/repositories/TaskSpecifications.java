@@ -44,6 +44,11 @@ public final class TaskSpecifications {
             if (filters.assigneeId() != null) {
                 predicates.add(cb.equal(root.get("assignee").get("id"), filters.assigneeId()));
             }
+            if (filters.sprintId() != null) {
+                predicates.add(cb.equal(root.get("sprint").get("id"), filters.sprintId()));
+            } else if (Boolean.TRUE.equals(filters.noSprint())) {
+                predicates.add(cb.isNull(root.get("sprint")));
+            }
             if (filters.label() != null) {
                 // "exists" rather than a join, so a task is listed once whatever its labels.
                 Subquery<Integer> labelled = query.subquery(Integer.class);

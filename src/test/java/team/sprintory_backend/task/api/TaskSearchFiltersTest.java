@@ -89,4 +89,18 @@ class TaskSearchFiltersTest {
         TaskSearchFilters filters = TaskSearchFilters.fromQuery("  PMP_% ", null, null, null, null, null);
         assertEquals("PMP_%", filters.q());
     }
+    @Test
+    void sprintIdAndNoSprintAreExclusiveAndValidated() {
+        var inSprint = TaskSearchFilters.fromQuery(null, null, null, null, null, null, 12L, null);
+        assertEquals(12L, inSprint.sprintId());
+        assertFalse(inSprint.isUnfiltered());
+        var backlog = TaskSearchFilters.fromQuery(null, null, null, null, null, null, null, true);
+        assertTrue(backlog.noSprint());
+        assertFalse(backlog.isUnfiltered());
+        assertThrows(team.sprintory_backend.exceptionHandler.BadRequestException.class,
+                () -> TaskSearchFilters.fromQuery(null, null, null, null, null, null, 12L, true));
+        assertThrows(team.sprintory_backend.exceptionHandler.BadRequestException.class,
+                () -> TaskSearchFilters.fromQuery(null, null, null, null, null, null, -1L, null));
+    }
+
 }

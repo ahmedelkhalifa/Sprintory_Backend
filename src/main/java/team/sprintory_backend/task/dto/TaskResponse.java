@@ -62,13 +62,16 @@ public record TaskResponse(
                 parentTaskId, estimateMinutes, subtaskTotal, subtaskDone);
     }
 
-    /** Labels sorted for a stable order. {@code sprintId} stays null until sprints exist (R14). */
+    /** Labels sorted for stable order; sprintId reflects the parent sprint for subtasks. */
     public static TaskResponse from(Task task) {
         return new TaskResponse(task.getId(), task.getProject().getId(), task.getKey(), task.getTitle(),
                 task.getType(), task.getPriority(), task.getStatus().getId(), task.getStatus().getName(),
                 task.getAssignee() == null ? null : task.getAssignee().getId(),
                 task.getParent() == null ? task.getEstimate() : null,
-                task.getLabels().stream().sorted().toList(), task.getDescription(), null,
+                task.getLabels().stream().sorted().toList(), task.getDescription(),
+                (task.getParent() == null
+                        ? (task.getSprint() == null ? null : task.getSprint().getId())
+                        : (task.getParent().getSprint() == null ? null : task.getParent().getSprint().getId())),
                 toInstant(task.getCreatedAt()), toInstant(task.getUpdatedAt()), null,
                 task.getParent() == null ? null : task.getParent().getId(), task.getEstimateMinutes(), 0, 0);
     }

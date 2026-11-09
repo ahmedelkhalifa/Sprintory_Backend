@@ -14,11 +14,15 @@ import java.util.Set;
  */
 public record ProjectResponse(Long id, Long workspaceId, String name, String key, String description,
                               ProjectTemplate template, Set<ProjectRole> roles,
-                              Set<ProjectPermission> permissions) {
+                              Set<ProjectPermission> permissions, int sprintLengthDays) {
+    public ProjectResponse(Long id, Long workspaceId, String name, String key, String description,
+                           ProjectTemplate template, Set<ProjectRole> roles, Set<ProjectPermission> permissions) {
+        this(id, workspaceId, name, key, description, template, roles, permissions, 14);
+    }
     public static ProjectResponse from(Project project, Set<ProjectRole> roles,
                                        Set<ProjectPermission> permissions) {
         return new ProjectResponse(project.getId(), project.getWorkspace().getId(), project.getName(),
                 project.getKey(), project.getDescription(), project.getTemplate(),
-                Set.copyOf(roles), Set.copyOf(permissions));
+                Set.copyOf(roles), Set.copyOf(permissions), project.getSprintLengthDays());
     }
 }
