@@ -104,7 +104,7 @@ class TaskApiServiceTest {
                 columnRepository, userRepository,
                 new ProjectBoardStrategies(List.of(new ScrumBoardStrategy(), new KanbanBoardStrategy())),
                 history, auditLog, events,
-                new TaskContent(new RichTextParser(JsonMapper.builder().build()), mentions, events));
+                new TaskContent(new RichTextParser(JsonMapper.builder().build()), mentions, events), mock(team.sprintory_backend.sprint.services.SprintScopeHistoryWriter.class));
         user = User.builder().id(42L).firstName("Ada").lastName("Lovelace")
                 .email("ada@example.com").build();
 

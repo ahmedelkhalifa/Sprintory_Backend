@@ -12,6 +12,10 @@ import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.notification.events.SprintStarted;
 import team.sprintory_backend.notification.events.SprintCompleted;
 import team.sprintory_backend.project.models.Project;
+import team.sprintory_backend.project.models.BoardColumnCategory;
+import team.sprintory_backend.project.models.ProjectRole;
+import team.sprintory_backend.project.dto.UpdateProjectRequest;
+import team.sprintory_backend.project.services.ProjectService;
 import team.sprintory_backend.project.models.ProjectLifecycleState;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.models.ProjectTemplate;
@@ -30,14 +34,12 @@ import team.sprintory_backend.user.repositories.UserRepository;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 /** PMP-119: durable Scrum sprint planning, serialized by the project's database row lock. */
 @Service @RequiredArgsConstructor
@@ -52,6 +54,8 @@ public class SprintService {
     private final UserRepository users;
     private final TaskRepository tasks;
     private final ApplicationEventPublisher events;
+    private final ProjectService projectSettings;
+    private final SprintScopeHistoryWriter scopeWriter;
 
     @Transactional(readOnly = true)
     public int projectSprintLength(User actor, Long projectId) {
@@ -67,10 +71,8 @@ public class SprintService {
         if (project.getLifecycleStatus() != ProjectLifecycleState.ACTIVE) {
             throw new SprintConflictException("A completed or archived project is read-only.");
         }
-        Project locked = projects.lockById(projectId)
-                .orElseThrow(() -> new ResourceNotFoundException("Project not found."));
-        locked.setSprintLengthDays(request.days());
-        return projects.saveAndFlush(locked).getSprintLengthDays();
+        return projectSettings.update(actor, projectId,
+                new UpdateProjectRequest(null, null, request.days())).sprintLengthDays();
     }
 
     @Transactional(readOnly = true)
@@ -104,8 +106,7 @@ public class SprintService {
 
     @Transactional
     public SprintResponse update(User actor, Long sprintId, SprintRequest request) {
-        Sprint sprint = find(sprintId);
-        writable(actor, sprint.getProject().getId());
+        Sprint sprint = writableSprint(actor, sprintId);
         if (sprint.getStatus() == SprintStatus.COMPLETED) throw new SprintConflictException("A completed sprint can't be changed.");
         if (request.name() != null) sprint.setName(requiredName(request.name()));
         if (request.goal() != null) sprint.setGoal(trim(request.goal()));
@@ -114,8 +115,11 @@ public class SprintService {
             sprint.setCapacity(null);
         } else if (request.capacity() != null) sprint.setCapacity(request.capacity());
         if (request.startDate() != null || request.endDate() != null) {
-            LocalDate from = request.startDate() == null ? sprint.getStartDate() : request.startDate();
-            LocalDate to = request.endDate() == null ? sprint.getEndDate() : request.endDate();
+            if (request.startDate() == null || request.endDate() == null) {
+                throw new BadRequestException("Provide both sprint dates.");
+            }
+            LocalDate from = request.startDate();
+            LocalDate to = request.endDate();
             validateDates(sprint.getProject().getId(), sprint.getId(), from, to);
             sprint.setStartDate(from);
             sprint.setEndDate(to);
@@ -125,28 +129,33 @@ public class SprintService {
 
     @Transactional
     public void delete(User actor, Long sprintId) {
-        Sprint sprint = find(sprintId);
-        writable(actor, sprint.getProject().getId());
+        Sprint sprint = writableSprint(actor, sprintId);
         if (sprint.getStatus() != SprintStatus.PLANNED) throw new SprintConflictException("Only a planned sprint can be deleted.");
+        // Keep managed live tasks in sync with the native bulk update (which must also
+        // unlink soft-deleted tasks hidden by Task's @SQLRestriction).
         for (Task task : tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(sprintId)) {
             task.setSprint(null);
             task.setSprintPosition(null);
         }
-        // Tasks keep their original backlog_rank; the database owns the assignment.
         tasks.flush();
+        tasks.clearSprintAssignmentsIncludingDeleted(sprintId);
+        // Original backlog_rank remains unchanged.
         sprints.delete(sprint);
     }
 
     @Transactional
     public SprintResponse start(User actor, Long sprintId, StartSprintRequest request) {
-        Sprint sprint = find(sprintId);
-        Project project = writable(actor, sprint.getProject().getId());
+        Sprint sprint = writableSprint(actor, sprintId);
+        Project project = sprint.getProject();
         if (sprint.getStatus() != SprintStatus.PLANNED) throw new SprintConflictException("Only a planned sprint can be started.");
         if (sprints.findFirstByProjectIdAndStatus(project.getId(), SprintStatus.ACTIVE).isPresent()) {
             throw new SprintAlreadyActiveException();
         }
         String goal = request != null && request.goal() != null ? trim(request.goal()) : sprint.getGoal();
         if (goal == null || goal.isBlank()) throw new BadRequestException("Add a Sprint Goal first.");
+        if (request != null && ((request.startDate() == null) != (request.endDate() == null))) {
+            throw new BadRequestException("Provide both sprint dates.");
+        }
         LocalDate from = request != null && request.startDate() != null ? request.startDate() : sprint.getStartDate();
         LocalDate to = request != null && request.endDate() != null ? request.endDate() : sprint.getEndDate();
         validateDates(project.getId(), sprintId, from, to);
@@ -220,18 +229,18 @@ public class SprintService {
         tasks.flush();
         if (source != null && source.getStatus() == SprintStatus.ACTIVE &&
                 (target == null || !source.getId().equals(target.getId()))) {
-            recordChange(source, task, SprintScopeChange.Action.REMOVED, actor);
+            scopeWriter.record(source, task, SprintScopeChange.Action.REMOVED, actor);
         }
         if (target != null && target.getStatus() == SprintStatus.ACTIVE &&
                 (source == null || !source.getId().equals(target.getId()))) {
-            recordChange(target, task, SprintScopeChange.Action.ADDED, actor);
+            scopeWriter.record(target, task, SprintScopeChange.Action.ADDED, actor);
         }
     }
 
     @Transactional
     public CompleteSprintResponse complete(User actor, Long sprintId, CompleteSprintRequest request) {
-        Sprint sprint = find(sprintId);
-        Project project = writable(actor, sprint.getProject().getId());
+        Sprint sprint = writableSprint(actor, sprintId);
+        Project project = sprint.getProject();
         if (sprint.getStatus() != SprintStatus.ACTIVE) throw new SprintConflictException("Only an active sprint can be completed.");
         Long nextId = request == null ? null : request.carryOverSprintId();
         boolean createNew = request != null && Boolean.TRUE.equals(request.createSprint());
@@ -245,13 +254,17 @@ public class SprintService {
         List<Task> unfinished = new ArrayList<>();
         int completedPoints = 0;
         for (Task task : selected) {
-            if (task.getStatus().getCategory() == team.sprintory_backend.project.models.BoardColumnCategory.DONE) {
+            if (task.getStatus().getCategory() == BoardColumnCategory.DONE) {
                 completedPoints += task.getEstimate() == null ? 0 : task.getEstimate();
             } else unfinished.add(task);
         }
+        // Mark completion before generating follow-up dates: a sprint completed early
+        // no longer occupies its originally planned remaining days.
+        sprint.setStatus(SprintStatus.COMPLETED);
+        sprint.setCompletedAt(Instant.now());
         if (createNew) {
             int number = sprints.maxNumber(project.getId()) + 1;
-            LocalDate[] dates = nextDates(project, sprint.getEndDate());
+            LocalDate[] dates = nextDates(project, effectiveEnd(sprint));
             validateDates(project.getId(), null, dates[0], dates[1]);
             next = sprints.saveAndFlush(new Sprint(project, number, project.getKey() + " Sprint " + number,
                     "", null, dates[0], dates[1]));
@@ -269,15 +282,13 @@ public class SprintService {
         } else {
             for (Task task : unfinished) { task.setSprint(null); task.setSprintPosition(null); }
         }
-        sprint.setStatus(SprintStatus.COMPLETED);
-        sprint.setCompletedAt(Instant.now());
         sprint.setCompletedPoints(completedPoints);
         sprints.saveAndFlush(sprint);
         tasks.flush();
         events.publishEvent(new SprintCompleted(project, actor, sprint.getName()));
         return new CompleteSprintResponse(response(sprint),
                 (int) selected.stream().filter(t -> t.getStatus().getCategory() !=
-                        team.sprintory_backend.project.models.BoardColumnCategory.DONE).count(),
+                        BoardColumnCategory.DONE).count(),
                 next == null ? null : response(next));
     }
 
@@ -286,7 +297,7 @@ public class SprintService {
         Sprint sprint = find(sprintId);
         readable(actor, sprint.getProject().getId());
         int days = SprintCapacityCalculator.workingDays(sprint.getStartDate(), sprint.getEndDate());
-        List<Long> ids = members.findUserIdsByProjectId(sprint.getProject().getId());
+        List<Long> ids = members.findCapacityUserIds(sprint.getProject().getId(), ProjectRole.VIEWER);
         Map<Long, Integer> overrides = new HashMap<>();
         for (SprintAvailability value : availability.findBySprintId(sprintId)) overrides.put(value.getUser().getId(), value.getAvailableDays());
         List<CapacitySuggestionResponse.MemberAvailability> memberDays = ids.stream()
@@ -304,11 +315,11 @@ public class SprintService {
 
     @Transactional
     public CapacitySuggestionResponse setAvailability(User actor, Long sprintId, Long memberId, AvailabilityRequest request) {
-        Sprint sprint = find(sprintId);
-        Project project = writable(actor, sprint.getProject().getId());
+        Sprint sprint = writableSprint(actor, sprintId);
+        Project project = sprint.getProject();
         if (sprint.getStatus() == SprintStatus.COMPLETED) throw new SprintConflictException("A completed sprint can't be changed.");
-        if (!members.existsByProjectIdAndUserId(project.getId(), memberId)) {
-            throw new BadRequestException("Availability can only be set for project members.");
+        if (!members.findCapacityUserIds(project.getId(), ProjectRole.VIEWER).contains(memberId)) {
+            throw new BadRequestException("Availability can only be set for non-Viewer project members.");
         }
         int days = SprintCapacityCalculator.workingDays(sprint.getStartDate(), sprint.getEndDate());
         if (request.availableDays() > days) throw new BadRequestException("Available days cannot exceed working days.");
@@ -336,10 +347,6 @@ public class SprintService {
                 .map(SprintCommitmentResponse::from).toList();
     }
 
-    private void recordChange(Sprint sprint, Task task, SprintScopeChange.Action action, User actor) {
-        scopeChanges.save(new SprintScopeChange(sprint, task.getId(), task.getKey(), action, actor.getId()));
-    }
-
     private SprintResponse response(Sprint sprint) {
         List<Task> selected = tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(sprint.getId());
         int points = selected.stream().mapToInt(t -> t.getEstimate() == null ? 0 : t.getEstimate()).sum();
@@ -361,6 +368,14 @@ public class SprintService {
             throw new SprintConflictException("Sprints are read-only when the project is completed or archived.");
         }
         return projects.lockById(projectId).orElseThrow(() -> new ResourceNotFoundException("Project not found."));
+    }
+
+    /** Lock the project row before loading the mutable sprint: prevents stale state races. */
+    private Sprint writableSprint(User actor, Long sprintId) {
+        Long projectId = sprints.findProjectId(sprintId)
+                .orElseThrow(() -> new ResourceNotFoundException("Sprint not found."));
+        writable(actor, projectId);
+        return findInProject(projectId, sprintId);
     }
 
     private static void ensureScrum(Project project) {
@@ -396,24 +411,35 @@ public class SprintService {
     private LocalDate[] nextDates(Project project, LocalDate notBefore) {
         LocalDate start = notBefore.plusDays(1);
         for (Sprint sprint : sprints.findByProjectIdOrderByNumberAsc(project.getId())) {
-            if (sprint.getEndDate() != null && !sprint.getEndDate().isBefore(start)) {
-                start = sprint.getEndDate().plusDays(1);
+            LocalDate occupiedThrough = effectiveEnd(sprint);
+            if (occupiedThrough != null && !occupiedThrough.isBefore(start)) {
+                start = occupiedThrough.plusDays(1);
             }
         }
         int days = project.getSprintLengthDays() > 1 ? project.getSprintLengthDays() : 14;
         return new LocalDate[] { start, start.plusDays(days - 1) };
     }
 
+    private static LocalDate effectiveEnd(Sprint sprint) {
+        if (sprint.getStatus() != SprintStatus.COMPLETED || sprint.getCompletedAt() == null) {
+            return sprint.getEndDate();
+        }
+        LocalDate closed = sprint.getCompletedAt().atZone(ZoneOffset.UTC).toLocalDate();
+        return closed.isBefore(sprint.getEndDate()) ? closed : sprint.getEndDate();
+    }
+
     private void validateDates(Long projectId, Long exceptId, LocalDate start, LocalDate end) {
         if (start == null || end == null || !end.isAfter(start)) {
             throw new BadRequestException("Sprint end date must be after start date.");
         }
-        if (java.time.temporal.ChronoUnit.DAYS.between(start, end) > 89) {
+        if (ChronoUnit.DAYS.between(start, end) > 89) {
             throw new BadRequestException("A sprint cannot exceed 90 calendar days.");
         }
         for (Sprint other : sprints.findByProjectIdOrderByNumberAsc(projectId)) {
             if (other.getId().equals(exceptId) || other.getStartDate() == null || other.getEndDate() == null) continue;
-            if (!start.isAfter(other.getEndDate()) && !end.isBefore(other.getStartDate())) {
+            LocalDate occupiedThrough = effectiveEnd(other);
+            if (occupiedThrough.isBefore(other.getStartDate())) continue; // cancelled before starting
+            if (!start.isAfter(occupiedThrough) && !end.isBefore(other.getStartDate())) {
                 throw new BadRequestException("Sprint dates cannot overlap another sprint.");
             }
         }

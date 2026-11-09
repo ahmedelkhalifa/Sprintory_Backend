@@ -26,6 +26,7 @@ import org.hibernate.annotations.SQLRestriction;
 import team.sprintory_backend.audit.BaseEntity;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
+import team.sprintory_backend.sprint.models.Sprint;
 import team.sprintory_backend.user.models.User;
 
 import java.time.Instant;
@@ -107,7 +108,8 @@ public class Task extends BaseEntity {
     /** Parent sprint assignment; subtasks inherit this from their parent. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "sprint_id")
-    private team.sprintory_backend.sprint.models.Sprint sprint;
+    @OnDelete(action = OnDeleteAction.SET_NULL)
+    private Sprint sprint;
 
     @Column(name = "sprint_position")
     private Long sprintPosition;

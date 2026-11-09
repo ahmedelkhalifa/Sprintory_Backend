@@ -9,6 +9,9 @@ import java.util.List;
 import java.util.Optional;
 
 public interface SprintRepository extends JpaRepository<Sprint, Long> {
+    /** Scalar lookup before project lock: do not load the Sprint entity until the lock is held. */
+    @Query("select s.project.id from Sprint s where s.id = :sprintId")
+    Optional<Long> findProjectId(@Param("sprintId") Long sprintId);
     List<Sprint> findByProjectIdAndStatusNotOrderByNumberAsc(Long projectId, SprintStatus status);
     List<Sprint> findByProjectIdOrderByNumberAsc(Long projectId);
     List<Sprint> findTop3ByProjectIdAndStatusOrderByCompletedAtDescIdDesc(Long projectId, SprintStatus status);

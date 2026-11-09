@@ -1,6 +1,6 @@
 # Sprintory — Projects API contract (R02, R06)
 
-**Status:** projects with key, description and immutable Scrum/Kanban template; board and default columns; settings (name, description); membership and roles. Board configuration and WIP limits are implemented under PMP-125 ([board-docs.md](./board-docs.md)); sprint planning and the basic lifecycle are implemented by PMP-119 ([sprints-docs.md](./sprints-docs.md)). See [§9 Implementation status](#9-implementation-status).
+**Status:** projects with key, description and immutable Scrum/Kanban template; board and default columns; settings (name, description, Scrum sprint length); membership and roles. Board configuration and WIP limits are implemented under PMP-125 ([board-docs.md](./board-docs.md)); sprint planning and the basic lifecycle are implemented by PMP-119 ([sprints-docs.md](./sprints-docs.md)). See [§9 Implementation status](#9-implementation-status).
 **Applies to:** backend `/api/v1/workspaces/{workspaceId}/projects` and `/api/v1/projects/**`.
 **Related:** [Roles and permissions](./roles-docs.md), [Board configuration](./board-docs.md), [Tasks](./tasks-docs.md), [Universal search](./search-docs.md), [Workspaces](./workspaces-docs.md) (archiving, pagination), [Teams](./teams-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Authentication](./auth-endpoints.md), [Audit log](./audit-log-docs.md), [Requirements](./requirements.md) R02, R04, R06.
 **Audit log:** creating a project, changing its settings, adding or removing members (directly or through a team) and changing project roles each write an entry to the workspace's audit log ([audit-log-docs.md §4.3](./audit-log-docs.md#4-action-catalogue)). Board column changes are not logged.
@@ -390,6 +390,8 @@ Each template has one strategy class in `project/strategy/`: `ScrumBoardStrategy
 A new template therefore needs: a `ProjectTemplate` value, a strategy class, a migration for the template check constraint, and its roles in `ProjectRole` ([roles-docs.md](./roles-docs.md)).
 
 ### 3.9 Edit the project's settings
+
+`UpdateProjectRequest` also accepts `sprintLengthDays` (integer **2–90**, **Scrum** only). `ProjectResponse.sprintLengthDays` is always included (default 14). Changes use the existing `PROJECT_SETTINGS_CHANGED` audit event. Changing the project setting affects new sprints only; see [Sprints §5](./sprints-docs.md#5-project-sprint-length-setting).
 
 `PATCH /api/v1/projects/{projectId}`
 

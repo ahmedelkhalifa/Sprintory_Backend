@@ -14,6 +14,8 @@ class SprintRequestValidationTest {
             assertFalse(validator.validate(new AvailabilityRequest(-1)).isEmpty());
             assertFalse(validator.validate(new MoveSprintTaskRequest(null, null, null)).isEmpty());
             assertFalse(validator.validate(new SprintLengthRequest(1)).isEmpty());
+            assertFalse(validator.validate(new team.sprintory_backend.project.dto.UpdateProjectRequest(
+                    null, null, 1)).isEmpty());
         }
     }
 }

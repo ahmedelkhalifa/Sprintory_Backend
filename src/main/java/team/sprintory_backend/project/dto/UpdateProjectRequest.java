@@ -1,6 +1,8 @@
 package team.sprintory_backend.project.dto;
 
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Size;
 
 /**
@@ -9,5 +11,10 @@ import jakarta.validation.constraints.Size;
  */
 public record UpdateProjectRequest(
         @Size(max = 100) @Pattern(regexp = "(?s).*\\S.*", message = "must not be blank") String name,
-        String description
-) {}
+        String description,
+        @Min(2) @Max(90) Integer sprintLengthDays
+) {
+    public UpdateProjectRequest(String name, String description) {
+        this(name, description, null);
+    }
+}

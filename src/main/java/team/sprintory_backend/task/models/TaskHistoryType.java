@@ -17,5 +17,7 @@ public enum TaskHistoryType {
     /** A file was attached (R25); {@code newValue} is its file name, {@code refId} the attachment id. */
     ATTACHMENT_ADDED,
     /** An attachment was deleted (R25); {@code oldValue} is its file name, {@code refId} the attachment id. */
-    ATTACHMENT_REMOVED
+    ATTACHMENT_REMOVED,
+    /** Added to or removed from a sprint; old/new values are sprint name snapshots. */
+    SPRINT_SCOPE_CHANGED
 }

@@ -62,7 +62,7 @@ public record TaskResponse(
                 parentTaskId, estimateMinutes, subtaskTotal, subtaskDone);
     }
 
-    /** Labels sorted for a stable order. {@code sprintId} stays null until sprints exist (R14). */
+    /** Labels sorted for stable order; sprintId reflects the parent sprint for subtasks. */
     public static TaskResponse from(Task task) {
         return new TaskResponse(task.getId(), task.getProject().getId(), task.getKey(), task.getTitle(),
                 task.getType(), task.getPriority(), task.getStatus().getId(), task.getStatus().getName(),

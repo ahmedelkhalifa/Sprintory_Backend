@@ -45,10 +45,12 @@ public class TaskController {
                                            @RequestParam(required = false) Long statusId,
                                            @RequestParam(required = false) Long assigneeId,
                                            @RequestParam(required = false) String label,
+                                           @RequestParam(required = false) Long sprintId,
+                                           @RequestParam(required = false) Boolean noSprint,
                                            @RequestParam(required = false) String order,
                                            Pageable pageable) {
         TaskSearchFilters filters = TaskSearchFilters.fromQuery(q, type, priority,
-                statusId, assigneeId, label);
+                statusId, assigneeId, label, sprintId, noSprint);
         return taskApiService.list(principal.getUser(), projectId, filters, TaskListOrder.fromQuery(order),
                 Pageables.withoutSort(pageable));
     }

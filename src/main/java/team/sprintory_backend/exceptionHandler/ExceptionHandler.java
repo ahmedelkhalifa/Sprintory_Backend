@@ -16,6 +16,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import team.sprintory_backend.sprint.exceptions.SprintAlreadyActiveException;
+import team.sprintory_backend.sprint.exceptions.SprintConflictException;
 import team.sprintory_backend.attachment.exceptions.FileTooLargeException;
 import team.sprintory_backend.attachment.exceptions.FileTypeNotAllowedException;
 import team.sprintory_backend.attachment.exceptions.TooManyFilesException;
@@ -74,16 +76,16 @@ public class ExceptionHandler {
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(
-            team.sprintory_backend.sprint.exceptions.SprintAlreadyActiveException.class)
+            SprintAlreadyActiveException.class)
     public ResponseEntity<ErrorResponse> handleSprintAlreadyActive(HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), ErrorCode.SPRINT_ALREADY_ACTIVE,
                 "Another sprint is already active.", request);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(
-            team.sprintory_backend.sprint.exceptions.SprintConflictException.class)
+            SprintConflictException.class)
     public ResponseEntity<ErrorResponse> handleSprintConflict(
-            team.sprintory_backend.sprint.exceptions.SprintConflictException e,
+            SprintConflictException e,
             HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), ErrorCode.CONFLICT, e.getMessage(), request);
     }

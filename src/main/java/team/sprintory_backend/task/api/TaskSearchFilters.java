@@ -20,7 +20,9 @@ public record TaskSearchFilters(
         String priority,
         Long statusId,
         Long assigneeId,
-        String label
+        String label,
+        Long sprintId,
+        Boolean noSprint
 ) {
     private static final Set<String> TYPES = Set.of("STORY", "TASK", "BUG");
     private static final Set<String> PRIORITIES = Set.of("HIGHEST", "HIGH", "MEDIUM", "LOW", "LOWEST");
@@ -32,20 +34,38 @@ public record TaskSearchFilters(
         statusId = optionalPositiveId(statusId, "statusId");
         assigneeId = optionalPositiveId(assigneeId, "assigneeId");
         label = optionalText(label);
+        sprintId = optionalPositiveId(sprintId, "sprintId");
+        noSprint = Boolean.TRUE.equals(noSprint) ? true : null;
+        if (sprintId != null && noSprint != null) {
+            throw new BadRequestException("Choose sprintId or noSprint, not both.");
+        }
+    }
+
+    /** Backwards-compatible constructor for callers without sprint filtering. */
+    public TaskSearchFilters(String q, String type, String priority, Long statusId,
+                             Long assigneeId, String label) {
+        this(q, type, priority, statusId, assigneeId, label, null, null);
     }
 
     /**
-     * A controller can pass its six optional {@code @RequestParam} values
+     * Existing callers can pass the original six optional {@code @RequestParam} values
      * directly to this factory. Null/blank values mean "no filter".
      */
     public static TaskSearchFilters fromQuery(String q, String type, String priority,
                                               Long statusId, Long assigneeId, String label) {
-        return new TaskSearchFilters(q, type, priority, statusId, assigneeId, label);
+        return new TaskSearchFilters(q, type, priority, statusId, assigneeId, label, null, null);
+    }
+
+    public static TaskSearchFilters fromQuery(String q, String type, String priority,
+                                              Long statusId, Long assigneeId, String label,
+                                              Long sprintId, Boolean noSprint) {
+        return new TaskSearchFilters(q, type, priority, statusId, assigneeId, label, sprintId, noSprint);
     }
 
     public boolean isUnfiltered() {
         return q == null && type == null && priority == null
-                && statusId == null && assigneeId == null && label == null;
+                && statusId == null && assigneeId == null && label == null
+                && sprintId == null && noSprint == null;
     }
 
     private static String optionalText(String value) {

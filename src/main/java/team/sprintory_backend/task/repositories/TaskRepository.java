@@ -36,6 +36,12 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
     /** Sprint order; the parent owns the assignment, and subtasks follow it. */
     List<Task> findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(Long sprintId);
 
+    /** Unlink ALL tasks, including soft-deleted ones hidden by @SQLRestriction. */
+    @Modifying(flushAutomatically = true)
+    @Query(value = "update tasks set sprint_id = null, sprint_position = null where sprint_id = :sprintId",
+            nativeQuery = true)
+    int clearSprintAssignmentsIncludingDeleted(@Param("sprintId") Long sprintId);
+
     /** Only live top-level tasks count for board WIP. */
     long countByProjectIdAndStatusIdAndParentIsNull(Long projectId, Long statusId);
 
@@ -69,6 +75,12 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
     @Query(value = """
             update tasks t set deleted_at = null, deleted_with_parent_id = null,
                 updated_at = now(), updated_by = :actor,
+                sprint_id = case when exists (
+                    select 1 from sprints s where s.id = t.sprint_id and s.status = 'COMPLETED'
+                ) then null else t.sprint_id end,
+                sprint_position = case when exists (
+                    select 1 from sprints s where s.id = t.sprint_id and s.status = 'COMPLETED'
+                ) then null else t.sprint_position end,
                 status_column_id = case when exists (
                     select 1 from project_board_columns c
                     where c.id = t.status_column_id and c.deleted_at is null
@@ -87,6 +99,12 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
     @Query(value = """
             update tasks t set deleted_at = null, deleted_with_parent_id = null,
                 updated_at = now(), updated_by = :actor,
+                sprint_id = case when exists (
+                    select 1 from sprints s where s.id = t.sprint_id and s.status = 'COMPLETED'
+                ) then null else t.sprint_id end,
+                sprint_position = case when exists (
+                    select 1 from sprints s where s.id = t.sprint_id and s.status = 'COMPLETED'
+                ) then null else t.sprint_position end,
                 status_column_id = case when exists (
                     select 1 from project_board_columns c
                     where c.id = t.status_column_id and c.deleted_at is null

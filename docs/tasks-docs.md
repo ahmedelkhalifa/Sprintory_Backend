@@ -53,7 +53,7 @@ All paths are under `/api/v1/projects/{projectId}/tasks`. Bodies are JSON in `ca
 | # | Method | Path | Request | Success | Permission |
 | --- | --- | --- | --- | --- | --- |
 | 3.1 | POST | `` | `CreateTaskRequest` | `201` + `TaskResponse` | `EDIT_TASKS` |
-| 3.2 | GET | `?q=&type=&priority=&statusId=&assigneeId=&label=&order=&page=&size=` | none | `200` + `PageResponse<TaskResponse>` | `VIEW_WORK` |
+| 3.2 | GET | `?q=&type=&priority=&statusId=&assigneeId=&label=&sprintId=&noSprint=&order=&page=&size=` | none | `200` + `PageResponse<TaskResponse>` | `VIEW_WORK` |
 | 3.3 | GET | `/{taskId}` | none | `200` + `TaskResponse` | `VIEW_WORK` |
 | 3.4 | PATCH | `/{taskId}` | `UpdateTaskRequest` | `200` + `TaskResponse` | `EDIT_TASKS` |
 | 3.5 | DELETE | `/{taskId}` | none | `204` | `EDIT_TASKS` |
@@ -100,6 +100,7 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
 - `assigneeId` is a user id; show the name from `GET /projects/{projectId}/members`.
 - `description` is a string holding TipTap JSON (`JSON.stringify(editor.getJSON())`). The response returns the backend's normalized copy. Descriptions saved before 4 Nov 2026 may still be plain text; see [mentions-docs.md §2.6](./mentions-docs.md#26-task-descriptions).
 - `sprintId` is `null` for backlog tasks, otherwise the sprint ID. Subtasks inherit the parent sprint. Sprint planning uses dedicated endpoints rather than allowing `sprintId` in task create/update.
+- **Server-side sprint task filtering:** `GET /projects/{projectId}/tasks?sprintId=42` returns only live top-level tasks in sprint 42; `?noSprint=true` returns backlog tasks whose `sprint_id` is null. Both together give `400 BAD_REQUEST`. Filters combine with all existing task filters and run before pagination. The Scrum board uses `?sprintId={activeSprintId}`; see [sprints-docs.md §3](./sprints-docs.md#3-task-list-backlog-board-capacity).
 - Top-level responses include `subtaskTotal` and `subtaskDone` (zero until children exist); child responses have `parentTaskId`, `estimateMinutes`, and `estimate: null` (no story points). Children do not appear as separate board cards or in the main project task list.
 - `confirmOpenSubtasks` is an optional boolean on `PATCH /{taskId}` and `PUT /{taskId}/position`. A transition of a parent with open subtasks to a `DONE`-category column returns `409 OPEN_SUBTASKS_CONFIRMATION_REQUIRED` unless explicitly confirmed.
 - The board positions and backlog ranks are internal and never sent; lists come back already sorted (§3.2).

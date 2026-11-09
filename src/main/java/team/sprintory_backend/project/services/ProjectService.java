@@ -25,6 +25,9 @@ import team.sprintory_backend.project.dto.ProjectResponse;
 import team.sprintory_backend.project.dto.UpdateProjectRequest;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectMember;
+import team.sprintory_backend.project.models.ProjectTemplate;
+import team.sprintory_backend.project.models.ProjectLifecycleState;
+import team.sprintory_backend.sprint.exceptions.SprintConflictException;
 import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
 import team.sprintory_backend.project.exceptions.LastProjectManagerException;
 import team.sprintory_backend.project.exceptions.ProjectKeyTakenException;
@@ -137,7 +140,9 @@ public class ProjectService {
     @Transactional
     public ProjectResponse update(User user, Long projectId, UpdateProjectRequest request) {
         ProjectAccessResult access = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_SETTINGS);
-        Project project = access.project();
+        Project project = request.sprintLengthDays() == null ? access.project()
+                : projectRepository.lockById(projectId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Project not found."));
         List<AuditChange> changes = new ArrayList<>();
         if (request.name() != null) {
             String oldName = project.getName();
@@ -151,6 +156,23 @@ public class ProjectService {
             project.setDescription(normalizeDescription(request.description()));
             if (!Objects.equals(oldDescription, project.getDescription())) {
                 changes.add(AuditChange.of("description", oldDescription, project.getDescription()));
+            }
+        }
+        if (request.sprintLengthDays() != null) {
+            if (project.getLifecycleStatus() != ProjectLifecycleState.ACTIVE) {
+                throw new SprintConflictException("Sprints are read-only when the project is completed or archived.");
+            }
+            if (request.sprintLengthDays() < 2 || request.sprintLengthDays() > 90) {
+                throw new BadRequestException("Sprint length must be between 2 and 90 calendar days.");
+            }
+            if (project.getTemplate() != ProjectTemplate.SCRUM) {
+                throw new BadRequestException("Sprint length applies only to Scrum projects.");
+            }
+            int old = project.getSprintLengthDays();
+            int value = request.sprintLengthDays();
+            if (old != value) {
+                project.setSprintLengthDays(value);
+                changes.add(AuditChange.of("sprintLengthDays", String.valueOf(old), String.valueOf(value)));
             }
         }
         if (!changes.isEmpty()) {

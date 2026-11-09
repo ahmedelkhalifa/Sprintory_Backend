@@ -1,80 +1,128 @@
-# PMP-119 — Scrum sprint planning backend
+# Sprintory — Sprints API contract (R14)
 
-**Status:** implementation patch for review. Requires Flyway `V15__sprint_planning.sql`, migration validation and the full Maven suite in the Sprintory backend environment. PMP-120 frontend must disable its local sprint mock.
+**Status:** PMP-119 backend implemented; backend test suite must be run on the feature branch before merge. Sprint closure follow-up remains in PMP-122 (see §7).  
+**Applies to:** `/api/v1/projects/{projectId}/sprints`, `/api/v1/sprints/{sprintId}`, task-list sprint filtering, and Scrum project settings.  
+**Related:** [Tasks](./tasks-docs.md), [Task history](./task-history-docs.md), [Projects](./projects-docs.md), [Board](./board-docs.md), [Notifications](./notifications-docs.md), [Roles](./roles-docs.md), [API conventions](./api-conventions.md).
 
-## 1. Roles, routing, and security
+## 1. Rules and access
 
-All endpoints are prefixed `/api/v1`; JWT authentication follows existing API conventions. Sprints exist only for `SCRUM` projects. Every read checks `VIEW_WORK`; every sprint mutation checks `MANAGE_SPRINTS`, i.e. **Scrum Master** (including a multi-role member). Other project roles, including PM, cannot plan or start a sprint without Scrum Master permission. Sprint-length project setting checks `EDIT_SETTINGS` (PM). Changes are blocked for completed/archived projects and archived workspaces. Nonmembers receive the existing project-access 404 behavior.
+- Sprints exist only in **Scrum** projects. They have a numbered, editable name; optional capacity; goal; start/end calendar dates; state `PLANNED`, `ACTIVE`, or `COMPLETED`.
+- `MANAGE_SPRINTS` (Scrum Master permission) is required to create/update/delete/start/complete sprints, move tasks, and change per-member availability. Members with `VIEW_WORK` (including Viewers) can read sprint details.
+- A nonmember cannot discover a project: `404`. An authenticated project member lacking permission gets `403`; archived workspaces get `409 WORKSPACE_ARCHIVED` for mutations.
+- A sprint is read-only after completion; completed/archived projects are also read-only.
+- Several sprints may be `PLANNED`, but at most one may be `ACTIVE`; database unique index enforces this even under concurrent writes.
+- All sprint writes first acquire the **project row lock**, *then* load the mutable sprint. This serializes competing starts, completions, deletes, PATCHes and task moves.
+- Dates are inclusive, `endDate > startDate`, maximum 90 calendar days. On create/PATCH/start, dates supplied in a request must be **both present or both absent**.
+- Sprints may not overlap. For a completed sprint, the occupied interval ends on its **actual completion date** if it closed before its planned end. Thus early completion does not block planning the next sprint.
 
-`SPRINT_ALREADY_ACTIVE` is HTTP 409; other state conflicts use `CONFLICT` 409. Date errors use `BAD_REQUEST` 400. Malformed/invalid DTO fields use `VALIDATION_ERROR` 400.
+## 2. Sprint endpoints
 
-## 2. Existing frontend endpoints (contract retained)
+All endpoints require an access-token cookie. Bodies and responses are JSON; fields use `camelCase`.
 
-| Method | Endpoint | Body | Response |
+| Method | Path | Required permission | Success | Request / behavior |
+| --- | --- | --- | --- | --- |
+| `GET` | `/api/v1/projects/{projectId}/sprints` | `VIEW_WORK` | `200 SprintResponse[]` | Lists `PLANNED` + `ACTIVE` by number; use detail for completed. |
+| `POST` | `/api/v1/projects/{projectId}/sprints` | `MANAGE_SPRINTS` | `201 SprintResponse` | `SprintRequest`: `name?`, `goal?`, `capacity?`, `startDate?`, `endDate?`. |
+| `GET` | `/api/v1/sprints/{sprintId}` | `VIEW_WORK` | `200 SprintResponse` | Includes `COMPLETED`. |
+| `PATCH` | `/api/v1/sprints/{sprintId}` | `MANAGE_SPRINTS` | `200 SprintResponse` | Partial `SprintRequest`; both dates if changing dates; `clearCapacity:true` clears capacity. |
+| `DELETE` | `/api/v1/sprints/{sprintId}` | `MANAGE_SPRINTS` | `204` | `PLANNED` only; unlinks *all* tasks, including soft-deleted tasks, preserving `backlogRank`. |
+| `POST` | `/api/v1/sprints/{sprintId}/start` | `MANAGE_SPRINTS` | `200 SprintResponse` | `StartSprintRequest`: optional `goal`, `startDate`, `endDate`; requires a nonblank goal, valid dates, ≥1 live top-level task, no other ACTIVE sprint. |
+| `POST` | `/api/v1/projects/{projectId}/sprints/move` | `MANAGE_SPRINTS` | `204` | `MoveSprintTaskRequest`: `{taskId, sprintId, afterTaskId}`; `sprintId:null` removes from sprint; `afterTaskId:null` means first. |
+| `POST` | `/api/v1/sprints/{sprintId}/complete` | `MANAGE_SPRINTS` | `200 CompleteSprintResponse` | `{carryOverSprintId?,createSprint?}`; only ACTIVE; choose at most one destination. |
+
+`SprintRequest` names are ≤100 characters; goal ≤5000; capacity is null or a nonnegative integer. Absent name on create defaults to `KEY Sprint N`. Absent dates default to the next available period using the project's `sprintLengthDays` (initially 14). Sprint lengths cannot be one day because `endDate > startDate`.
+
+`SprintResponse` fields:
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `projectId`, `name`, `goal` | Identity and editable sprint metadata. |
+| `startDate`, `endDate` | **Planned** sprint dates; closing early does not rewrite the original end date. |
+| `status`, `completedAt` | `PLANNED`, `ACTIVE`, `COMPLETED`; completion timestamp or null. |
+| `capacity` | Team-selected point budget; optional, soft limit. |
+| `taskIds` | Ordered live **top-level** tasks; subtasks follow their parents. |
+| `selectedPoints` | Sum of estimates on currently selected top-level tasks. |
+| `unestimatedTaskIds` | Selected top-level tasks with `estimate:null`. |
+| `overCapacity` | `true` if `capacity` exists and selectedPoints exceeds it. **Never prevents saving.** |
+| `committedPoints` | Point snapshot taken when sprint starts, unchanged afterward. |
+| `completedPoints` | Sum of DONE-category top-level task estimates at completion. |
+
+`CompleteSprintResponse` is `{sprint, carriedOver, toSprint}`. DONE items remain in the completed sprint. Unfinished items go to a nominated `PLANNED` sprint, a newly created `PLANNED` sprint, or back to their original backlog rank. Closing publishes `SprintCompleted`; starting publishes `SprintStarted` for notifications. Committed item snapshots survive later estimate changes.
+
+## 3. Task list, backlog, board, capacity
+
+**Task filtering is performed by the database before pagination**, not by filtering a fetched task page. Add to `GET /api/v1/projects/{projectId}/tasks`:
+
+| Query parameter | Meaning |
+| --- | --- |
+| `sprintId=42` | Only top-level tasks assigned to sprint 42. |
+| `noSprint=true` | Only top-level tasks with `sprint_id IS NULL`, i.e. the Scrum product backlog. |
+| Neither | All live top-level project tasks, regardless of sprint. |
+| Both `sprintId` and `noSprint=true` | `400 BAD_REQUEST` (mutually exclusive). |
+
+These filters can be combined with existing `q`, `type`, `priority`, `statusId`, `assigneeId`, `label`, `order`, `page`, `size`; pagination totals match the filtered query. Board metadata `GET /projects/{projectId}/board` includes `activeSprintId` for Scrum, or `null` for Kanban. To populate a Scrum board, fetch tasks using `sprintId=activeSprintId`. A task is assigned to exactly one sprint via its parent; subtasks inherit the parent's `sprintId` in `TaskResponse` but cannot be moved separately.
+
+**Capacity suggestion:**
+
+| Method | Path | Required permission | Success |
 | --- | --- | --- | --- |
-| GET | `/projects/{projectId}/sprints` | — | Array of PLANNED + ACTIVE `SprintResponse` (oldest number first) |
-| POST | `/projects/{projectId}/sprints` | `{name?, goal?, capacity?, startDate?, endDate?}` | `201 SprintResponse` |
-| GET | `/sprints/{sprintId}` | — | `SprintResponse`, including COMPLETED |
-| PATCH | `/sprints/{sprintId}` | Same fields (partial; `{clearCapacity:true}` to reset) | `SprintResponse` |
-| DELETE | `/sprints/{sprintId}` | — | `204`; PLANNED only |
-| POST | `/sprints/{sprintId}/start` | `{startDate?, endDate?, goal?}` | `SprintResponse`; goal + dates + ≥1 task required |
-| POST | `/projects/{projectId}/sprints/move` | `{taskId, sprintId, afterTaskId}` | `204`; `sprintId:null` restores original backlog rank |
-| POST | `/sprints/{sprintId}/complete` | `{carryOverSprintId?, createSprint?}` | `{sprint, carriedOver, toSprint}`; active only |
+| `GET` | `/api/v1/sprints/{sprintId}/capacity-suggestion` | `VIEW_WORK` | `200 CapacitySuggestionResponse` |
+| `PUT` | `/api/v1/sprints/{sprintId}/availability/{userId}` | `MANAGE_SPRINTS` | `200 CapacitySuggestionResponse`; body `{availableDays:5}` |
+| `GET` | `/api/v1/sprints/{sprintId}/commitment` | `VIEW_WORK` | `200 SprintCommitmentResponse[]` |
+| `GET` | `/api/v1/sprints/{sprintId}/scope-history?page=&size=` | `VIEW_WORK` | `200 PageResponse<SprintScopeChangeResponse>` |
 
-Existing `src/api/sprintsApi.js` in Sprintory_Frontend expects these routes. **Amir must set `VITE_MOCK_SPRINTS=false`** in the frontend environment and restart Vite; by default the frontend uses a browser-local sprint mock. The mock can be removed after integration.
+`CapacitySuggestionResponse` fields: `suggestedCapacity` (integer or null), `averageVelocity` (number or null), `normalPersonDays`, `availablePersonDays`, `workingDays`, and `members:[{userId,availableDays}]`.
 
-`SprintResponse` example:
+- Velocity: average DONE story points for the last **up to three completed** sprints. None completed → no suggestion (`null`).
+- Available days: Monday–Friday working days inclusive; no holidays calendar yet. A member defaults to all workdays until overridden by a value from 0 to workingDays.
+- **Only project members who have at least one role other than `VIEWER` count** toward normal/available person-days and appear in the suggestion `members` list. Viewer-only members are excluded even if they belong to the project. `PUT /availability/{viewerId}` returns **400**.
+- Formula: `round(averageVelocity × availablePersonDays / normalPersonDays)`. Example: `(28+30+32)/3 = 30`; 5 eligible members × 10 days = 50, one absent 5 → 45, suggestion **27**.
+- The Scrum Master can select any nonnegative `capacity` regardless of suggestion. Over-capacity and unestimated work are soft warnings, not validation failures.
 
-```json
-{
-  "id": 3, "projectId": 7, "name": "PMP Sprint 4", "goal": "Deliver login",
-  "capacity": 27, "startDate": "2026-11-09", "endDate": "2026-11-22", "status": "PLANNED",
-  "taskIds": [55, 41, 60], "completedAt": null, "committedPoints": null,
-  "completedPoints": null, "selectedPoints": 33,
-  "unestimatedTaskIds": [60], "overCapacity": true
-}
-```
+## 4. Scope changes and task history
 
-`taskIds` contains **top-level tasks only** in sprint order. Their subtasks remain linked to their parent and inherit the sprint ID in `TaskResponse.sprintId`. The sprint assignment is stored on the parent task, never independently on a subtask. In Scrum, a task with `sprintId:null` is in the backlog. Existing `TaskResponse.from()` now returns the actual sprint ID. `GET /projects/{id}/board` returns `activeSprintId` from the ACTIVE sprint.
+A sprint's history is an append-only log recording each post-start task addition/removal with action `ADDED` or `REMOVED`, task ID/key, actor ID, timestamp. It feeds burndown calculations. A related `SPRINT_SCOPE_CHANGED` entry is also written **via `TaskStatusHistoryService`** into the task's personal history, with the old sprint name in `oldValue` or new sprint name in `newValue`; `refId` is the sprint ID. Both are written in the same transaction.
 
-## 3. New planning/capacity endpoints (PMP-120 integration)
+This covers drag/move between active sprint and backlog, and soft-delete or restore of a parent task in an ACTIVE sprint. Restoring a task associated with a **COMPLETED** sprint clears the association and returns it to the backlog; it never leaves the task stuck in closed work. Reordering within the same sprint does not create a scope event. A deleted PLANNED sprint removes assignments without creating ACTIVE scope changes.
 
-| Method | Endpoint | Permission | Response |
-| --- | --- | --- | --- |
-| GET | `/sprints/{sprintId}/capacity-suggestion` | `VIEW_WORK` | `CapacitySuggestionResponse` |
-| PUT | `/sprints/{sprintId}/availability/{userId}` | `MANAGE_SPRINTS` | Body `{availableDays:5}`, returns new suggestion |
-| GET | `/sprints/{sprintId}/scope-history?page=0&size=20` | `VIEW_WORK` | `PageResponse<SprintScopeChangeResponse>` |
-| GET | `/sprints/{sprintId}/commitment` | `VIEW_WORK` | Array of immutable committed item snapshots |
-| GET | `/projects/{projectId}/sprint-length` | `VIEW_PROJECT` | `{sprintLengthDays:14}` |
-| PUT | `/projects/{projectId}/sprint-length` | `EDIT_SETTINGS` | Body `{days:14}`, returns `{sprintLengthDays:14}`; affects NEW sprints only |
+## 5. Project sprint-length setting
 
-Suggestion:
+**Canonical API:** `PATCH /api/v1/projects/{projectId}` with `{ "sprintLengthDays": 14 }`, using existing `EDIT_SETTINGS` authorization. Valid range **2–90** calendar days, Scrum only. The response `ProjectResponse.sprintLengthDays` is always present, including when reading/listing projects. Changing the value writes the standard `PROJECT_SETTINGS_CHANGED` audit entry. Existing sprint dates are unaffected.
 
-```json
-{
-  "suggestedCapacity": 27,
-  "averageVelocity": 30.0,
-  "normalPersonDays": 50,
-  "availablePersonDays": 45,
-  "workingDays": 10,
-  "members": [{"userId":11,"availableDays":10}, {"userId":12,"availableDays":5}]
-}
-```
+**Legacy-compatible endpoints:** `GET /api/v1/projects/{projectId}/sprint-length` and `PUT /api/v1/projects/{projectId}/sprint-length` body `{ "days":14 }`, both return typed `SprintLengthResponse` `{ "sprintLengthDays":14 }`. The PUT delegates to the same audited project-settings update. Prefer `PATCH /projects/{projectId}` for new clients.
 
-The complete `members` array contains every current project member, not only the two shown above. Workdays default to **Monday–Friday** inclusive; public holidays are not modeled. Average velocity uses the last **up to three COMPLETED** sprints, counting story points of DONE top-level items at completion. No completed history ⇒ `suggestedCapacity:null`. Suggestion is `round(avgVelocity × availablePersonDays / normalPersonDays)`; the Scrum Master still chooses and saves any nonnegative `capacity`. Per-member available days default to all working days, bounded to `0..workingDays` when manually overridden. The frontend should show missing estimate IDs and `overCapacity` as *warnings*, not blocking errors.
+## 6. Errors
 
-## 4. Validation and lifecycle
+All errors have the common `{status,code,message,path,timestamp}` shape (and optionally `fieldErrors`).
 
-- Creation sets `PLANNED`, automatically numbered `KEY Sprint N`, with consecutive default **14-calendar-day** periods (configurable for new sprints via sprint-length endpoint). Two supplied dates must be both present; end must be strictly after start. Dates must never overlap any sprint in the project, including completed. The project row is locked for all mutations to serialize date and active-state checks.
-- Multiple PLANNED sprints are allowed. PostgreSQL's unique partial index additionally guarantees at most one ACTIVE sprint per project.
-- On start: `goal` required (`"Add a Sprint Goal first."`), ≥1 top-level task required, dates rechecked, no other ACTIVE. Saves `committedPoints` and **immutable item/estimate snapshots** before publishing the existing `SprintStarted` event to notify project members.
-- Moving or reordering tasks updates sprint order without changing `backlog_rank`. Moving out restores the task's original backlog position. A deleted PLANNED sprint releases its items. Cross-project items and independent subtask moves are rejected.
-- Post-start cross-sprint/backlog additions and removals emit persistent `sprint_scope_changes` records with task key, actor ID, time and action. Reordering inside the same sprint is not a scope change.
-- Completing sets `COMPLETED`, snapshots `completedPoints`, keeps DONE tasks in that sprint and moves unfinished work into an existing PLANNED sprint, a new PLANNED sprint or the backlog. The `SprintCompleted` notification is emitted. Full cancel/reopen lifecycle belongs to the separate PMP-122 scope.
-- Project completion/archival (PMP-63) is already represented by the lifecycle status; sprint mutations are forbidden in those states.
+| HTTP | Code | Cases |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | Missing goal (`"Add a Sprint Goal first."`), missing tasks, invalid/overlapping dates, conflicting sprint filters, cross-project task, subtask move, Viewer availability, illegal move order, invalid state-specific input. |
+| 400 | `VALIDATION_ERROR` | Bean-validation violations: blank/oversized names, capacity <0, invalid availableDays, sprint length outside 2–90. |
+| 401 | `AUTHENTICATION_ERROR` | Missing authentication. |
+| 403 | `ACCESS_DENIED` | Project member lacks required permission, e.g. non-Scrum-Master writes. |
+| 404 | `RESOURCE_NOT_FOUND` | Unknown or not-visible project/sprint/task. |
+| 409 | `WORKSPACE_ARCHIVED` | A mutation against an archived workspace. |
+| 409 | `CONFLICT` | Completed sprint changed/deleted, ACTIVE sprint deleted, closed project or incompatible state. |
+| 409 | `SPRINT_ALREADY_ACTIVE` | Start attempted while another sprint is ACTIVE. |
 
-## 5. Migration and tests
+## 7. Implementation status
 
-`V15__sprint_planning.sql` creates the sprint tables, availability rows, committed snapshots, scope-change history, and nullable assignment/order columns on tasks. It also adds `projects.sprint_length_days DEFAULT 14`. The migration assumes V14 attachments has already run.
+| Capability | PMP-119 status |
+| --- | --- |
+| Create/list/read/update/delete planned sprints; permission checks, lock ordering | Implemented |
+| Sprint dates/default length, nonoverlap and early-completion handling | Implemented |
+| Task-list `sprintId` / `noSprint` filtering before pagination | Implemented |
+| Start with immutable commitment + `SprintStarted` notification | Implemented |
+| Capacity and eligible non-Viewer member availability | Implemented |
+| Sprint and task history for post-start scope moves, delete/restore | Implemented |
+| Complete with basic carry-over, `SprintCompleted` notification | Implemented (partial closure contract) |
+| Full completion audit entry | **PMP-122, not yet implemented** |
+| Explicit "carried over" history marker | **PMP-122, not yet implemented** |
+| Goal-achieved note at completion | **PMP-122, not yet implemented** |
+| Unfinished items moved to **top** of backlog on completion (instead of preserving original rank) | **PMP-122, not yet implemented** |
+| Frontend wiring and acceptance validation | Separate PMP-120 / PMP-121 |
 
-Tests: `SprintCapacityCalculatorTest` (normal/available ratios, weekends, no history), `SprintPlanningIntegrationTest` (real PostgreSQL/Flyway: permissions, dates, ordering, start, snapshot, warnings, completed velocity and availability). Run `bash ./mvnw clean verify` with Docker/Testcontainers available. API and schema changes must not be committed without passing the suite.
+**Migration:** `V15__sprint_planning.sql` (requires V14 attachments) creates sprint and history tables, assigns nullable task sprint IDs, installs cascade/SET NULL FKs, sets project default 14 and range 2–90, and extends `ck_task_history_type` with `SPRINT_SCOPE_CHANGED`. The entity DDL annotations mirror these constraints for dev/test databases built by `ddl-auto`.
+
+**Verification:** run `bash ./mvnw clean verify` with PostgreSQL/Testcontainers available. Do not report a green test suite until that command succeeds on the target branch.

@@ -16,6 +16,9 @@ import team.sprintory_backend.common.richtext.RichTextDocument;
 import team.sprintory_backend.notification.events.TaskAssigned;
 import team.sprintory_backend.notification.events.TaskCreated;
 import team.sprintory_backend.project.models.Project;
+import team.sprintory_backend.sprint.models.SprintStatus;
+import team.sprintory_backend.sprint.models.SprintScopeChange;
+import team.sprintory_backend.sprint.services.SprintScopeHistoryWriter;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.repositories.ProjectBoardColumnRepository;
@@ -74,6 +77,7 @@ public class TaskApiService {
     private final AuditLogService auditLog;
     private final ApplicationEventPublisher events;
     private final TaskContent content;
+    private final SprintScopeHistoryWriter sprintHistory;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -241,6 +245,10 @@ public class TaskApiService {
             task.setDeletedWithParentId(null); // explicit child deletion
             statusHistory.recordSubtaskRemoved(task.getParent(), task, user);
         }
+        if (task.getParent() == null && task.getSprint() != null
+                && task.getSprint().getStatus() == SprintStatus.ACTIVE) {
+            sprintHistory.record(task.getSprint(), task, SprintScopeChange.Action.REMOVED, user);
+        }
         task.setDeletedAt(deletedAt);
         taskRepository.save(task);
         auditLog.record(project.getWorkspace(), user, AuditAction.TASK_DELETED, AuditTarget.task(task), project);
@@ -260,6 +268,10 @@ public class TaskApiService {
         Task task = requireTask(projectId, taskId);
         // One entry on the restored task; subtasks revived with their parent get none of their own.
         statusHistory.recordRestored(task, user);
+        if (task.getParent() == null && task.getSprint() != null
+                && task.getSprint().getStatus() == SprintStatus.ACTIVE) {
+            sprintHistory.record(task.getSprint(), task, SprintScopeChange.Action.ADDED, user);
+        }
         if (task.getParent() != null) {
             statusHistory.recordSubtaskAdded(task.getParent(), task, user);
         }

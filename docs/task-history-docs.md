@@ -93,6 +93,7 @@ Reading needs `VIEW_WORK`.
 | `RESTORED` | the task or subtask is restored after a delete (PMP-131, `POST …/restore`) | `null` | `null` → `null` | `null` |
 | `ATTACHMENT_ADDED` | a file is attached to the task or subtask, one entry per file ([attachments-docs.md §3.1](./attachments-docs.md#31-upload-files-to-a-task)) | `null` | `null` → the stored file name, e.g. `login-flow.webp` | the attachment id |
 | `ATTACHMENT_REMOVED` | an attachment is deleted, by its uploader or by the Project Manager ([attachments-docs.md §3.6](./attachments-docs.md#36-delete-an-attachment)) | `null` | the file name → `null` | the attachment id |
+| `SPRINT_SCOPE_CHANGED` | a task is added to / removed from an ACTIVE sprint, including delete/restore | `null` | old sprint name → new sprint name; either may be `null` for backlog | the sprint id |
 
 `actor` is always the person who did it. `actor.id` can belong to someone who has since left; `actor.name` is the name they had at the time.
 
@@ -126,7 +127,7 @@ Reading needs `VIEW_WORK`.
 ### 3.3 Later types
 
 Planned by later stories; each adds its `type` with a migration (§6):
-- sprint scope changes and "carried over" markers (PMP-119, PMP-122).
+- "carried over" history markers and completion audit notes (PMP-122). Sprint `SPRINT_SCOPE_CHANGED` entries are written in PMP-119 by `TaskStatusHistoryService`.
 
 `ATTACHMENT_ADDED` and `ATTACHMENT_REMOVED` (PMP-141) are agreed in 3.1 and arrive with `V14__task_attachments.sql`.
 

@@ -19,15 +19,15 @@ public class SprintController {
     private final SprintService sprints;
 
     @GetMapping("/projects/{projectId}/sprint-length")
-    public java.util.Map<String, Integer> getSprintLength(@AuthenticationPrincipal AppUserDetails principal,
+    public SprintLengthResponse getSprintLength(@AuthenticationPrincipal AppUserDetails principal,
             @PathVariable Long projectId) {
-        return java.util.Map.of("sprintLengthDays", sprints.projectSprintLength(principal.getUser(), projectId));
+        return new SprintLengthResponse(sprints.projectSprintLength(principal.getUser(), projectId));
     }
 
     @PutMapping("/projects/{projectId}/sprint-length")
-    public java.util.Map<String, Integer> sprintLength(@AuthenticationPrincipal AppUserDetails principal,
+    public SprintLengthResponse sprintLength(@AuthenticationPrincipal AppUserDetails principal,
             @PathVariable Long projectId, @Valid @RequestBody SprintLengthRequest body) {
-        return java.util.Map.of("sprintLengthDays", sprints.setProjectSprintLength(
+        return new SprintLengthResponse(sprints.setProjectSprintLength(
                 principal.getUser(), projectId, body));
     }
 

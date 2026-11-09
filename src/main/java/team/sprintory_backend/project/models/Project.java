@@ -17,6 +17,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
 import team.sprintory_backend.audit.BaseEntity;
@@ -65,23 +66,25 @@ public class Project extends BaseEntity {
     @Column(nullable = false, updatable = false)
     private ProjectTemplate template;
 
+    /** A charter becomes read-only when the project is completed or archived (PMP-63). */
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @ColumnDefault("'ACTIVE'")
+    @Column(name = "lifecycle_status", nullable = false, length = 20)
+    private ProjectLifecycleState lifecycleStatus = ProjectLifecycleState.ACTIVE;
+
+    /** Project default sprint length; 14 days until the settings UI supports editing it. */
+    @Builder.Default
+    @ColumnDefault("14")
+    @Column(name = "sprint_length_days", nullable = false)
+    private int sprintLengthDays = 14;
+
     /**
      * The number of the project's latest task, so the next one is {@code KEY-(n+1)} (story 9).
      * Never decreases, so task keys are never reused. Only {@code ProjectRepository
      * .incrementTaskNumber} changes it: {@code updatable = false} keeps a save of this entity from
      * writing back a stale value.
      */
-    /** A charter becomes read-only when the project is completed or archived (PMP-63). */
-    @Builder.Default
-    @Enumerated(EnumType.STRING)
-    @Column(name = "lifecycle_status", nullable = false, length = 20)
-    private ProjectLifecycleState lifecycleStatus = ProjectLifecycleState.ACTIVE;
-
-    /** Project default sprint length; 14 days until the settings UI supports editing it. */
-    @Builder.Default
-    @Column(name = "sprint_length_days", nullable = false)
-    private int sprintLengthDays = 14;
-
     @Column(name = "last_task_number", nullable = false, updatable = false)
     private int lastTaskNumber;
 

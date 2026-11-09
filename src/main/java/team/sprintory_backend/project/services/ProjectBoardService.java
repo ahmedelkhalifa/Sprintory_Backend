@@ -21,6 +21,9 @@ import team.sprintory_backend.task.exceptions.OpenSubtasksConfirmationRequiredEx
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.task.services.TaskStatusHistoryService;
+import team.sprintory_backend.sprint.repositories.SprintRepository;
+import team.sprintory_backend.sprint.models.Sprint;
+import team.sprintory_backend.sprint.models.SprintStatus;
 import team.sprintory_backend.user.models.User;
 
 /** PMP-125: transactional board configuration; every mutation requires CONFIGURE_BOARD. */
@@ -34,7 +37,7 @@ public class ProjectBoardService {
     private final ProjectRepository projectRepository;
     private final TaskRepository taskRepository;
     private final TaskStatusHistoryService history;
-    private final team.sprintory_backend.sprint.repositories.SprintRepository sprintRepository;
+    private final SprintRepository sprintRepository;
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void initialize(Project project) {
@@ -69,8 +72,8 @@ public class ProjectBoardService {
                 strategy.sprintsEnabled(), strategy.wipLimitsEnabled(),
                 project.getTemplate() == ProjectTemplate.SCRUM
                     ? sprintRepository.findFirstByProjectIdAndStatus(projectId,
-                        team.sprintory_backend.sprint.models.SprintStatus.ACTIVE)
-                        .map(team.sprintory_backend.sprint.models.Sprint::getId).orElse(null)
+                        SprintStatus.ACTIVE)
+                        .map(Sprint::getId).orElse(null)
                     : null, columns);
     }
 

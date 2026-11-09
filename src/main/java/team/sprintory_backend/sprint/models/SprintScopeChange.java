@@ -1,6 +1,8 @@
 package team.sprintory_backend.sprint.models;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import java.time.Instant;
@@ -13,6 +15,7 @@ public class SprintScopeChange {
     private Long id;
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "sprint_id", nullable = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     private Sprint sprint;
     @Column(name = "task_id", nullable = false)
     private Long taskId;
