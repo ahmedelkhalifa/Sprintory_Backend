@@ -36,6 +36,12 @@ public class SprintController {
         return sprints.list(principal.getUser(), projectId);
     }
 
+    @GetMapping("/projects/{projectId}/sprints/history")
+    public List<SprintResponse> history(@AuthenticationPrincipal AppUserDetails principal,
+            @PathVariable Long projectId) {
+        return sprints.history(principal.getUser(), projectId);
+    }
+
     @PostMapping("/projects/{projectId}/sprints")
     public ResponseEntity<SprintResponse> create(@AuthenticationPrincipal AppUserDetails principal,
             @PathVariable Long projectId, @Valid @RequestBody SprintRequest body) {

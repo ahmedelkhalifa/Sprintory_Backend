@@ -95,6 +95,14 @@ public class SprintService {
     }
 
     @Transactional(readOnly = true)
+    public List<SprintResponse> history(User actor, Long projectId) {
+        readable(actor, projectId);
+        return sprints.findByProjectIdAndStatusInOrderByNumberAsc(projectId,
+                        List.of(SprintStatus.COMPLETED, SprintStatus.CANCELLED))
+                .stream().map(this::response).toList();
+    }
+
+    @Transactional(readOnly = true)
     public SprintResponse get(User actor, Long sprintId) {
         Sprint sprint = find(sprintId);
         readable(actor, sprint.getProject().getId());
@@ -462,7 +470,7 @@ public class SprintService {
         int normal = days * ids.size();
         List<Integer> lastThree = sprints.findTop3ByProjectIdAndStatusOrderByCompletedAtDescIdDesc(
                 sprint.getProject().getId(), SprintStatus.COMPLETED).stream()
-                .map(s -> s.getCompletedPoints() == null ? 0 : s.getCompletedPoints()).toList();
+                .map(Sprint::getCompletedPoints).filter(Objects::nonNull).toList();
         Integer suggested = SprintCapacityCalculator.suggest(lastThree, actual, normal);
         Double average = lastThree.isEmpty() ? null : lastThree.stream().mapToInt(Integer::intValue).average().orElse(0);
         return new CapacitySuggestionResponse(suggested, average, normal, actual, days, memberDays);
