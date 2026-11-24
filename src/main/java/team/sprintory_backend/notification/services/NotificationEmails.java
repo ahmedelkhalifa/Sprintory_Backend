@@ -72,6 +72,7 @@ public class NotificationEmails {
         String line = switch (type) {
             case TASK_ASSIGNED -> task(subject) + ": you were assigned";
             case TASK_STATUS_CHANGED -> task(subject) + ": status changed";
+            case TASK_UNBLOCKED -> task(subject) + ": no longer blocked";
             case TASK_COMMENTED -> task(subject) + ": new comment";
             // A chat mention (PMP-137) has a project but no task.
             case MENTIONED -> subject.task() != null ? task(subject) + ": you were mentioned"

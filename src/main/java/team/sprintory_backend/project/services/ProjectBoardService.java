@@ -41,6 +41,7 @@ public class ProjectBoardService {
     private final TaskRepository taskRepository;
     private final TaskStatusHistoryService history;
     private final SprintRepository sprintRepository;
+    private final team.sprintory_backend.dependency.UnblockedTracker unblocked;
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void initialize(Project project) {
@@ -135,6 +136,8 @@ public class ProjectBoardService {
         List<ProjectBoardColumn> columns = active(projectId);
         ProjectBoardColumn column = columns.get(indexOf(columns, columnId));
         boolean backlog = isKanbanBacklog(project, columns, column);
+        Set<Long> previouslyBlocked = request.category() != null && request.category() != column.getCategory()
+                ? unblocked.before(projectId) : Set.of();
         if (request.name() != null) {
             column.setName(validateName(request.name(), columnId, columns));
         }
@@ -167,6 +170,7 @@ public class ProjectBoardService {
             column.setWipLimit(null);
         }
         columnRepository.saveAndFlush(column);
+        unblocked.after(projectId, previouslyBlocked, user);
         return get(user, projectId);
     }
 
@@ -207,6 +211,7 @@ public class ProjectBoardService {
                 && countCategory(columns, BoardColumnCategory.TODO) <= 1) {
             throw new BadRequestException("At least one TODO column must remain.");
         }
+        Set<Long> previouslyBlocked = unblocked.before(projectId);
         List<Task> tasks = taskRepository.findAllInColumnForDeletion(projectId, columnId);
         Long targetId = request == null ? null : request.targetColumnId();
         if (!tasks.isEmpty() && targetId == null) {
@@ -234,6 +239,7 @@ public class ProjectBoardService {
         columnRepository.saveAndFlush(column);
         columns.remove(column);
         reorderPersisted(columns);
+        unblocked.after(projectId, previouslyBlocked, user);
     }
 
     private Project lockedProject(User user, Long projectId) {

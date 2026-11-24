@@ -78,6 +78,15 @@ public class NotificationListener {
     }
 
     @EventListener
+    public void on(team.sprintory_backend.notification.events.TaskUnblocked event) {
+        var assignee = event.task().getAssignee();
+        if (assignee == null) return;
+        // Match existing actor-exclusion and membership/preference rules.
+        deliver(NotificationType.TASK_UNBLOCKED, NotificationSubject.task(event.task(), event.actor()),
+                List.of(assignee.getId()), event.task().getKey() + " is no longer blocked.", null);
+    }
+
+    @EventListener
     public void on(TaskCommented event) {
         watchers.autoWatch(event.task(), event.actor());
         NotificationSubject subject = NotificationSubject.task(event.task(), event.actor());

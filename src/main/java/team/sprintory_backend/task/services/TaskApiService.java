@@ -79,6 +79,7 @@ public class TaskApiService {
     private final TaskContent content;
     private final SprintScopeHistoryWriter sprintHistory;
     private final team.sprintory_backend.dependency.BlockedStateService blockedState;
+    private final team.sprintory_backend.dependency.UnblockedTracker unblocked;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -163,6 +164,7 @@ public class TaskApiService {
         if (task.getParent() != null) {
             throw new BadRequestException("Use the subtask endpoint to edit a subtask.");
         }
+        Set<Long> previouslyBlocked = request.statusId() != null ? unblocked.before(projectId) : Set.of();
         TaskSnapshot before = TaskSnapshot.of(task);
         // Check a new description and its newly added mentions before anything changes.
         RichTextDocument description = request.clearDescription() ? null
@@ -226,6 +228,7 @@ public class TaskApiService {
             events.publishEvent(new TaskAssigned(task, user, newAssignee));
         }
         content.publishMentions(task, user, mentioned, description);
+        if (changedColumn) unblocked.after(projectId, previouslyBlocked, user);
         return changedColumn ? saved.withWipWarning(wipWarning(projectId, task.getStatus())) : saved;
     }
 
@@ -235,6 +238,7 @@ public class TaskApiService {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
         projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
+        Set<Long> previouslyBlocked = unblocked.before(projectId);
         Instant deletedAt = Instant.now();
         if (task.getParent() == null) {
             // Only currently live children are cascade-deleted. A child deleted earlier by its
@@ -256,6 +260,7 @@ public class TaskApiService {
         task.setDeletedAt(deletedAt);
         taskRepository.save(task);
         auditLog.record(project.getWorkspace(), user, AuditAction.TASK_DELETED, AuditTarget.task(task), project);
+        unblocked.after(projectId, previouslyBlocked, user);
     }
 
     /** Restore a deleted task; only cascade-deleted children follow their parent back. */
@@ -300,6 +305,7 @@ public class TaskApiService {
         ProjectBoardColumn target = requireColumn(projectId, request.statusId());
         blockedState.requireMoveConfirmation(task, target, request.confirmBlocked());
         requireCompletionConfirmation(task, target, request.confirmOpenSubtasks());
+        Set<Long> previouslyBlocked = unblocked.before(projectId);
         Task after = requirePlaceAfter(projectId, task, request.afterTaskId());
         if (after != null && !after.getStatus().getId().equals(target.getId())) {
             throw new BadRequestException("The task to place it after must be in the target column.");
@@ -320,6 +326,7 @@ public class TaskApiService {
                     Task::setBoardPosition);
         }
         TaskResponse saved = responseWithProgress(taskRepository.saveAndFlush(task));
+        unblocked.after(projectId, previouslyBlocked, user);
         return saved.withWipWarning(wipWarning(projectId, target));
     }
 

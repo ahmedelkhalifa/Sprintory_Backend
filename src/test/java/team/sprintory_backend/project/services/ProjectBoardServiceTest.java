@@ -62,7 +62,7 @@ class ProjectBoardServiceTest {
         when(access.requireVisible(projectId, pm)).thenReturn(granted);
         service = new ProjectBoardService(boards, columns,
                 new ProjectBoardStrategies(List.of(new KanbanBoardStrategy(), new ScrumBoardStrategy())),
-                access, projects, tasks, history, sprints);
+                access, projects, tasks, history, sprints, mock(team.sprintory_backend.dependency.UnblockedTracker.class));
     }
 
     @Test

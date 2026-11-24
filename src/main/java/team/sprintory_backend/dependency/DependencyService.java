@@ -26,6 +26,7 @@ public class DependencyService {
     private final ProjectAccess access;
     private final TaskStatusHistoryService history;
     private final EntityManager entityManager;
+    private final UnblockedTracker unblocked;
 
     @Transactional(readOnly = true)
     public Response get(User user, Long taskId) {
@@ -87,9 +88,11 @@ public class DependencyService {
         // Hidden links are retained until restoration; do not expose deleted task data.
         Task blocker = tasks.findByIdAndProjectId(link.getBlockerId(),projectId).orElseThrow(DependencyService::missingLink);
         Task blocked = tasks.findByIdAndProjectId(link.getBlockedId(),projectId).orElseThrow(DependencyService::missingLink);
+        var before = unblocked.before(projectId);
         dependencies.delete(link);
         history.recordDependency(blocker, blocked, true, false, user);
         history.recordDependency(blocked, blocker, false, false, user);
+        unblocked.after(projectId,before,user);
     }
 
     private Task visibleTask(User user, Long id) {

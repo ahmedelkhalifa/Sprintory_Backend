@@ -27,3 +27,13 @@ begin
     alter table task_history drop constraint ck_task_history_type;
     execute format('alter table task_history add constraint ck_task_history_type check ((%s) or type in (''DEPENDENCY_ADDED'',''DEPENDENCY_REMOVED''))', old_expr);
 end $$;
+
+-- Preserve earlier notification values, including any retrospective types introduced by V18.
+do $$
+declare old_expr text;
+begin
+    select pg_get_expr(conbin, conrelid) into strict old_expr from pg_constraint
+        where conrelid='notifications'::regclass and conname='ck_notifications_type';
+    alter table notifications drop constraint ck_notifications_type;
+    execute format('alter table notifications add constraint ck_notifications_type check ((%s) or type = ''TASK_UNBLOCKED'')', old_expr);
+end $$;
