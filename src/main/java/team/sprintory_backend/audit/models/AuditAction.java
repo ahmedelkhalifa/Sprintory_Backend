@@ -27,6 +27,8 @@ public enum AuditAction {
     SPRINT_COMPLETED(AuditArea.PROJECT),
     /** A sprint was cancelled (PMP-41); the changes include the reason. */
     SPRINT_CANCELLED(AuditArea.PROJECT),
+    /** A sprint's retrospective was closed (PMP-44); the target is the sprint. */
+    RETRO_CLOSED(AuditArea.PROJECT),
 
     TASK_DELETED(AuditArea.TASK),
     /** Written by the task restore endpoint (PMP-131). */

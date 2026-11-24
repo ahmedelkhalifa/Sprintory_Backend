@@ -45,7 +45,14 @@ public enum ProjectPermission {
     /** Edit project charter goals, scope and stakeholders (PMP-116). */
     EDIT_CHARTER,
     /** Log time on tasks (R19). */
-    LOG_TIME;
+    LOG_TIME,
+    /**
+     * Open a sprint retrospective, add its action items, close it, and delete anyone's card
+     * (R31, PMP-44). Project Manager, Product Owner and Scrum Master.
+     */
+    RETRO_MANAGE,
+    /** Add, edit and delete one's own retrospective cards, and vote (R31, PMP-44). Everyone but the Viewer. */
+    RETRO_CONTRIBUTE;
 
     /**
      * What a workspace admin may do in every project of their workspace, member or not: manage

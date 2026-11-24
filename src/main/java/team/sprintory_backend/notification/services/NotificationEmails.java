@@ -82,6 +82,9 @@ public class NotificationEmails {
             case SPRINT_COMPLETED -> "A sprint was completed in " + subject.project().getName();
             case SPRINT_CANCELLED -> "A sprint was cancelled in " + subject.project().getName();
             case SPRINT_OVERDUE -> "A sprint is past its end date in " + subject.project().getName();
+            case RETRO_REMINDER -> "Time for a retrospective in " + subject.project().getName();
+            case RETRO_OPENED -> "A retrospective opened in " + subject.project().getName();
+            case RETRO_CLOSED -> "A retrospective was closed in " + subject.project().getName();
             case WORKSPACE_INVITATION -> "You were invited to " + subject.workspace().getName();
             case PASSWORD_RESET -> "Your password was changed";
             case LOGIN_FAILED_REPEATED -> "Failed sign-in attempts on your account";
