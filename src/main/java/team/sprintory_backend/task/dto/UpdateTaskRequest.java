@@ -27,7 +27,8 @@ public record UpdateTaskRequest(
         Boolean clearAssignee,
         Boolean clearEstimate,
         Boolean clearDescription,
-        Boolean confirmOpenSubtasks
+        Boolean confirmOpenSubtasks,
+        Boolean confirmBlocked
 ) {
     /** Absent flags mean false. Jackson 3 rejects a missing field for a primitive boolean with 400. */
     public UpdateTaskRequest {
@@ -35,6 +36,7 @@ public record UpdateTaskRequest(
         clearEstimate = Boolean.TRUE.equals(clearEstimate);
         clearDescription = Boolean.TRUE.equals(clearDescription);
         confirmOpenSubtasks = Boolean.TRUE.equals(confirmOpenSubtasks);
+        confirmBlocked = Boolean.TRUE.equals(confirmBlocked);
     }
 
     /** Existing clients may keep their 11-field constructor. */
@@ -43,7 +45,15 @@ public record UpdateTaskRequest(
                              List<String> labels, String description, Boolean clearAssignee,
                              Boolean clearEstimate, Boolean clearDescription) {
         this(title, type, priority, statusId, assigneeId, estimate, labels, description,
-                clearAssignee, clearEstimate, clearDescription, false);
+                clearAssignee, clearEstimate, clearDescription, false, false);
+    }
+
+    public UpdateTaskRequest(String title, TaskType type, TaskPriority priority, Long statusId,
+                             Long assigneeId, Integer estimate, List<String> labels, String description,
+                             Boolean clearAssignee, Boolean clearEstimate, Boolean clearDescription,
+                             Boolean confirmOpenSubtasks) {
+        this(title,type,priority,statusId,assigneeId,estimate,labels,description,clearAssignee,
+            clearEstimate,clearDescription,confirmOpenSubtasks,false);
     }
 
     @AssertTrue(message = "Title must not be blank")

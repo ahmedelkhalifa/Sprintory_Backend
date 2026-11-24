@@ -49,6 +49,17 @@ public final class TaskSpecifications {
             } else if (Boolean.TRUE.equals(filters.noSprint())) {
                 predicates.add(cb.isNull(root.get("sprint")));
             }
+            if (Boolean.TRUE.equals(filters.blockedOnly())) {
+                Subquery<Integer> open = query.subquery(Integer.class);
+                Root<team.sprintory_backend.dependency.TaskDependency> link = open.from(team.sprintory_backend.dependency.TaskDependency.class);
+                Root<Task> blocker = open.from(Task.class);
+                open.select(cb.literal(1)).where(
+                    cb.equal(link.get("blockedId"), root.get("id")),
+                    cb.equal(link.get("projectId"), projectId),
+                    cb.equal(link.get("blockerId"), blocker.get("id")),
+                    cb.notEqual(blocker.get("status").get("category"), team.sprintory_backend.project.models.BoardColumnCategory.DONE));
+                predicates.add(cb.exists(open));
+            }
             if (filters.label() != null) {
                 // "exists" rather than a join, so a task is listed once whatever its labels.
                 Subquery<Integer> labelled = query.subquery(Integer.class);

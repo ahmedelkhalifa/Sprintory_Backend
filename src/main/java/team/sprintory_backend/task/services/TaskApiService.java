@@ -78,6 +78,7 @@ public class TaskApiService {
     private final ApplicationEventPublisher events;
     private final TaskContent content;
     private final SprintScopeHistoryWriter sprintHistory;
+    private final team.sprintory_backend.dependency.BlockedStateService blockedState;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -135,9 +136,11 @@ public class TaskApiService {
         var page = taskRepository.findAll(TaskSpecifications.matching(projectId, filters), sorted);
         Map<Long, int[]> progress = progressByParentIds(page.getContent().stream()
                 .map(Task::getId).toList());
+        var blockers = blockedState.openBlockers(page.getContent().stream().map(Task::getId).toList());
         return PageResponse.from(page.map(task -> {
             int[] counts = progress.getOrDefault(task.getId(), new int[]{0, 0});
-            return TaskResponse.from(task).withProgress(counts[0], counts[1]);
+            return TaskResponse.from(task).withProgress(counts[0], counts[1])
+                    .withBlockers(blockers.getOrDefault(task.getId(), List.of()));
         }));
     }
 
@@ -179,6 +182,7 @@ public class TaskApiService {
         if (request.statusId() != null) {
             ProjectBoardColumn status = requireColumn(projectId, request.statusId());
             if (!status.getId().equals(task.getStatus().getId())) {
+                blockedState.requireMoveConfirmation(task, status, request.confirmBlocked());
                 requireCompletionConfirmation(task, status, request.confirmOpenSubtasks());
                 // Last in the new column. Read the column before the task joins it, under the lock.
                 long position = TaskRanks.last(taskRepository.findMaxBoardPosition(projectId, status.getId()));
@@ -294,6 +298,7 @@ public class TaskApiService {
             throw new BadRequestException("Subtasks cannot appear as separate board cards.");
         }
         ProjectBoardColumn target = requireColumn(projectId, request.statusId());
+        blockedState.requireMoveConfirmation(task, target, request.confirmBlocked());
         requireCompletionConfirmation(task, target, request.confirmOpenSubtasks());
         Task after = requirePlaceAfter(projectId, task, request.afterTaskId());
         if (after != null && !after.getStatus().getId().equals(target.getId())) {
@@ -411,7 +416,8 @@ public class TaskApiService {
         if (task.getParent() != null) return response;
         Map<Long, int[]> progress = progressByParentIds(List.of(task.getId()));
         int[] counts = progress.getOrDefault(task.getId(), new int[]{0, 0});
-        return response.withProgress(counts[0], counts[1]);
+        return response.withProgress(counts[0], counts[1]).withBlockers(
+                blockedState.openBlockers(List.of(task.getId())).getOrDefault(task.getId(), List.of()));
     }
 
     private Map<Long, int[]> progressByParentIds(List<Long> parentIds) {
