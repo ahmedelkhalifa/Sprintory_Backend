@@ -11,7 +11,6 @@ import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.*;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
-import team.sprintory_backend.task.services.TaskStatusHistoryService;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.workspace.services.WorkspaceAccess;
 import jakarta.persistence.EntityManager;
@@ -24,7 +23,7 @@ public class DependencyService {
     private final TaskRepository tasks;
     private final ProjectRepository projects;
     private final ProjectAccess access;
-    private final TaskStatusHistoryService history;
+    private final org.springframework.context.ApplicationEventPublisher events;
     private final EntityManager entityManager;
     private final UnblockedTracker unblocked;
 
@@ -50,6 +49,7 @@ public class DependencyService {
         Long projectId = anchor.getProject().getId();
         lockWritable(user, projectId);
         // The initial lookup may be cached while we waited for the project lock.
+        entityManager.flush();
         entityManager.clear();
         writable(user, projectId);
         Long a = request.blockerId(), b = request.blockedId();
@@ -72,8 +72,7 @@ public class DependencyService {
             throw new DependencyConflict(ErrorCode.DEPENDENCY_CYCLE, "This would create a cycle: " + String.join(" -> ", cycle) + ".", cycle, null);
         }
         TaskDependency link = dependencies.saveAndFlush(new TaskDependency(projectId,a,b,user.getId()));
-        history.recordDependency(blocker, blocked, true, true, user);
-        history.recordDependency(blocked, blocker, false, true, user);
+        events.publishEvent(new DependencyAdded(a, blocker.getKey(), b, blocked.getKey(), user));
         return new Edge(link.getId(),TaskSummary.from(blocker),TaskSummary.from(blocked));
     }
 
@@ -81,17 +80,22 @@ public class DependencyService {
     public void remove(User user, Long id) {
         TaskDependency link = dependencies.findById(id).orElseThrow(DependencyService::missingLink);
         Long projectId = link.getProjectId();
-        lockWritable(user, projectId);
+        try { lockWritable(user, projectId); }
+        catch (ResourceNotFoundException ignored) { throw missingLink(); }
+        entityManager.flush();
         entityManager.clear();
-        writable(user, projectId);
+        try { writable(user, projectId); }
+        catch (ResourceNotFoundException ignored) { throw missingLink(); }
         link = dependencies.findById(id).orElseThrow(DependencyService::missingLink);
-        // Hidden links are retained until restoration; do not expose deleted task data.
-        Task blocker = tasks.findByIdAndProjectId(link.getBlockerId(),projectId).orElseThrow(DependencyService::missingLink);
-        Task blocked = tasks.findByIdAndProjectId(link.getBlockedId(),projectId).orElseThrow(DependencyService::missingLink);
+        // A known link ID can also be removed while either endpoint is soft-deleted.
+        // The keys are read in the authorized project, including tombstones, for both histories.
+        Map<Long,String> keys = new HashMap<>();
+        for (Object[] row : dependencies.keysIncludingDeleted(projectId,List.of(link.getBlockerId(), link.getBlockedId())))
+            keys.put(((Number) row[0]).longValue(), (String) row[1]);
         var before = unblocked.before(projectId);
         dependencies.delete(link);
-        history.recordDependency(blocker, blocked, true, false, user);
-        history.recordDependency(blocked, blocker, false, false, user);
+        events.publishEvent(new DependencyRemoved(link.getBlockerId(), keys.get(link.getBlockerId()),
+                link.getBlockedId(), keys.get(link.getBlockedId()), user));
         unblocked.after(projectId,before,user);
     }
 
@@ -101,7 +105,9 @@ public class DependencyService {
         return task;
     }
     private ProjectAccessResult membership(User user, Long projectId) {
-        ProjectAccessResult result = access.requireVisible(projectId,user);
+        ProjectAccessResult result;
+        try { result = access.requireVisible(projectId,user); }
+        catch (ResourceNotFoundException ignored) { throw missingTask(); }
         if (result.projectMember()==null || !result.can(ProjectPermission.VIEW_WORK)) throw missingTask();
         return result;
     }

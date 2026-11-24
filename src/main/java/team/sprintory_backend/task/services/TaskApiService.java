@@ -159,7 +159,7 @@ public class TaskApiService {
     public TaskResponse update(User user, Long projectId, Long taskId, UpdateTaskRequest request) {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
         // Board configuration and moves lock the project; do the same before loading status.
-        if (request.statusId() != null) projectRepository.lockById(projectId);
+        projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
         if (task.getParent() != null) {
             throw new BadRequestException("Use the subtask endpoint to edit a subtask.");

@@ -128,12 +128,30 @@ public class TaskStatusHistoryService {
         save(task, TaskHistoryType.ATTACHMENT_REMOVED, null, attachment.getFileName(), null, attachment.getId(), actor);
     }
 
-    /** One directional display snapshot per endpoint, in the dependency transaction. */
+    /** Dependency events are synchronous, inside the graph mutation transaction. */
+    @org.springframework.context.event.EventListener
     @Transactional(propagation = Propagation.MANDATORY)
-    public void recordDependency(Task task, Task other, boolean blocks, boolean added, User actor) {
-        String value = (blocks ? "Blocks " : "Blocked by ") + other.getKey();
-        save(task, added ? TaskHistoryType.DEPENDENCY_ADDED : TaskHistoryType.DEPENDENCY_REMOVED,
-            null, added ? null : value, added ? value : null, other.getId(), actor);
+    public void on(team.sprintory_backend.dependency.DependencyAdded event) {
+        dependencyHistory(event.blockerId(), event.blockerKey(), event.blockedId(), event.blockedKey(), true, event.actor());
+    }
+
+    @org.springframework.context.event.EventListener
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void on(team.sprintory_backend.dependency.DependencyRemoved event) {
+        dependencyHistory(event.blockerId(), event.blockerKey(), event.blockedId(), event.blockedKey(), false, event.actor());
+    }
+
+    private void dependencyHistory(Long blockerId, String blockerKey, Long blockedId, String blockedKey,
+                                   boolean added, User actor) {
+        String type = (added ? TaskHistoryType.DEPENDENCY_ADDED : TaskHistoryType.DEPENDENCY_REMOVED).name();
+        Instant time = Instant.now();
+        String outgoing = "Blocks " + blockedKey;
+        String incoming = "Blocked by " + blockerKey;
+        // Write by ID so a retained link can be removed even when Task's SQLRestriction hides an endpoint.
+        historyRepository.appendDependency(blockerId, type, added ? null : outgoing,
+                added ? outgoing : null, blockedId, actor.getId(), AuditTarget.displayName(actor), time);
+        historyRepository.appendDependency(blockedId, type, added ? null : incoming,
+                added ? incoming : null, blockerId, actor.getId(), AuditTarget.displayName(actor), time);
     }
 
     /** A sprint membership change; null from/to means product backlog. */

@@ -34,7 +34,7 @@ import team.sprintory_backend.user.repositories.UserRepository;
  * The Observer side of R27: one synchronous listener per event, running inside the publishing
  * action's transaction. It decides who is told, never the producer (docs/notifications-docs.md §5):
  * <ol>
- *   <li>the actor is never a recipient (security events have no actor);</li>
+ *   <li>the actor is excluded except for TASK_UNBLOCKED (security events have no actor);</li>
  *   <li>for project and task events, only people in the project right now;</li>
  *   <li>one notification per person per event: a mention replaces the comment notification;</li>
  *   <li>each recipient's preferences decide the channels: a bell entry, a queued email, both or
@@ -81,9 +81,9 @@ public class NotificationListener {
     public void on(team.sprintory_backend.notification.events.TaskUnblocked event) {
         var assignee = event.task().getAssignee();
         if (assignee == null) return;
-        // Match existing actor-exclusion and membership/preference rules.
+        // PMP-45 requires telling the assignee even if they completed the blocker themselves.
         deliver(NotificationType.TASK_UNBLOCKED, NotificationSubject.task(event.task(), event.actor()),
-                List.of(assignee.getId()), event.task().getKey() + " is no longer blocked.", null);
+                List.of(assignee.getId()), event.task().getKey() + " is no longer blocked.", null, false);
     }
 
     @EventListener
@@ -193,8 +193,13 @@ public class NotificationListener {
 
     private void deliver(NotificationType type, NotificationSubject subject, Collection<Long> candidates,
                          String message, String excerpt) {
+        deliver(type, subject, candidates, message, excerpt, true);
+    }
+
+    private void deliver(NotificationType type, NotificationSubject subject, Collection<Long> candidates,
+                         String message, String excerpt, boolean excludeActor) {
         Set<Long> recipients = new LinkedHashSet<>(candidates);
-        if (subject.actor() != null) {
+        if (excludeActor && subject.actor() != null) {
             recipients.remove(subject.actor().getId());
         }
         if (recipients.isEmpty()) {

@@ -57,6 +57,7 @@ public final class TaskSpecifications {
                     cb.equal(link.get("blockedId"), root.get("id")),
                     cb.equal(link.get("projectId"), projectId),
                     cb.equal(link.get("blockerId"), blocker.get("id")),
+                    cb.isNull(blocker.get("deletedAt")),
                     cb.notEqual(blocker.get("status").get("category"), team.sprintory_backend.project.models.BoardColumnCategory.DONE));
                 predicates.add(cb.exists(open));
             }
