@@ -45,7 +45,9 @@ public enum ProjectPermission {
     /** Edit project charter goals, scope and stakeholders (PMP-116). */
     EDIT_CHARTER,
     /** Log time on tasks (R19). */
-    LOG_TIME;
+    LOG_TIME,
+    /** Add or remove task dependencies (PMP-45). */
+    DEPENDENCY_MANAGE;
 
     /**
      * What a workspace admin may do in every project of their workspace, member or not: manage

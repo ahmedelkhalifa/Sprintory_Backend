@@ -62,6 +62,7 @@ The creator of a workspace is its first admin; people who accept an invitation j
 | `COMMENT` | Comment on tasks; edit and delete own comments | R10 | ✓ | ✓ | ✓ | ✓ | | |
 | `MODERATE_COMMENTS` | Delete anyone's comment, chat message or attachment (never edit it) | R10 / PMP-133, R25 / PMP-141 | ✓ | | | | | |
 | `EDIT_CHARTER` | Edit charter goals, scope and stakeholders | R08 / PMP-116 | ✓ | ✓ | | | | |
+| `DEPENDENCY_MANAGE` | Add/remove task dependencies | PMP-45 | ✓ | ✓ | ✓ | ✓ | | |
 | `LOG_TIME` | Log time on tasks | R19 | ✓ | ✓ | ✓ | ✓ | | |
 
 - **WS Admin** is what a workspace admin gets in **every** project of their workspace, whether or not they are a member of it. They manage the project but **do not see its work** unless they are a member (story 7). An admin who is also a project member gets the admin column plus their project roles combined.
