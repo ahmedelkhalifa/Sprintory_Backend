@@ -108,7 +108,7 @@ Example project response for a Scrum Master who is also Product Owner:
   "name": "Mobile App",
   "template": "SCRUM",
   "roles": ["PRODUCT_OWNER", "SCRUM_MASTER"],
-  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "MANAGE_BACKLOG", "MANAGE_SPRINTS", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "EDIT_CHARTER", "LOG_TIME"]
+  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "MANAGE_BACKLOG", "MANAGE_SPRINTS", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "EDIT_CHARTER", "LOG_TIME", "DEPENDENCY_MANAGE"]
 }
 ```
 

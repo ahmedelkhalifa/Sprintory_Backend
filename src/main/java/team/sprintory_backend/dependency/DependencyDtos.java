@@ -20,5 +20,5 @@ public final class DependencyDtos {
     }
     public record Edge(Long id, TaskSummary blocker, TaskSummary blocked) {}
     public record Link(Long id, TaskSummary task) {}
-    public record Response(boolean blocked, List<Link> blockedBy, List<Link> blocks, List<TaskSummary> openBlockers) {}
+    public record Response(boolean blocked, List<Link> blockedBy, List<Link> blocks, List<TaskSummary> openBlockers, boolean canManage) {}
 }

@@ -29,7 +29,11 @@ public class DependencyService {
 
     @Transactional(readOnly = true)
     public Response get(User user, Long taskId) {
-        Task task = visibleTask(user, taskId);
+        Task task = tasks.findById(taskId).orElseThrow(DependencyService::missingTask);
+        ProjectAccessResult viewer = membership(user, task.getProject().getId());
+        boolean canManage = task.getParent() == null && viewer.can(ProjectPermission.DEPENDENCY_MANAGE)
+                && viewer.project().getLifecycleStatus() == ProjectLifecycleState.ACTIVE
+                && !viewer.workspaceMember().getWorkspace().isArchived();
         List<Link> incoming = new ArrayList<>(), outgoing = new ArrayList<>();
         for (Object[] row : dependencies.liveLinks(task.getProject().getId(), taskId)) {
             Long id = ((Number) row[0]).longValue();
@@ -40,7 +44,7 @@ public class DependencyService {
         Comparator<Link> byKey = Comparator.comparing((Link l) -> l.task().key()).thenComparing(l -> l.task().id());
         incoming.sort(byKey); outgoing.sort(byKey);
         List<TaskSummary> open = incoming.stream().map(Link::task).filter(t -> t.statusCategory()!=BoardColumnCategory.DONE).toList();
-        return new Response(!open.isEmpty(), List.copyOf(incoming), List.copyOf(outgoing), open);
+        return new Response(!open.isEmpty(), List.copyOf(incoming), List.copyOf(outgoing), open, canManage);
     }
 
     @Transactional

@@ -268,3 +268,7 @@ Baseline PMP-125 (merged into backend `main` by 3 Nov 2026). Test counts below r
 | 1 Nov 2026 | Kanban Backlog stays at position 0 and has no WIP limit; DONE columns also have no WIP. |
 | 1 Nov 2026 | Use soft deletion for columns; rehome tasks with a target and record a status event for each moved task. No restore endpoint in this scope. |
 | 1 Nov 2026 | `CONFIGURE_BOARD` is granted to Project Managers and workspace Admins; task movement remains under `EDIT_TASKS`. |
+
+## Dependency warning (PMP-45)
+
+Board cards receive `blocked` / `openBlockers` through existing task-list DTOs. The position endpoint may return `BLOCKED_TASK_CONFIRMATION_REQUIRED`; confirm with `confirmBlocked: true` without losing other confirmations. See [dependencies-docs.md §5](./dependencies-docs.md#5-soft-blocking-and-movement).

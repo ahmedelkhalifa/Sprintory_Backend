@@ -258,3 +258,7 @@ As of 6 Nov 2026 (merged to `main`; the subtask description and label entries co
 | 4 Nov 2026 | Values and the actor's name are snapshots, stored as display text. `actor_id` has no foreign key. |
 | 4 Nov 2026 | `GET /history` is paginated, oldest first, and carries the actor's name. |
 | 7 Nov 2026 | The feed is newest first by default, and `?order=oldest` gives the old order. It uses `order`, like the task list, rather than Spring's `?sort=`, which every list in the API ignores so an unknown property cannot fail a request. Comments stay oldest first, because they read as a conversation. |
+
+## Dependency history (PMP-45)
+
+`DEPENDENCY_ADDED` / `DEPENDENCY_REMOVED` record one entry on each task. `refId` is the other task id; `newValue` (add) or `oldValue` (remove) is `Blocks KEY` or `Blocked by KEY`, `field` is null. See [dependencies-docs.md §7](./dependencies-docs.md#7-history-and-notifications).
