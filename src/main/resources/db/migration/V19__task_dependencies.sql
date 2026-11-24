@@ -17,3 +17,13 @@ create table task_dependency (
 );
 create index idx_dependency_project on task_dependency(project_id);
 create index idx_dependency_blocked on task_dependency(blocked_task_id);
+
+-- Add new history values without discarding any earlier sprint's allowed values.
+do $$
+declare old_expr text;
+begin
+    select pg_get_expr(conbin, conrelid) into strict old_expr from pg_constraint
+        where conrelid='task_history'::regclass and conname='ck_task_history_type';
+    alter table task_history drop constraint ck_task_history_type;
+    execute format('alter table task_history add constraint ck_task_history_type check ((%s) or type in (''DEPENDENCY_ADDED'',''DEPENDENCY_REMOVED''))', old_expr);
+end $$;

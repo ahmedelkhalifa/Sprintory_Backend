@@ -44,6 +44,13 @@ public class ExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ExceptionHandler.class);
 
+    @org.springframework.web.bind.annotation.ExceptionHandler(team.sprintory_backend.dependency.DependencyConflict.class)
+    public ResponseEntity<ErrorResponse> handleDependencyConflict(team.sprintory_backend.dependency.DependencyConflict e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.builder()
+            .timestamp(Instant.now()).status(409).code(e.code()).message(e.getMessage())
+            .path(request.getRequestURI()).cyclePath(e.cyclePath()).openBlockers(e.openBlockers()).build());
+    }
+
     /**
      * Both cases return the same body on purpose, so the response never reveals
      * whether an email is registered.

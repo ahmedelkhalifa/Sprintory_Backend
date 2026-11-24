@@ -128,6 +128,14 @@ public class TaskStatusHistoryService {
         save(task, TaskHistoryType.ATTACHMENT_REMOVED, null, attachment.getFileName(), null, attachment.getId(), actor);
     }
 
+    /** One directional display snapshot per endpoint, in the dependency transaction. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordDependency(Task task, Task other, boolean blocks, boolean added, User actor) {
+        String value = (blocks ? "Blocks " : "Blocked by ") + other.getKey();
+        save(task, added ? TaskHistoryType.DEPENDENCY_ADDED : TaskHistoryType.DEPENDENCY_REMOVED,
+            null, added ? null : value, added ? value : null, other.getId(), actor);
+    }
+
     /** A sprint membership change; null from/to means product backlog. */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordSprintScopeChanged(Task task, String from, String to, User actor, Long sprintId) {

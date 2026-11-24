@@ -25,4 +25,12 @@ public class ErrorResponse {
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private Map<String, String> fieldErrors;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private java.util.List<String> cyclePath;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private java.util.List<team.sprintory_backend.dependency.DependencyDtos.TaskSummary> openBlockers;
+
+    public ErrorResponse(Instant timestamp, int status, ErrorCode code, String message, String path, Map<String,String> fieldErrors) {
+        this(timestamp,status,code,message,path,fieldErrors,null,null);
+    }
 }
