@@ -210,6 +210,7 @@ For every project action, `project` is the project concerned.
 | `PROJECT_ROLES_CHANGED` | Someone changes a member's project roles (`PUT /projects/{id}/members/{userId}/roles`) and the set actually changes | the person who changed them | `USER` (whose roles changed) | the project | `roles`: old set → new set | *Ada changed Linus Torvalds's roles in "Mobile App" from Member to Project Manager, Member* |
 | `SPRINT_COMPLETED` | The Scrum Master closes the active sprint (`POST /sprints/{id}/complete`, PMP-41). Not written when the close is refused (early close without confirmation, missing goal answer). | the Scrum Master | `SPRINT` (name at the time, e.g. `MOB Sprint 4`) | the project | `status`: `ACTIVE` → `COMPLETED`; `completedPoints`: null → points; `unfinishedPoints`: null → points; `goalAchieved`: null → `YES` / `PARTIALLY` / `NO`; `carriedOver`: null → e.g. `3 items to the backlog` / `1 item to MOB Sprint 5` | *Sam closed "MOB Sprint 4" in "Mobile App": 20 points done, goal partially achieved* |
 | `SPRINT_CANCELLED` | The Product Owner or Project Manager cancels the active sprint (`POST /sprints/{id}/cancel`, PMP-41) | the person who cancelled | `SPRINT` | the project | `status`: `ACTIVE` → `CANCELLED`; `reason`: null → the reason (free text, ≤ 1000 characters); `completedPoints`, `unfinishedPoints`, `carriedOver` as for a close | *Polly cancelled "MOB Sprint 4" in "Mobile App": "Goal became obsolete"* |
+| `RETRO_CLOSED` | A Scrum Master, Product Owner or Project Manager closes a sprint's retrospective (`POST /retros/{id}/close`, PMP-44). Closing an already closed retro is refused and logs nothing. | the person who closed it | `SPRINT` (the retro's sprint) | the project | `status`: `OPEN` → `CLOSED` | *Linus closed the retrospective of "MOB Sprint 3" in "Mobile App"* |
 
 ### 4.4 Tasks (`area: "TASK"`)
 
@@ -397,6 +398,7 @@ As of 2 Nov 2026, on branch `features/audit-log`:
 | `PASSWORD_RESET` and `LOGIN_FAILED_REPEATED` | Done; `AuthServiceTest` (20), `LoginFailureTrackerTest` (7) |
 | `GET /audit-log` and `GET /audit-log/actors` with filters | Done; `AuditLogServiceTest` (14 in total), `AuditLogFiltersTest` (6), `AuditLogControllerTest` (3) |
 | Access-denied test required by the DoD | Done: `AuditLogServiceTest.aMemberIsDeniedTheLogAndNothingIsQueried` |
+| `RETRO_CLOSED` (PMP-44, V18) | Done (25 Nov 2026); `RetroServiceTest` checks the entry, and that closing twice, a 403, a 404 or a read-only project write none |
 | Mocked test suite | **403 passed, 0 failed** (2 Nov 2026; Testcontainers tests excluded, Docker not running) |
 | PostgreSQL integration test (rollback, filters, snapshots, cascade) | **Not written**: skipped on 2 Nov 2026 by the backend owner's decision. Run `clean verify` with Docker before merging |
 | Frontend page (PMP-129) and acceptance test (PMP-130) | Not started |
@@ -418,4 +420,5 @@ Every service test also checks that a refused or no-op action writes no entry (a
 | 2 Nov 2026 | An actors endpoint feeds the actor filter, because the members list no longer contains people who left. |
 | 2 Nov 2026 | `TASK_RESTORED` is defined now so PMP-131 needs no migration. |
 | 9 Nov 2026 | `SPRINT_COMPLETED` / `SPRINT_CANCELLED` and the `SPRINT` target type (PMP-41, V16). They sit in the `PROJECT` area, so the project filter finds them. A cancel's reason is logged because PMP-41 asks for it; the close note is not. |
+| 25 Nov 2026 | `RETRO_CLOSED` (PMP-44, V18), in the `PROJECT` area. Its target is the retro's **sprint** (there is no retro target type, and a retro belongs to exactly one sprint). Opening a retro, cards, votes and actions are not logged; action tasks get their normal task history. |
 | 2 Nov 2026 | The story's criterion "a Member changes another member's project role" is read as "whoever holds `MANAGE_ROLES`" (the Project Manager or a workspace admin); members cannot change roles. |

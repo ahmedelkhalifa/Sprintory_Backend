@@ -82,6 +82,12 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
             + "where pm.project.id = :projectId and r = :role")
     List<Long> findUserIdsByProjectIdAndRole(@Param("projectId") Long projectId, @Param("role") ProjectRole role);
 
+    /** Members holding at least one of the roles, e.g. every role with a given permission. */
+    @Query("select distinct pm.user.id from ProjectMember pm join pm.roles r "
+            + "where pm.project.id = :projectId and r in :roles")
+    List<Long> findUserIdsByProjectIdAndRoleIn(@Param("projectId") Long projectId,
+                                               @Param("roles") Collection<ProjectRole> roles);
+
     @Query("select count(pm) from ProjectMember pm join pm.roles r where pm.project.id = :projectId and r = :role")
     long countByProjectIdAndRole(@Param("projectId") Long projectId, @Param("role") ProjectRole role);
 

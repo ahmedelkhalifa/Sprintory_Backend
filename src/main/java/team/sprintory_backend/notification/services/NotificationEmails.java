@@ -74,8 +74,9 @@ public class NotificationEmails {
             case TASK_STATUS_CHANGED -> task(subject) + ": status changed";
             case TASK_UNBLOCKED -> task(subject) + ": no longer blocked";
             case TASK_COMMENTED -> task(subject) + ": new comment";
-            // A chat mention (PMP-137) has a project but no task.
+            // A retro card mention (PMP-44) has a sprint; a chat mention (PMP-137) only a project.
             case MENTIONED -> subject.task() != null ? task(subject) + ": you were mentioned"
+                    : subject.sprint() != null ? "You were mentioned in a retrospective in " + subject.project().getName()
                     : "You were mentioned in the " + subject.project().getName() + " chat";
             case PROJECT_MEMBER_ADDED -> "You were added to " + subject.project().getName();
             case PROJECT_ROLES_CHANGED -> "Your roles in " + subject.project().getName() + " changed";
@@ -83,6 +84,9 @@ public class NotificationEmails {
             case SPRINT_COMPLETED -> "A sprint was completed in " + subject.project().getName();
             case SPRINT_CANCELLED -> "A sprint was cancelled in " + subject.project().getName();
             case SPRINT_OVERDUE -> "A sprint is past its end date in " + subject.project().getName();
+            case RETRO_REMINDER -> "Time for a retrospective in " + subject.project().getName();
+            case RETRO_OPENED -> "A retrospective opened in " + subject.project().getName();
+            case RETRO_CLOSED -> "A retrospective was closed in " + subject.project().getName();
             case WORKSPACE_INVITATION -> "You were invited to " + subject.workspace().getName();
             case PASSWORD_RESET -> "Your password was changed";
             case LOGIN_FAILED_REPEATED -> "Failed sign-in attempts on your account";

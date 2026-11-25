@@ -83,6 +83,9 @@ public class NotificationService {
                     .taskKey(subject.task().getKey())
                     .taskTitle(subject.task().getTitle());
         }
+        if (subject.sprint() != null) {
+            notification.sprintId(subject.sprint().getId()).sprintName(subject.sprint().getName());
+        }
         if (subject.actor() != null) {
             notification.actorId(subject.actor().getId())
                     .actorName(AuditTarget.displayName(subject.actor()));
@@ -130,6 +133,10 @@ public class NotificationService {
             requireTaskVisible(user, notification.getProjectId(), notification.getTaskId());
             return NotificationTargetResponse.task(workspaceId, notification.getProjectId(),
                     notification.getTaskId(), notification.getTaskKey());
+        }
+        if (notification.getSprintId() != null) {
+            projectAccess.requireVisible(notification.getProjectId(), user);
+            return NotificationTargetResponse.sprint(workspaceId, notification.getProjectId(), notification.getSprintId());
         }
         if (notification.getProjectId() != null) {
             projectAccess.requireVisible(notification.getProjectId(), user);

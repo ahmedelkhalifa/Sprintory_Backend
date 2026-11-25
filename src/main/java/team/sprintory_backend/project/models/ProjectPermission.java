@@ -46,6 +46,13 @@ public enum ProjectPermission {
     EDIT_CHARTER,
     /** Log time on tasks (R19). */
     LOG_TIME,
+    /**
+     * Open a sprint retrospective, add its action items, close it, and delete anyone's card
+     * (R31, PMP-44). Project Manager, Product Owner and Scrum Master.
+     */
+    RETRO_MANAGE,
+    /** Add, edit and delete one's own retrospective cards, and vote (R31, PMP-44). Everyone but the Viewer. */
+    RETRO_CONTRIBUTE,
     /** Add or remove task dependencies (PMP-45). */
     DEPENDENCY_MANAGE;
 

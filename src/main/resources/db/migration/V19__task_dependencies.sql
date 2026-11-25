@@ -1,4 +1,4 @@
--- PMP-45: retained directed links. V18 is reserved for retrospectives; coordinate V19 before merge.
+-- PMP-45: retained directed links.
 -- Composite foreign keys make cross-project edges impossible even outside the service.
 alter table tasks add constraint uk_tasks_project_id unique (project_id, id);
 create table task_dependency (

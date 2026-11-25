@@ -23,6 +23,7 @@ import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectAccess;
+import team.sprintory_backend.retro.repositories.RetrospectiveRepository;
 import team.sprintory_backend.sprint.dto.*;
 import team.sprintory_backend.sprint.exceptions.*;
 import team.sprintory_backend.sprint.models.*;
@@ -66,6 +67,7 @@ public class SprintService {
     private final SprintOutcomeRepository outcomes;
     private final TaskStatusHistoryService taskHistory;
     private final AuditLogService audit;
+    private final RetrospectiveRepository retros;
 
     @Transactional(readOnly = true)
     public int projectSprintLength(User actor, Long projectId) {
@@ -97,9 +99,13 @@ public class SprintService {
     @Transactional(readOnly = true)
     public List<SprintResponse> history(User actor, Long projectId) {
         readable(actor, projectId);
-        return sprints.findByProjectIdAndStatusInOrderByNumberAsc(projectId,
-                        List.of(SprintStatus.COMPLETED, SprintStatus.CANCELLED))
-                .stream().map(this::response).toList();
+        List<Sprint> ended = sprints.findByProjectIdAndStatusInOrderByNumberAsc(projectId,
+                List.of(SprintStatus.COMPLETED, SprintStatus.CANCELLED));
+        // Every ended sprint can have a retro: read them all in one query (PMP-44).
+        Map<Long, Long> retroIds = new HashMap<>();
+        retros.findBySprintIdIn(ended.stream().map(Sprint::getId).toList())
+                .forEach(retro -> retroIds.put(retro.getSprint().getId(), retro.getId()));
+        return ended.stream().map(sprint -> response(sprint, retroIds.get(sprint.getId()))).toList();
     }
 
     @Transactional(readOnly = true)
@@ -304,7 +310,7 @@ public class SprintService {
                 AuditChange.of("unfinishedPoints", null, String.valueOf(sprint.getUnfinishedPoints())),
                 AuditChange.of("goalAchieved", null, request.goalAchieved().name()),
                 AuditChange.of("carriedOver", null, carriedOverSummary(split, next)));
-        events.publishEvent(new SprintCompleted(project, actor, sprint.getName()));
+        events.publishEvent(new SprintCompleted(project, actor, sprint));
         return new CompleteSprintResponse(response(sprint), split.unfinished().size(),
                 next == null ? null : response(next));
     }
@@ -336,7 +342,7 @@ public class SprintService {
                 AuditChange.of("completedPoints", null, String.valueOf(sprint.getCompletedPoints())),
                 AuditChange.of("unfinishedPoints", null, String.valueOf(sprint.getUnfinishedPoints())),
                 AuditChange.of("carriedOver", null, carriedOverSummary(split, null)));
-        events.publishEvent(new SprintCancelled(project, actor, sprint.getName()));
+        events.publishEvent(new SprintCancelled(project, actor, sprint));
         return new CompleteSprintResponse(response(sprint), split.unfinished().size(), null);
     }
 
@@ -511,10 +517,16 @@ public class SprintService {
     }
 
     private SprintResponse response(Sprint sprint) {
+        // Only an ended sprint can have a retrospective (PMP-44).
+        Long retroId = sprint.getStatus().isEnded() ? retros.findIdBySprintId(sprint.getId()).orElse(null) : null;
+        return response(sprint, retroId);
+    }
+
+    private SprintResponse response(Sprint sprint, Long retroId) {
         List<Task> selected = tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(sprint.getId());
         int points = selected.stream().mapToInt(t -> t.getEstimate() == null ? 0 : t.getEstimate()).sum();
         List<Long> missing = selected.stream().filter(t -> t.getEstimate() == null).map(Task::getId).toList();
-        return SprintResponse.of(sprint, selected.stream().map(Task::getId).toList(), points, missing);
+        return SprintResponse.of(sprint, selected.stream().map(Task::getId).toList(), points, missing, retroId);
     }
 
     private Project readable(User actor, Long projectId) {

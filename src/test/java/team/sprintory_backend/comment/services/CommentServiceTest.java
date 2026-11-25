@@ -7,6 +7,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
+import team.sprintory_backend.audit.models.AuditTarget;
 import team.sprintory_backend.comment.dto.CommentRequest;
 import team.sprintory_backend.comment.dto.CommentResponse;
 import team.sprintory_backend.comment.models.TaskComment;
@@ -28,10 +29,7 @@ import team.sprintory_backend.project.services.ProjectAccessResult;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.task.services.TaskStatusHistoryService;
-import team.sprintory_backend.team.models.Team;
-import team.sprintory_backend.team.repositories.TeamRepository;
 import team.sprintory_backend.user.models.User;
-import team.sprintory_backend.user.repositories.UserRepository;
 import team.sprintory_backend.workspace.exceptions.WorkspaceArchivedException;
 import team.sprintory_backend.workspace.models.Workspace;
 import team.sprintory_backend.workspace.models.WorkspaceMember;
@@ -39,6 +37,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -63,8 +62,6 @@ class CommentServiceTest {
     private TaskCommentRepository commentRepository;
     private MentionService mentions;
     private TaskStatusHistoryService history;
-    private UserRepository userRepository;
-    private TeamRepository teamRepository;
     private ApplicationEventPublisher events;
     private CommentService service;
 
@@ -82,12 +79,9 @@ class CommentServiceTest {
         commentRepository = mock(TaskCommentRepository.class);
         mentions = mock(MentionService.class);
         history = mock(TaskStatusHistoryService.class);
-        userRepository = mock(UserRepository.class);
-        teamRepository = mock(TeamRepository.class);
         events = mock(ApplicationEventPublisher.class);
         service = new CommentService(access, taskRepository, commentRepository,
-                new RichTextParser(JsonMapper.builder().build()), mentions, history, userRepository,
-                teamRepository, events);
+                new RichTextParser(JsonMapper.builder().build()), mentions, history, events);
 
         workspace = Workspace.builder().id(8L).name("Acme").slug("acme").build();
         project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App").key("MOB").build();
@@ -98,7 +92,7 @@ class CommentServiceTest {
             if (saved.getId() == null) saved.setId(COMMENT_ID);
             return saved;
         });
-        when(userRepository.findAllById(any())).thenReturn(List.of(damir));
+        when(mentions.currentNames(any())).thenReturn(Map.of(RichTextMention.user(31L), AuditTarget.displayName(damir)));
     }
 
     // --- post ---
@@ -220,7 +214,8 @@ class CommentServiceTest {
 
         assertNull(comment.getEditedAt());
         verify(commentRepository, never()).save(any());
-        verifyNoInteractions(mentions, events);
+        verify(mentions, never()).newlyMentionedUserIds(any(), any(), any());
+        verifyNoInteractions(events);
     }
 
     @Test
@@ -358,7 +353,7 @@ class CommentServiceTest {
     void aTeamMentionShowsTheTeamsCurrentName() {
         givenVisible(ada, VIEW_WORK, COMMENT);
         givenPage(comment(1L, ada, doc(mention("team", 5, "Old team name"))));
-        when(teamRepository.findAllById(any())).thenReturn(List.of(Team.builder().id(5L).name("Backend").build()));
+        when(mentions.currentNames(any())).thenReturn(Map.of(RichTextMention.team(5L), "Backend"));
 
         CommentResponse response = service.list(ada, PROJECT_ID, TASK_ID, PageRequest.of(0, 20)).content().get(0);
 

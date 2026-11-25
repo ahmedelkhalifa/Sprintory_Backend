@@ -1,6 +1,6 @@
 # Sprintory — Task dependencies API contract (R11, PMP-45)
 
-**Status:** backend implementation passed full Maven/PostgreSQL verification (972 tests, 0 failures/errors/skipped; PMP-162, 24 Nov 2026). Review refactor verified: 974 tests passed, zero failures/errors/skipped. Frontend: PMP-163 (Alexander). This is the implementation contract, not a claim that the feature is deployed. Migration number must be coordinated before merge (see §8).
+**Status:** backend implementation passed full Maven/PostgreSQL verification (972 tests, 0 failures/errors/skipped; PMP-162, 24 Nov 2026). Review refactor verified: 974 tests passed, zero failures/errors/skipped. Frontend: PMP-163 (Alexander). This is the implementation contract, not a claim that the feature is deployed. V18 (retrospectives) and V19 (dependencies) are coordinated (see §8).
 **Applies to:** `/api/v1/tasks/{id}/dependencies`, `/api/v1/dependencies/{id}`, task list/detail and board/backlog task responses, task status edits, history and notifications.
 **Related:** [Tasks](./tasks-docs.md), [Board](./board-docs.md), [Sprints](./sprints-docs.md), [Roles](./roles-docs.md), [History](./task-history-docs.md), [Notifications](./notifications-docs.md), [API conventions](./api-conventions.md), R03/R04/R10c/R16, PMP-63 and PMP-48.
 
@@ -145,7 +145,7 @@ Notify on a real blocked→unblocked transition: last live non-DONE blocker reac
 
 ## 8. Data model and cycle prevention
 
-Provisional migration `V19__task_dependencies.sql` (V17 Jira importer, V18 reserved for retrospectives). Use a Flyway-managed database for integration/deployment; dev ddl-auto=update alone does not install these SQL constraints. Coordinate with team **before merge/deployment**: if V19 is deployed before V18, Flyway will not apply V18 normally. Never edit an already applied migration. Renumber unmerged migrations only with agreement; ensure later migrations extending history/notification constraints preserve these new types.
+Migration `V19__task_dependencies.sql` follows V18 (retrospectives) and V17 (Jira importer). Use a Flyway-managed database for integration/deployment; dev ddl-auto=update alone does not install these SQL constraints. V18 is now merged into main and must precede V19. Never edit an already applied migration. Renumber unmerged migrations only with agreement; ensure later migrations extending history/notification constraints preserve these new types.
 
 `task_dependency(id, project_id, blocker_task_id, blocked_task_id, created_by, created_at)`:
 
@@ -183,4 +183,6 @@ Backend tests in `dependency/DependencyGraphTest` and `dependency/DependencyInte
 
 ## 11. Implementation status
 
-The original backend implementation (six commits through `4b00672`) passed `mvn verify` locally: 972 tests, zero failures, errors or skipped tests, including 14 dependency tests. The reviewer independently confirmed the same result. The follow-up review changes reorganize packages/DTOs, use shared access checks, write task history directly through JPA, and restore conditional project locking for status edits. The HTTP contract is unchanged. The review refactor also passed `mvn verify`: 974 tests, zero failures, errors or skipped tests. Verify migration order with the other Sprint 3 branches. No deployment claimed here.
+The original backend implementation (six commits through `4b00672`) passed `mvn verify` locally: 972 tests, zero failures, errors or skipped tests, including 14 dependency tests. The reviewer independently confirmed the same result. The follow-up review changes reorganize packages/DTOs, use shared access checks, write task history directly through JPA, and restore conditional project locking for status edits. The HTTP contract is unchanged. The review refactor also passed `mvn verify`: 974 tests, zero failures, errors or skipped tests. V18/V19 ordering is settled. No deployment claimed here.
+
+After merging main with retrospectives (V18), `mvnw -B clean verify` passed: 1053 tests, zero failures, errors or skipped tests; both V18 and V19 ran on PostgreSQL.

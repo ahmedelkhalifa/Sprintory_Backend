@@ -78,7 +78,8 @@ There is no endpoint to create, edit or delete a notification. Notifications are
   "actor": { "id": 31, "name": "Damir Gabaidullin" },  // null for security events
   "workspace": { "id": 4, "name": "Acme" },   // null for security events
   "project": { "id": 15, "key": "MOB", "name": "Mobile App" },  // null for workspace and security events
-  "task": { "id": 230, "key": "MOB-42", "title": "Fix login" }   // null unless the notification is about a task
+  "task": { "id": 230, "key": "MOB-42", "title": "Fix login" },  // null unless the notification is about a task
+  "sprint": null                              // { "id": 42, "name": "MOB Sprint 3" } for sprint and retro notifications (PMP-44)
 }
 
 // UnreadCountResponse
@@ -86,11 +87,12 @@ There is no endpoint to create, edit or delete a notification. Notifications are
 
 // NotificationTargetResponse: where to navigate after "open" (§3.3)
 {
-  "kind": "TASK",          // TASK | PROJECT | NONE
+  "kind": "TASK",          // TASK | SPRINT | PROJECT | NONE
   "workspaceId": 4,        // null when kind is NONE
   "projectId": 15,         // null when kind is NONE
   "taskId": 230,           // only for TASK
-  "taskKey": "MOB-42"      // only for TASK
+  "taskKey": "MOB-42",     // only for TASK
+  "sprintId": null         // only for SPRINT
 }
 
 // NotificationPreferencesResponse: always all 8 categories, in the order of §6
@@ -159,7 +161,8 @@ Call this when the user clicks a notification. It **marks the notification read*
 - **Marking read.** The notification is marked read **even when the answer is `404` because the target is gone**: the click still counts. Opening an already read notification is fine, and `readAt` keeps its first value.
 - **Response `200`** is a `NotificationTargetResponse`:
   - `kind: "TASK"`: navigate to the task (`projectId`, `taskId`, `taskKey`).
-  - `kind: "PROJECT"`: navigate to the project (project membership, roles and sprint notifications).
+  - `kind: "SPRINT"`: navigate to the sprint's page (`projectId`, `sprintId`). Sprint completed/cancelled and the retro notifications; the sprint page offers "Open retro" through `retroId` ([retrospectives-docs.md §7.2](./retrospectives-docs.md#72-notification-clicks)).
+  - `kind: "PROJECT"`: navigate to the project (project membership, roles, sprint started and sprint overdue).
   - `kind: "NONE"`: there is nothing to open. This covers workspace invitations ("open the invitation email to join") and security notifications. Just show the message.
 - **`404 RESOURCE_NOT_FOUND`** when:
   - the id does not exist or belongs to someone else (the notification is then *not* marked read);
@@ -271,19 +274,22 @@ Every `type` value, its preference `category`, who receives it and what it links
    - in-app off: no bell entry and no stream event;
    - email off: no email;
    - both off: nothing is created at all.
-5. **Names are snapshots.** The actor, workspace, project and task names are stored as they were when the notification was created. A later rename does not change old notifications.
+5. **Names are snapshots.** The actor, workspace, project, task and sprint names are stored as they were when the notification was created. A later rename does not change old notifications.
 
 | `type` | `category` | Produced when | Recipients | `task` | Open → `kind` | Example `message` |
 | --- | --- | --- | --- | --- | --- | --- |
 | `TASK_ASSIGNED` | `ASSIGNMENT` | A task is created with an assignee, or its assignee changes to another person (`POST` / `PATCH /projects/{id}/tasks`). Clearing the assignee or "changing" it to the same person sends nothing. | the new assignee | yes | `TASK` | *Damir Gabaidullin assigned you MOB-42 "Fix login"* |
 | `TASK_STATUS_CHANGED` | `STATUS_CHANGE` | A task moves to another board column. This happens through task update, a board move, or deleting a column (which moves its tasks: **one notification per moved task**). Reordering inside the same column sends nothing. | the task's watchers | yes | `TASK` | *Damir Gabaidullin moved MOB-42 "Fix login" from To Do to In Progress* |
 | `TASK_COMMENTED` | `COMMENT` | Someone comments on a task. **Produced once comments ship (PMP-133).** | the task's watchers, minus the people mentioned in the comment | yes, with `excerpt` | `TASK` | *Damir Gabaidullin commented on MOB-42 "Fix login"* |
-| `MENTIONED` | `MENTION` | Someone @mentions you, or a team you are in, in a comment, a task or subtask description (PMP-136), or a project chat message (PMP-137). Editing notifies **only newly added** mentions. | the mentioned users. For `@team`, the team's members who are in this project. This includes people who unwatched the task. | yes, with `excerpt` | `TASK`; `PROJECT` for a chat mention | *Damir Gabaidullin mentioned you in MOB-42 "Fix login"*; in the chat: *Damir Gabaidullin mentioned you in the "Mobile App" chat* |
+| `MENTIONED` | `MENTION` | Someone @mentions you, or a team you are in, in a comment, a task or subtask description (PMP-136), a project chat message (PMP-137), or a retrospective card (PMP-44). Editing notifies **only newly added** mentions. | the mentioned users. For `@team`, the team's members who are in this project. This includes people who unwatched the task. | yes, with `excerpt` | `TASK`; `PROJECT` for a chat mention; `SPRINT` for a retro card | *Damir Gabaidullin mentioned you in MOB-42 "Fix login"*; in the chat: *Damir Gabaidullin mentioned you in the "Mobile App" chat*; on a card: *Damir Gabaidullin mentioned you in the retrospective of "MOB Sprint 3"* |
 | `PROJECT_MEMBER_ADDED` | `PROJECT_MEMBERSHIP` | You are added to a project, directly or through a team (`POST /projects/{id}/members`, `/teams`). The creator of a new project gets nothing (they are the actor). | the added person | no | `PROJECT` | *Damir Gabaidullin added you to the project "Mobile App"* |
 | `PROJECT_ROLES_CHANGED` | `PROJECT_MEMBERSHIP` | Your project roles change (`PUT /projects/{id}/members/{userId}/roles`) and the set actually differs | the person whose roles changed | no | `PROJECT` | *Damir Gabaidullin changed your roles in "Mobile App" to Project Manager, Member* |
 | `SPRINT_STARTED` | `SPRINT` | A sprint is started. **Published by PMP-119 at sprint start.** | every project member | no | `PROJECT` | *Damir Gabaidullin started "MOB Sprint 4" in "Mobile App"* |
-| `SPRINT_COMPLETED` | `SPRINT` | A sprint is closed. **Published by PMP-41 at close.** | every project member | no | `PROJECT` | *Damir Gabaidullin completed "MOB Sprint 4" in "Mobile App"* |
-| `SPRINT_CANCELLED` | `SPRINT` | A sprint is cancelled. **Published by PMP-41 at cancel**; the reason is never sent. | every project member | no | `PROJECT` | *Damir Gabaidullin cancelled "MOB Sprint 4" in "Mobile App"* |
+| `SPRINT_COMPLETED` | `SPRINT` | A sprint is closed. **Published by PMP-41 at close.** | every project member | no | `SPRINT` | *Damir Gabaidullin completed "MOB Sprint 4" in "Mobile App"* |
+| `SPRINT_CANCELLED` | `SPRINT` | A sprint is cancelled. **Published by PMP-41 at cancel**; the reason is never sent. | every project member | no | `SPRINT` | *Damir Gabaidullin cancelled "MOB Sprint 4" in "Mobile App"* |
+| `RETRO_REMINDER` | `SPRINT` | A sprint is closed or cancelled (the same moment as the two rows above), once (PMP-44). | the members holding a role with `RETRO_MANAGE` (Scrum Master, Product Owner, Project Manager); the person who ended the sprint gets the "Start retrospective" prompt instead | no | `SPRINT` | *"MOB Sprint 3" in "Mobile App" ended. Start the retrospective.* |
+| `RETRO_OPENED` | `SPRINT` | A retrospective is created (`POST /sprints/{id}/retro` answering `201`; not when it already existed) | every project member | no | `SPRINT` | *Linus Torvalds opened the retrospective of "MOB Sprint 3" in "Mobile App"* |
+| `RETRO_CLOSED` | `SPRINT` | A retrospective is closed (`POST /retros/{id}/close`) | every project member | no | `SPRINT` | *Linus Torvalds closed the retrospective of "MOB Sprint 3" in "Mobile App"* |
 | `SPRINT_OVERDUE` | `SPRINT` | Daily at 09:00 UTC while the active sprint is past its end date (`SprintReminderJob`, PMP-41). No actor. | the project's **Scrum Masters** only | no | `PROJECT` | *"MOB Sprint 3" in "Mobile App" ended 2 days ago and is still active. Close it to carry over unfinished work.* |
 | `WORKSPACE_INVITATION` | `INVITATION` 🔒 | An admin invites your email to a workspace (`POST /workspaces/{id}/invitations`) **and the email already has an account**. An email with no account gets only the invitation email. | the invited account | no | `NONE` | *Ada Lovelace invited you to the workspace "Acme". Open the invitation email to join.* |
 | `PASSWORD_RESET` | `SECURITY` 🔒 | Your password was changed through the "forgot password" link | you (`actor: null`) | no | `NONE` | *Your password was changed. If this wasn't you, reset it again now and contact your workspace admin.* |
@@ -311,7 +317,7 @@ The matrix the preferences page shows, in this order, with the defaults. **A use
 | `COMMENT` | `TASK_COMMENTED` | on | off | no |
 | `STATUS_CHANGE` | `TASK_STATUS_CHANGED` | on | off | no |
 | `PROJECT_MEMBERSHIP` | `PROJECT_MEMBER_ADDED`, `PROJECT_ROLES_CHANGED` | on | off | no |
-| `SPRINT` | `SPRINT_STARTED`, `SPRINT_COMPLETED`, `SPRINT_CANCELLED`, `SPRINT_OVERDUE` | on | off | no |
+| `SPRINT` | `SPRINT_STARTED`, `SPRINT_COMPLETED`, `SPRINT_CANCELLED`, `SPRINT_OVERDUE`, `RETRO_REMINDER`, `RETRO_OPENED`, `RETRO_CLOSED` | on | off | no |
 | `INVITATION` | `WORKSPACE_INVITATION` | on | on | **yes** |
 | `SECURITY` | `PASSWORD_RESET`, `LOGIN_FAILED_REPEATED` | on | on | **yes** |
 
@@ -375,7 +381,7 @@ Emails contain the task key, title, the excerpt if any, a link to the item, and 
 4. **Content** uses the shared email layout ([email-service.md](./email-service.md)):
    - greeting: "Hi <first name>,";
    - body: the `message` (the same text as the bell), then the quoted `excerpt` if any;
-   - a button: "Open task" for task notifications, "Open project" for project and sprint ones, "Open Sprintory" (the app's home page) for security ones;
+   - a button: "Open task" for task notifications, "Open project" for project, sprint and retro ones (there is no sprint route property yet, so they link to the project), "Open Sprintory" (the app's home page) for security ones;
    - a footer: "You are receiving this email because of your Sprintory notification preferences. Manage them at <preferences link>".
 
    Subjects, one per type. A subject is always one line (newlines in a title become spaces) and at most 255 characters:
@@ -385,11 +391,12 @@ Emails contain the task key, title, the excerpt if any, a link to the item, and 
    | `TASK_ASSIGNED` | `[Sprintory] MOB-42 Fix login: you were assigned` |
    | `TASK_STATUS_CHANGED` | `[Sprintory] MOB-42 Fix login: status changed` |
    | `TASK_COMMENTED` | `[Sprintory] MOB-42 Fix login: new comment` |
-   | `MENTIONED` | `[Sprintory] MOB-42 Fix login: you were mentioned`; in the chat: `[Sprintory] You were mentioned in the Mobile App chat` |
+   | `MENTIONED` | `[Sprintory] MOB-42 Fix login: you were mentioned`; in the chat: `[Sprintory] You were mentioned in the Mobile App chat`; on a retro card: `[Sprintory] You were mentioned in a retrospective in Mobile App` |
    | `PROJECT_MEMBER_ADDED` | `[Sprintory] You were added to Mobile App` |
    | `PROJECT_ROLES_CHANGED` | `[Sprintory] Your roles in Mobile App changed` |
    | `SPRINT_STARTED` / `SPRINT_COMPLETED` / `SPRINT_CANCELLED` | `[Sprintory] A sprint started in Mobile App` / `… was completed in …` / `… was cancelled in …` |
    | `SPRINT_OVERDUE` | `[Sprintory] A sprint is past its end date in Mobile App` |
+   | `RETRO_REMINDER` / `RETRO_OPENED` / `RETRO_CLOSED` | `[Sprintory] Time for a retrospective in Mobile App` / `A retrospective opened in …` / `A retrospective was closed in …` |
    | `PASSWORD_RESET` | `[Sprintory] Your password was changed` |
    | `LOGIN_FAILED_REPEATED` | `[Sprintory] Failed sign-in attempts on your account` |
    | `WORKSPACE_INVITATION` | not sent by notifications: the invitation email is the email |
@@ -482,6 +489,7 @@ As of 4 Nov 2026, on branch `features/notifications`:
 | Producers for comments (PMP-133) and mentions (PMP-136) | Done (5 Nov 2026), against [comments-docs.md](./comments-docs.md) and [mentions-docs.md](./mentions-docs.md). Posting publishes `TaskCommented`; editing a comment and creating or editing a task or subtask description publish `Mentioned` with the newly added ids only |
 | Chat mentions (PMP-137) | Done (6 Nov 2026). `ChatService` publishes `ProjectChatMentioned` on send and edit, with the newly added ids only; `NotificationListenerTest`, `NotificationEmailsTest`, and `MentionIntegrationTest` end to end on PostgreSQL |
 | Producers for sprints (PMP-119, PMP-41) | Done: start, close and cancel publish their events; `SprintReminderJob` publishes `SprintOverdue` daily (V16 adds the type) |
+| Retrospectives (PMP-44) | Done (25 Nov 2026): `RETRO_REMINDER`, `RETRO_OPENED`, `RETRO_CLOSED` and card mentions, the `sprint` part and the `SPRINT` open target (V18 adds the types and columns); `NotificationListenerTest`, `NotificationServiceTest`, `NotificationEmailsTest`, `RetroServiceTest` |
 | Frontend (PMP-114) and acceptance test (PMP-115) | Not started |
 
 ---
@@ -505,6 +513,7 @@ As of 4 Nov 2026, on branch `features/notifications`:
 | 3 Nov 2026 | `SPRINT_CANCELLED` is defined next to started and completed, because PMP-41 notifies members on cancel too. Comment, mention and sprint types are defined now, so those features need no migration. |
 | 9 Nov 2026 | `SPRINT_OVERDUE` (PMP-41, V16): a daily reminder to the **Scrum Masters only** while the active sprint is past its end date, in the `SPRINT` category so the same switch controls it. |
 | 6 Nov 2026 | A chat mention is its own event, `ProjectChatMentioned`, not `Mentioned` with an optional task: a chat has no task, and `Mentioned` keeps its task. It reuses the `MENTIONED` type and the `MENTION` preference (no migration), and the notification is about the project. |
+| 25 Nov 2026 | Retrospectives (PMP-44, [retrospectives-docs.md §6](./retrospectives-docs.md#6-notifications)): three types in the existing `SPRINT` category. Notifications gain a `sprint` snapshot (`sprint_id`, `sprint_name`, no foreign key) and a `SPRINT` open target, which sprint completed/cancelled now use too. A card mention is its own event, `RetroMentioned`, like the chat. The reminder's recipients come from the permission matrix (roles with `RETRO_MANAGE`), and the person who ended the sprint is left out like every actor; so retro managers get two notifications when a sprint ends: the sprint one and the reminder. |
 
 ---
 
@@ -524,14 +533,19 @@ events.publishEvent(new ProjectChatMentioned(project, user, messageId, newlyMent
 
 // PMP-119 / PMP-41 (SprintService), after the state change:
 events.publishEvent(new SprintStarted(project, user, sprint.getName()));
-events.publishEvent(new SprintCompleted(project, user, sprint.getName()));
-events.publishEvent(new SprintCancelled(project, user, sprint.getName()));
+events.publishEvent(new SprintCompleted(project, user, sprint));   // also the retro reminder (PMP-44)
+events.publishEvent(new SprintCancelled(project, user, sprint));
+
+// PMP-44 (RetroService): open (only when created), close, and new mentions in a card:
+events.publishEvent(new RetroOpened(project, user, sprint));
+events.publishEvent(new RetroClosed(project, user, sprint));
+events.publishEvent(new RetroMentioned(project, user, sprint, newlyMentionedUserIds, plainText));
 
 // PMP-41 SprintReminderJob, daily at 09:00 UTC, one transaction per overdue active sprint:
 events.publishEvent(new SprintOverdue(sprint.getProject(), sprint.getName(), daysOverdue));
 ```
 
-`SprintOverdue` has no actor; the listener sends it only to the members holding `SCRUM_MASTER` (`ProjectMemberRepository.findUserIdsByProjectIdAndRole`). The job runs once a day, so a Scrum Master gets at most one reminder per sprint per day; it re-reads the sprint inside its transaction and skips one closed since the query.
+`SprintOverdue` has no actor; the listener sends it only to the members holding `SCRUM_MASTER` (`ProjectMemberRepository.findUserIdsByProjectIdAndRole`). The retro reminder on `SprintCompleted` / `SprintCancelled` goes to the members holding any role whose permissions include `RETRO_MANAGE` (`findUserIdsByProjectIdAndRoleIn`, roles read from `ProjectRole`), so a change to the matrix changes the recipients too. The job runs once a day, so a Scrum Master gets at most one reminder per sprint per day; it re-reads the sprint inside its transaction and skips one closed since the query.
 
 Rules:
 1. **Publish only real changes.** For example, "assigned to the same person" publishes nothing.
@@ -562,7 +576,7 @@ Code lives in `notification/{events,models,repositories,services,controllers,dto
 
 | Table | Columns | Notes |
 | --- | --- | --- |
-| `notifications` | `id`, `recipient_id`, `type`, `workspace_id`, `workspace_name`, `project_id`, `project_key`, `project_name`, `task_id`, `task_key`, `task_title`, `actor_id`, `actor_name`, `message`, `excerpt`, `created_at`, `read_at` | `recipient_id` → `users` and `workspace_id` → `workspaces`, both **on delete cascade**. `project_id`, `task_id` and `actor_id` have **no foreign key** on purpose, so notifications outlive the things they mention (open then answers `404`). Check constraint on `type`. Indexes on `(recipient_id, created_at desc, id desc)` and a partial index on unread rows. |
+| `notifications` | `id`, `recipient_id`, `type`, `workspace_id`, `workspace_name`, `project_id`, `project_key`, `project_name`, `task_id`, `task_key`, `task_title`, `sprint_id`, `sprint_name` (V18), `actor_id`, `actor_name`, `message`, `excerpt`, `created_at`, `read_at` | `recipient_id` → `users` and `workspace_id` → `workspaces`, both **on delete cascade**. `project_id`, `task_id`, `sprint_id` and `actor_id` have **no foreign key** on purpose, so notifications outlive the things they mention (open then answers `404`). Check constraint on `type`. Indexes on `(recipient_id, created_at desc, id desc)` and a partial index on unread rows. |
 | `notification_preferences` | `user_id`, `category`, `channel`, `enabled` | Primary key `(user_id, category, channel)`, `user_id` on delete cascade. A row exists only where the user differs from the default. Check constraints on `category` and `channel` (`IN_APP`, `EMAIL`). |
 | `task_watchers` | `task_id`, `user_id`, `created_at` | Primary key `(task_id, user_id)`. Both FKs on delete cascade. |
 | `email_outbox` | `id`, `recipient_email`, `subject`, `body_text`, `body_html`, `status`, `attempts`, `next_attempt_at`, `last_error`, `created_at`, `sent_at` | `status` is `PENDING`, `SENT` or `FAILED` (check constraint). Index on `(status, next_attempt_at)`. `last_error` holds the exception message only, never the body. |

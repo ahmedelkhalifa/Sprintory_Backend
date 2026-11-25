@@ -27,10 +27,7 @@ import team.sprintory_backend.project.services.ProjectAccessResult;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.task.services.TaskStatusHistoryService;
-import team.sprintory_backend.team.models.Team;
-import team.sprintory_backend.team.repositories.TeamRepository;
 import team.sprintory_backend.user.models.User;
-import team.sprintory_backend.user.repositories.UserRepository;
 import team.sprintory_backend.workspace.services.WorkspaceAccess;
 
 import java.time.Instant;
@@ -38,7 +35,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -64,8 +60,6 @@ public class CommentService {
     private final RichTextParser richText;
     private final MentionService mentions;
     private final TaskStatusHistoryService history;
-    private final UserRepository userRepository;
-    private final TeamRepository teamRepository;
     private final ApplicationEventPublisher events;
 
     /** One page of the task's thread, oldest first, deleted comments included as placeholders. */
@@ -81,7 +75,7 @@ public class CommentService {
                 bodies.put(comment.getId(), richText.parse(comment.getBody()));
             }
         }
-        Map<RichTextMention, String> names = currentNames(bodies.values());
+        Map<RichTextMention, String> names = mentions.currentNames(bodies.values());
         return PageResponse.from(page.map(comment ->
                 response(comment, bodies.get(comment.getId()), names, access, user)));
     }
@@ -100,7 +94,7 @@ public class CommentService {
         TaskComment comment = commentRepository.save(TaskComment.builder()
                 .task(task).author(user).body(body.json()).build());
         events.publishEvent(new TaskCommented(task, user, comment.getId(), body.plainText(), mentioned));
-        return response(comment, body, currentNames(List.of(body)), access, user);
+        return response(comment, body, mentions.currentNames(List.of(body)), access, user);
     }
 
     /**
@@ -126,7 +120,7 @@ public class CommentService {
                 events.publishEvent(new Mentioned(task, user, mentioned, body.plainText()));
             }
         }
-        return response(comment, body, currentNames(List.of(body)), access, user);
+        return response(comment, body, mentions.currentNames(List.of(body)), access, user);
     }
 
     /**
@@ -186,28 +180,6 @@ public class CommentService {
     }
 
     // --- responses ---
-
-    /** The current names of everyone and every team mentioned in these bodies, in two queries. */
-    private Map<RichTextMention, String> currentNames(Iterable<RichTextDocument> bodies) {
-        Set<Long> userIds = new HashSet<>();
-        Set<Long> teamIds = new HashSet<>();
-        for (RichTextDocument body : bodies) {
-            userIds.addAll(body.userIds());
-            teamIds.addAll(body.teamIds());
-        }
-        Map<RichTextMention, String> names = new HashMap<>();
-        if (!userIds.isEmpty()) {
-            for (User mentioned : userRepository.findAllById(userIds)) {
-                names.put(RichTextMention.user(mentioned.getId()), AuditTarget.displayName(mentioned));
-            }
-        }
-        if (!teamIds.isEmpty()) {
-            for (Team team : teamRepository.findAllById(teamIds)) {
-                names.put(RichTextMention.team(team.getId()), team.getName());
-            }
-        }
-        return names;
-    }
 
     /** {@code body} is null for a deleted comment. */
     private static CommentResponse response(TaskComment comment, RichTextDocument body,

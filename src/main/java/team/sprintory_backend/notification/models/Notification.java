@@ -76,6 +76,13 @@ public class Notification {
     @Column(name = "task_title", updatable = false)
     private String taskTitle;
 
+    /** The sprint a sprint or retro notification is about (PMP-44); null for the others. */
+    @Column(name = "sprint_id", updatable = false)
+    private Long sprintId;
+
+    @Column(name = "sprint_name", updatable = false, length = 100)
+    private String sprintName;
+
     /** Null when the system is the source (security notifications); then the name is null too. */
     @Column(name = "actor_id", updatable = false)
     private Long actorId;

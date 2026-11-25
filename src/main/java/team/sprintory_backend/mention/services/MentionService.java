@@ -14,13 +14,17 @@ import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.services.ProjectAccess;
+import team.sprintory_backend.team.models.Team;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.team.repositories.TeamRepository;
 import team.sprintory_backend.user.models.User;
+import team.sprintory_backend.user.repositories.UserRepository;
 
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -42,6 +46,7 @@ public class MentionService {
     private final ProjectMemberRepository projectMemberRepository;
     private final TeamRepository teamRepository;
     private final TeamMemberRepository teamMemberRepository;
+    private final UserRepository userRepository;
 
     /**
      * The people a saved text newly mentions, teams expanded to their members who are in the
@@ -76,6 +81,33 @@ public class MentionService {
             }
         }
         return recipients;
+    }
+
+    /**
+     * The current names of everyone and every team mentioned in these texts, in at most two
+     * queries, so a renamed person or team shows the new name (mentions-docs.md §2). Used by
+     * comments and retro cards.
+     */
+    @Transactional(readOnly = true)
+    public Map<RichTextMention, String> currentNames(Iterable<RichTextDocument> texts) {
+        Set<Long> userIds = new HashSet<>();
+        Set<Long> teamIds = new HashSet<>();
+        for (RichTextDocument text : texts) {
+            userIds.addAll(text.userIds());
+            teamIds.addAll(text.teamIds());
+        }
+        Map<RichTextMention, String> names = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            for (User mentioned : userRepository.findAllById(userIds)) {
+                names.put(RichTextMention.user(mentioned.getId()), AuditTarget.displayName(mentioned));
+            }
+        }
+        if (!teamIds.isEmpty()) {
+            for (Team team : teamRepository.findAllById(teamIds)) {
+                names.put(RichTextMention.team(team.getId()), team.getName());
+            }
+        }
+        return names;
     }
 
     /** The @ suggestions for the caller: people and teams of this project whose name matches {@code q}. */

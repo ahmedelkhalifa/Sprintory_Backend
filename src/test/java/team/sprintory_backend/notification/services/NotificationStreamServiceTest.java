@@ -66,7 +66,7 @@ class NotificationStreamServiceTest {
     private static NotificationResponse notification(Long id) {
         return new NotificationResponse(id, NotificationType.TASK_ASSIGNED, NotificationType.TASK_ASSIGNED.category(),
                 Instant.parse("2026-11-03T14:05:31Z"), false, null, "Damir assigned you MOB-42", null,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     // --- subscribe ---

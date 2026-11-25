@@ -17,6 +17,12 @@ public enum NotificationType {
     SPRINT_CANCELLED(NotificationCategory.SPRINT),
     /** Daily, to the Scrum Masters, while the active sprint is past its end date (PMP-41). */
     SPRINT_OVERDUE(NotificationCategory.SPRINT),
+    /** When a sprint ends, to the other retro managers: time to run its retrospective (PMP-44). */
+    RETRO_REMINDER(NotificationCategory.SPRINT),
+    /** A sprint's retrospective was opened (PMP-44). */
+    RETRO_OPENED(NotificationCategory.SPRINT),
+    /** A sprint's retrospective was closed (PMP-44). */
+    RETRO_CLOSED(NotificationCategory.SPRINT),
     WORKSPACE_INVITATION(NotificationCategory.INVITATION),
     PASSWORD_RESET(NotificationCategory.SECURITY),
     LOGIN_FAILED_REPEATED(NotificationCategory.SECURITY);
