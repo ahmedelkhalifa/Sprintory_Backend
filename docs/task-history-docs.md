@@ -261,4 +261,4 @@ As of 6 Nov 2026 (merged to `main`; the subtask description and label entries co
 
 ## Dependency history (PMP-45)
 
-`DEPENDENCY_ADDED` / `DEPENDENCY_REMOVED` record one entry on each task. `refId` is the other task id; `newValue` (add) or `oldValue` (remove) is `Blocks KEY` or `Blocked by KEY`, `field` is null. See [dependencies-docs.md §7](./dependencies-docs.md#7-history-and-notifications).
+`DEPENDENCY_ADDED` / `DEPENDENCY_REMOVED` record one entry on each task. `refId` is the other task id; `newValue` (add) or `oldValue` (remove) is `Blocks KEY` or `Blocked by KEY`, `field` is null. Written directly by `TaskStatusHistoryService.recordDependencyAdded` / `recordDependencyRemoved` in the dependency action transaction. See [dependencies-docs.md §7](./dependencies-docs.md#7-history-and-notifications).

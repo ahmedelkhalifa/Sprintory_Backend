@@ -1,6 +1,6 @@
 # Sprintory — Task dependencies API contract (R11, PMP-45)
 
-**Status:** backend implementation prepared (PMP-162, 24 Nov 2026); full Maven/PostgreSQL verification pending. Frontend: PMP-163 (Alexander). This is the implementation contract, not a claim that the feature is deployed. Migration number must be coordinated before merge (see §8).
+**Status:** backend implementation passed full Maven/PostgreSQL verification (972 tests, 0 failures/errors/skipped; PMP-162, 24 Nov 2026). Review refactor verified: 974 tests passed, zero failures/errors/skipped. Frontend: PMP-163 (Alexander). This is the implementation contract, not a claim that the feature is deployed. Migration number must be coordinated before merge (see §8).
 **Applies to:** `/api/v1/tasks/{id}/dependencies`, `/api/v1/dependencies/{id}`, task list/detail and board/backlog task responses, task status edits, history and notifications.
 **Related:** [Tasks](./tasks-docs.md), [Board](./board-docs.md), [Sprints](./sprints-docs.md), [Roles](./roles-docs.md), [History](./task-history-docs.md), [Notifications](./notifications-docs.md), [API conventions](./api-conventions.md), R03/R04/R10c/R16, PMP-63 and PMP-48.
 
@@ -12,7 +12,7 @@ This file is the shared backend/frontend reference. Update code, documentation a
 
 - One directed link: A blocks B; equivalently B is blocked by A. It appears on both tasks.
 - Scrum and Kanban. Only live top-level `STORY`, `TASK`, `BUG` in one project may be linked. Backlog/sprint membership is irrelevant. Subtasks have no independent dependencies.
-- No self-links, duplicate directed pairs, or direct/indirect cycles. The graph includes retained links of deleted tasks; blocked calculations ignore deleted tasks. Restoration therefore cannot introduce a cycle.
+- No self-links, duplicate directed pairs, or direct/indirect cycles. The graph includes retained links of deleted tasks; blocked calculations ignore deleted tasks. Restoration therefore cannot introduce a cycle. A cycle error can name a deleted task by key even though its links are hidden from the UI. Restore that task first to inspect and remove its dependency, or ask a project member with the necessary permissions to restore it. A previously known dependency ID remains removable through the authorized API.
 - Blocked is computed from direct live blockers whose column category is not `DONE`. It is not a new workflow column or stored flag. No transitive blocked propagation: DONE satisfies a dependency even if that task has blockers itself.
 - Soft blocking: a forward task movement may proceed after warning confirmation. No automatic dates, graph visualization, cross-project links, other dependency types or critical path.
 
@@ -21,7 +21,7 @@ This file is the shared backend/frontend reference. Update code, documentation a
 | GET dependencies | 404 | allowed | allowed | allowed |
 | Add/remove link | 404 | 403 | allowed | allowed |
 
-`DEPENDENCY_MANAGE` is granted to every project role except Viewer, and appears in the project's `permissions` array. Use this permission, not role-name checks. The backend independently checks it. This story deliberately returns 404 even for a workspace admin who is not a project member. Archived workspace and non-ACTIVE project: reads still allowed, writes return 409. Project lifecycle editing itself belongs to PMP-63.
+`DEPENDENCY_MANAGE` is granted to every project role except Viewer, and appears in the project's `permissions` array. Use this permission, not role-name checks. The backend independently checks it. This story deliberately returns 404 even for a workspace admin who is not a project member (PMP-45 acceptance criterion 19), unlike other task endpoints that may return 403 for such an admin. Archived workspace and non-ACTIVE project: reads still allowed, writes return 409. Project lifecycle editing itself belongs to PMP-63.
 
 ## 2. Endpoints and bodies
 
@@ -130,7 +130,7 @@ Standard error envelope: `timestamp`, `status`, `code`, `message`, `path`, optio
 
 ## 7. History and notifications
 
-`DependencyAdded` and `DependencyRemoved` are synchronous domain events. `TaskStatusHistoryService` appends two entries in the transaction, with `field: null`, `refId: otherTaskId`, existing actor and timestamp fields, and direction as a display snapshot. Render the other task link using `refId` where it remains accessible.
+`DependencyService` calls `TaskStatusHistoryService.recordDependencyAdded` / `recordDependencyRemoved` directly inside the action transaction. Both append entries through the normal JPA history repository, with `field: null`, `refId: otherTaskId`, existing actor and timestamp fields, and direction as a display snapshot. Render the other task link using `refId` where it remains accessible.
 
 | Type | On blocker (A) | On blocked task (B) |
 | --- | --- | --- |
@@ -153,7 +153,7 @@ Provisional migration `V19__task_dependencies.sql` (V17 Jira importer, V18 reser
 - Composite foreign keys enforce same-project endpoints at the database level. Hard delete cascades; soft delete leaves the row. Creator FK `ON DELETE SET NULL`.
 - Project and blocked-task indexes; unique pair also indexes the leading blocker ID.
 - `DependencyGraph` is pure Java iterative BFS with visited/parent map. For candidate A→B search from B to A; if reached, reconstruct B→…→A and prepend A. O(V+E) for the project's graph, including retained links involving deleted tasks.
-- Use existing `ProjectRepository.lockById` (`PESSIMISTIC_WRITE`) inside each add/remove transaction; acquire before duplicate/cycle check and retain until commit. Task status writes, deletes, restores and board edits use the same project lock. Never rely on unique pair alone to prevent a reverse-link race.
+- Use existing `ProjectRepository.lockById` (`PESSIMISTIC_WRITE`) inside each add/remove transaction; acquire before duplicate/cycle check and retain until commit. Task status writes, deletes, restores and board edits use the same project lock. Task updates that do not request a status change do not acquire it. Never rely on unique pair alone to prevent a reverse-link race.
 - Blocked is not persisted. Repository has native projections for current live links and open blockers, and JPA EXISTS for filtering.
 - PMP-48 can reuse the same stored edge data and live summaries. A project-wide Gantt read model/endpoint, timeline and automatic scheduling are outside PMP-162.
 
@@ -183,4 +183,4 @@ Backend tests in `dependency/DependencyGraphTest` and `dependency/DependencyInte
 
 ## 11. Implementation status
 
-Backend source and tests prepared; standalone graph smoke test available in delivery. Maven wrapper could not download its distribution in the authoring environment, so Spring compilation/integration/regression results are not yet available. Run `bash ./mvnw test` with Docker running. Verify migration order with Ahmed and other Sprint 3 branches; update this status once local checks complete.
+The original backend implementation (six commits through `4b00672`) passed `mvn verify` locally: 972 tests, zero failures, errors or skipped tests, including 14 dependency tests. The reviewer independently confirmed the same result. The follow-up review changes reorganize packages/DTOs, use shared access checks, write task history directly through JPA, and restore conditional project locking for status edits. The HTTP contract is unchanged. The review refactor also passed `mvn verify`: 974 tests, zero failures, errors or skipped tests. Verify migration order with the other Sprint 3 branches. No deployment claimed here.

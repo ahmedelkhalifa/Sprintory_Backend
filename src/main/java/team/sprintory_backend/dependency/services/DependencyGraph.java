@@ -1,6 +1,12 @@
-package team.sprintory_backend.dependency;
+package team.sprintory_backend.dependency.services;
 
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /** Pure directed graph: returns a closed walk for a proposed edge, or an empty list. */
 public final class DependencyGraph {

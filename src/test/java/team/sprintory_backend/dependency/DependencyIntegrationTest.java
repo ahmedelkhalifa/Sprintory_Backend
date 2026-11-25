@@ -1,6 +1,19 @@
 package team.sprintory_backend.dependency;
 
+import team.sprintory_backend.sprint.models.SprintGoalAchieved;
+import team.sprintory_backend.sprint.dto.CompleteSprintRequest;
+import team.sprintory_backend.sprint.dto.MoveSprintTaskRequest;
+import team.sprintory_backend.sprint.dto.SprintRequest;
+import team.sprintory_backend.workspace.exceptions.WorkspaceArchivedException;
+import team.sprintory_backend.sprint.services.SprintService;
+import team.sprintory_backend.dependency.dto.DependencyResponse;
+import team.sprintory_backend.dependency.dto.DependencyTaskSummary;
+import team.sprintory_backend.dependency.dto.DependencyCreateRequest;
+import team.sprintory_backend.dependency.exceptions.DependencyConflict;
+import team.sprintory_backend.dependency.repositories.DependencyRepository;
+import team.sprintory_backend.dependency.services.DependencyService;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.function.Executable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -22,7 +35,6 @@ import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 import team.sprintory_backend.workspace.models.*;
 import team.sprintory_backend.workspace.repositories.*;
-import team.sprintory_backend.dependency.DependencyDtos.CreateRequest;
 import java.util.*;
 import java.util.concurrent.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,7 +45,7 @@ class DependencyIntegrationTest extends AbstractIntegrationTest {
     @Autowired private DependencyRepository links;
     @Autowired private TaskApiService tasks;
     @Autowired private SubtaskService subtasks;
-    @Autowired private team.sprintory_backend.sprint.services.SprintService sprints;
+    @Autowired private SprintService sprints;
     @Autowired private ProjectService projects;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private ProjectMemberRepository projectMembers;
@@ -91,8 +103,8 @@ class DependencyIntegrationTest extends AbstractIntegrationTest {
     private TaskResponse create(User user, Long pid, String title, Long assignee) {
         return tasks.create(user,pid,new CreateTaskRequest(title,null,null,assignee,null,null,null));
     }
-    private DependencyDtos.Edge add(TaskResponse a, TaskResponse b) {
-        return deps.add(pm,b.id(),new CreateRequest(a.id(),b.id()));
+    private DependencyResponse add(TaskResponse a, TaskResponse b) {
+        return deps.add(pm,b.id(),new DependencyCreateRequest(a.id(),b.id()));
     }
     private long notices(TaskResponse task) {
         return jdbc.queryForObject("select count(*) from notifications where task_id=? and type='TASK_UNBLOCKED'",Long.class,task.id());
@@ -100,20 +112,20 @@ class DependencyIntegrationTest extends AbstractIntegrationTest {
     private List<TaskHistoryEntryResponse> history(TaskResponse task) {
         return tasks.history(pm,projectId,task.id(),TaskHistoryOrder.OLDEST,PageRequest.of(0,100)).content();
     }
-    private void assertConflict(ErrorCode code, org.junit.jupiter.api.function.Executable action) {
+    private void assertConflict(ErrorCode code, Executable action) {
         assertEquals(code,assertThrows(DependencyConflict.class,action).code());
     }
 
     @Test void bothDirectionsDuplicatesCyclesAndHistory() {
         var a=create("A"); var b=create("B"); var c=create("C");
         var ab=add(a,b);
-        deps.add(dev,b.id(),new CreateRequest(b.id(),c.id())); // Add blocked task from its blocker.
+        deps.add(dev,b.id(),new DependencyCreateRequest(b.id(),c.id())); // Add blocked task from its blocker.
         assertEquals(ab.id(),deps.get(viewer,a.id()).blocks().get(0).id());
         assertFalse(deps.get(viewer,a.id()).canManage());
         assertTrue(deps.get(dev,a.id()).canManage());
         assertEquals(a.id(),deps.get(viewer,b.id()).blockedBy().get(0).task().id());
-        assertThrows(BadRequestException.class,()->deps.add(pm,a.id(),new CreateRequest(a.id(),a.id())));
-        assertThrows(BadRequestException.class,()->deps.add(pm,c.id(),new CreateRequest(a.id(),b.id())));
+        assertThrows(BadRequestException.class,()->deps.add(pm,a.id(),new DependencyCreateRequest(a.id(),a.id())));
+        assertThrows(BadRequestException.class,()->deps.add(pm,c.id(),new DependencyCreateRequest(a.id(),b.id())));
         assertConflict(ErrorCode.DEPENDENCY_ALREADY_EXISTS,()->add(a,b));
         assertConflict(ErrorCode.DEPENDENCY_CYCLE,()->add(b,a));
         var cycle=assertThrows(DependencyConflict.class,()->add(c,a));
@@ -133,21 +145,21 @@ class DependencyIntegrationTest extends AbstractIntegrationTest {
     @Test void accessInvalidEndpointsAndReadOnlyState() {
         var a=create("A"); var b=create("B"); var c=create("C");
         var ab=add(a,b);
-        assertThrows(AccessDeniedException.class,()->deps.add(viewer,b.id(),new CreateRequest(c.id(),b.id())));
+        assertThrows(AccessDeniedException.class,()->deps.add(viewer,b.id(),new DependencyCreateRequest(c.id(),b.id())));
         assertThrows(AccessDeniedException.class,()->deps.remove(viewer,ab.id()));
         for(User stranger:List.of(outsider,admin)) {
             assertThrows(ResourceNotFoundException.class,()->deps.get(stranger,a.id()));
-            assertThrows(ResourceNotFoundException.class,()->deps.add(stranger,a.id(),new CreateRequest(a.id(),c.id())));
+            assertThrows(ResourceNotFoundException.class,()->deps.add(stranger,a.id(),new DependencyCreateRequest(a.id(),c.id())));
             assertThrows(ResourceNotFoundException.class,()->deps.remove(stranger,ab.id()));
         }
         var other=create(pm,foreignProjectId,"Foreign",null);
-        assertThrows(BadRequestException.class,()->deps.add(pm,a.id(),new CreateRequest(a.id(),other.id())));
+        assertThrows(BadRequestException.class,()->deps.add(pm,a.id(),new DependencyCreateRequest(a.id(),other.id())));
         var child=subtasks.create(pm,projectId,a.id(),new CreateSubtaskRequest("Child",null,null,null));
         assertFalse(deps.get(pm,child.id()).blocked());
         assertFalse(deps.get(pm,child.id()).canManage());
-        assertThrows(BadRequestException.class,()->deps.add(pm,a.id(),new CreateRequest(a.id(),child.id())));
+        assertThrows(BadRequestException.class,()->deps.add(pm,a.id(),new DependencyCreateRequest(a.id(),child.id())));
         tasks.delete(pm,projectId,c.id());
-        assertThrows(BadRequestException.class,()->deps.add(pm,a.id(),new CreateRequest(a.id(),c.id())));
+        assertThrows(BadRequestException.class,()->deps.add(pm,a.id(),new DependencyCreateRequest(a.id(),c.id())));
         for (String state:List.of("COMPLETED","ARCHIVED")) {
             jdbc.update("update projects set lifecycle_status=? where id=?",state,projectId);
             assertTrue(deps.get(viewer,b.id()).blocked());
@@ -158,7 +170,7 @@ class DependencyIntegrationTest extends AbstractIntegrationTest {
         jdbc.update("update workspaces set archived_at=now() where id=?",workspaceId);
         assertTrue(deps.get(viewer,b.id()).blocked());
         assertFalse(deps.get(pm,b.id()).canManage());
-        assertThrows(team.sprintory_backend.workspace.exceptions.WorkspaceArchivedException.class,()->deps.remove(pm,ab.id()));
+        assertThrows(WorkspaceArchivedException.class,()->deps.remove(pm,ab.id()));
     }
 
     @Test void blockedFieldsFilterConfirmationAndLastBlockerNotification() {
@@ -177,7 +189,7 @@ class DependencyIntegrationTest extends AbstractIntegrationTest {
         assertConflict(ErrorCode.BLOCKED_TASK_CONFIRMATION_REQUIRED,()->tasks.update(dev,projectId,target.id(),
                 new UpdateTaskRequest(null,null,null,done,null,null,null,null,false,false,false,false,false)));
         tasks.moveOnBoard(pm,projectId,a.id(),new MoveTaskRequest(done,null));
-        assertEquals(List.of(b.id()),tasks.get(pm,projectId,target.id()).openBlockers().stream().map(DependencyDtos.TaskSummary::id).toList());
+        assertEquals(List.of(b.id()),tasks.get(pm,projectId,target.id()).openBlockers().stream().map(DependencyTaskSummary::id).toList());
         assertEquals(0,notices(target));
         boards.update(pm,projectId,done,new UpdateBoardColumnRequest("Shipped",null,null,null));
         assertTrue(tasks.get(pm,projectId,target.id()).blocked());
@@ -194,14 +206,20 @@ class DependencyIntegrationTest extends AbstractIntegrationTest {
         var ab=add(a,b); add(b,c);
         tasks.delete(pm,projectId,b.id());
         assertFalse(deps.get(pm,c.id()).blocked()); assertEquals(1,notices(c));
-        assertConflict(ErrorCode.DEPENDENCY_CYCLE,()->add(c,a));
+        var retainedCycle = assertThrows(DependencyConflict.class, () -> add(c, a));
+        assertEquals(ErrorCode.DEPENDENCY_CYCLE, retainedCycle.code());
+        assertEquals(List.of(c.key(), a.key(), b.key(), c.key()), retainedCycle.cyclePath());
+        assertTrue(deps.get(pm, a.id()).blocks().isEmpty()); // hidden until B is restored
         tasks.restore(pm,projectId,b.id());
         assertTrue(deps.get(pm,c.id()).blocked()); assertTrue(deps.get(pm,b.id()).blocked());
         tasks.delete(pm,projectId,a.id());
         deps.remove(pm,ab.id()); // Known link ID is removable even while its blocker is hidden.
         tasks.restore(pm,projectId,a.id());
         assertFalse(deps.get(pm,b.id()).blocked());
-        assertTrue(history(a).stream().anyMatch(h->h.type()==TaskHistoryType.DEPENDENCY_REMOVED));
+        assertTrue(history(a).stream().anyMatch(h -> h.type() == TaskHistoryType.DEPENDENCY_REMOVED
+                && h.refId().equals(b.id()) && h.oldValue().equals("Blocks " + b.key())));
+        assertTrue(history(b).stream().anyMatch(h -> h.type() == TaskHistoryType.DEPENDENCY_REMOVED
+                && h.refId().equals(a.id()) && h.oldValue().equals("Blocked by " + a.key())));
         var bc=deps.get(pm,c.id()).blockedBy().get(0);
         deps.remove(pm,bc.id());
         assertFalse(deps.get(pm,c.id()).blocked()); assertEquals(2,notices(c));
@@ -222,14 +240,14 @@ class DependencyIntegrationTest extends AbstractIntegrationTest {
         tx.executeWithoutResult(status -> projectMembers.findWithRolesByProjectIdAndUserId(projectId,dev.getId())
                 .orElseThrow().getRoles().add(ProjectRole.SCRUM_MASTER));
         var a=create("Blocker in backlog"); var b=create("Dependent in sprint"); var edge=add(a,b);
-        var sprint=sprints.create(dev,projectId,new team.sprintory_backend.sprint.dto.SprintRequest(
+        var sprint=sprints.create(dev,projectId,new SprintRequest(
                 "Dependency sprint","Test carry over",null,null,null));
-        sprints.move(dev,projectId,new team.sprintory_backend.sprint.dto.MoveSprintTaskRequest(b.id(),sprint.id(),null));
+        sprints.move(dev,projectId,new MoveSprintTaskRequest(b.id(),sprint.id(),null));
         sprints.start(dev,sprint.id(),null);
         assertEquals(sprint.id(),tasks.get(pm,projectId,b.id()).sprintId());
         assertTrue(tasks.get(pm,projectId,b.id()).blocked());
-        sprints.complete(dev,sprint.id(),new team.sprintory_backend.sprint.dto.CompleteSprintRequest(null,false,
-                team.sprintory_backend.sprint.models.SprintGoalAchieved.NO,null,true));
+        sprints.complete(dev,sprint.id(),new CompleteSprintRequest(null,false,
+                SprintGoalAchieved.NO,null,true));
         assertNull(tasks.get(pm,projectId,b.id()).sprintId());
         assertEquals(edge.id(),deps.get(pm,b.id()).blockedBy().get(0).id());
         assertTrue(tasks.get(pm,projectId,b.id()).blocked());
@@ -266,7 +284,7 @@ class DependencyIntegrationTest extends AbstractIntegrationTest {
     }
     private boolean attemptReverse(User actor,TaskResponse a,TaskResponse b,CountDownLatch ready,CountDownLatch go) throws Exception {
         ready.countDown(); if(!go.await(5,TimeUnit.SECONDS)) throw new IllegalStateException("start gate timed out");
-        try { deps.add(actor,a.id(),new CreateRequest(a.id(),b.id())); return true; }
+        try { deps.add(actor,a.id(),new DependencyCreateRequest(a.id(),b.id())); return true; }
         catch(DependencyConflict e) { assertEquals(ErrorCode.DEPENDENCY_CYCLE,e.code()); return false; }
     }
 }

@@ -1,4 +1,5 @@
 package team.sprintory_backend.dependency;
+import team.sprintory_backend.dependency.services.DependencyGraph;
 import org.junit.jupiter.api.Test;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;

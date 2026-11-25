@@ -1,5 +1,6 @@
 package team.sprintory_backend.task.dto;
 
+import team.sprintory_backend.dependency.dto.DependencyTaskSummary;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.models.TaskPriority;
 import team.sprintory_backend.task.models.TaskType;
@@ -34,7 +35,7 @@ public record TaskResponse(
         /** "Carried over ×N" (PMP-41): ended sprints this task left unfinished; 0 for subtasks. */
         int carriedOverCount,
         boolean blocked,
-        List<team.sprintory_backend.dependency.DependencyDtos.TaskSummary> openBlockers
+        List<DependencyTaskSummary> openBlockers
 ) {
     public TaskResponse(Long id, Long projectId, String key, String title, TaskType type,
                         TaskPriority priority, Long statusId, String statusName, Long assigneeId,
@@ -66,7 +67,7 @@ public record TaskResponse(
                 parentTaskId, estimateMinutes, subtaskTotal, subtaskDone, carriedOverCount, blocked, openBlockers);
     }
 
-    public TaskResponse withBlockers(List<team.sprintory_backend.dependency.DependencyDtos.TaskSummary> blockers) {
+    public TaskResponse withBlockers(List<DependencyTaskSummary> blockers) {
         return new TaskResponse(id, projectId, key, title, type, priority, statusId, statusName,
             assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt,
             wipWarning, parentTaskId, estimateMinutes, subtaskTotal, subtaskDone, carriedOverCount,

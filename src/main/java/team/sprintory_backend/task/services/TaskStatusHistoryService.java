@@ -128,30 +128,27 @@ public class TaskStatusHistoryService {
         save(task, TaskHistoryType.ATTACHMENT_REMOVED, null, attachment.getFileName(), null, attachment.getId(), actor);
     }
 
-    /** Dependency events are synchronous, inside the graph mutation transaction. */
-    @org.springframework.context.event.EventListener
+    /** A dependency was created: append one directional entry to each live task. */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void on(team.sprintory_backend.dependency.DependencyAdded event) {
-        dependencyHistory(event.blockerId(), event.blockerKey(), event.blockedId(), event.blockedKey(), true, event.actor());
+    public void recordDependencyAdded(Task blocker, Task blocked, User actor) {
+        save(blocker, TaskHistoryType.DEPENDENCY_ADDED, null, null,
+                "Blocks " + blocked.getKey(), blocked.getId(), actor);
+        save(blocked, TaskHistoryType.DEPENDENCY_ADDED, null, null,
+                "Blocked by " + blocker.getKey(), blocker.getId(), actor);
     }
 
-    @org.springframework.context.event.EventListener
+    /**
+     * A retained dependency was removed. The caller resolved both keys within the authorized
+     * project, including deleted rows. Use ID-only JPA references for the history foreign keys:
+     * the Task SQLRestriction hides tombstones from reads, so never dereference these references.
+     */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void on(team.sprintory_backend.dependency.DependencyRemoved event) {
-        dependencyHistory(event.blockerId(), event.blockerKey(), event.blockedId(), event.blockedKey(), false, event.actor());
-    }
-
-    private void dependencyHistory(Long blockerId, String blockerKey, Long blockedId, String blockedKey,
-                                   boolean added, User actor) {
-        String type = (added ? TaskHistoryType.DEPENDENCY_ADDED : TaskHistoryType.DEPENDENCY_REMOVED).name();
-        Instant time = Instant.now();
-        String outgoing = "Blocks " + blockedKey;
-        String incoming = "Blocked by " + blockerKey;
-        // Write by ID so a retained link can be removed even when Task's SQLRestriction hides an endpoint.
-        historyRepository.appendDependency(blockerId, type, added ? null : outgoing,
-                added ? outgoing : null, blockedId, actor.getId(), AuditTarget.displayName(actor), time);
-        historyRepository.appendDependency(blockedId, type, added ? null : incoming,
-                added ? incoming : null, blockerId, actor.getId(), AuditTarget.displayName(actor), time);
+    public void recordDependencyRemoved(Long blockerId, String blockerKey, Long blockedId,
+                                        String blockedKey, User actor) {
+        save(taskRepository.getReferenceById(blockerId), TaskHistoryType.DEPENDENCY_REMOVED,
+                null, "Blocks " + blockedKey, null, blockedId, actor);
+        save(taskRepository.getReferenceById(blockedId), TaskHistoryType.DEPENDENCY_REMOVED,
+                null, "Blocked by " + blockerKey, null, blockerId, actor);
     }
 
     /** A sprint membership change; null from/to means product backlog. */

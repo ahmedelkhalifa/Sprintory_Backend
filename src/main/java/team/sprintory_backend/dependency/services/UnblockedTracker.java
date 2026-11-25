@@ -1,13 +1,16 @@
-package team.sprintory_backend.dependency;
+package team.sprintory_backend.dependency.services;
 
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import team.sprintory_backend.dependency.repositories.DependencyRepository;
 import team.sprintory_backend.notification.events.TaskUnblocked;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.user.models.User;
-import java.util.*;
+
+import java.util.HashSet;
+import java.util.Set;
 
 /** Called within a project-locked write transaction; compare only real state transitions. */
 @Service

@@ -1,5 +1,7 @@
 package team.sprintory_backend.task.services;
 
+import team.sprintory_backend.dependency.services.UnblockedTracker;
+import team.sprintory_backend.dependency.services.BlockedStateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
@@ -78,8 +80,8 @@ public class TaskApiService {
     private final ApplicationEventPublisher events;
     private final TaskContent content;
     private final SprintScopeHistoryWriter sprintHistory;
-    private final team.sprintory_backend.dependency.BlockedStateService blockedState;
-    private final team.sprintory_backend.dependency.UnblockedTracker unblocked;
+    private final BlockedStateService blockedState;
+    private final UnblockedTracker unblocked;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -158,8 +160,10 @@ public class TaskApiService {
     @Transactional
     public TaskResponse update(User user, Long projectId, Long taskId, UpdateTaskRequest request) {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
-        // Board configuration and moves lock the project; do the same before loading status.
-        projectRepository.lockById(projectId);
+        // Only status edits need the board/project lock, before loading the task.
+        if (request.statusId() != null) {
+            projectRepository.lockById(projectId);
+        }
         Task task = requireTask(projectId, taskId);
         if (task.getParent() != null) {
             throw new BadRequestException("Use the subtask endpoint to edit a subtask.");

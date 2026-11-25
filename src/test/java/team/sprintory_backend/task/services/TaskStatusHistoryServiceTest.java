@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -242,6 +243,34 @@ class TaskStatusHistoryServiceTest {
         assertEquals("login-flow.webp", removed.getOldValue());
         assertNull(removed.getNewValue());
         assertEquals(91L, removed.getRefId());
+    }
+
+    @Test
+    void dependencyHistoryUsesTheNormalWriterForBothDirections() {
+        Task other = Task.builder().id(6L).key("MOB-6").build();
+        when(taskRepository.getReferenceById(5L)).thenReturn(task);
+        when(taskRepository.getReferenceById(6L)).thenReturn(other);
+
+        service.recordDependencyAdded(task, other, user);
+        service.recordDependencyRemoved(5L, "MOB-5", 6L, "MOB-6", user);
+
+        ArgumentCaptor<TaskHistoryEntry> entries = ArgumentCaptor.forClass(TaskHistoryEntry.class);
+        verify(historyRepository, times(4)).save(entries.capture());
+        List<TaskHistoryEntry> rows = entries.getAllValues();
+        assertEquals(List.of(TaskHistoryType.DEPENDENCY_ADDED, TaskHistoryType.DEPENDENCY_ADDED,
+                TaskHistoryType.DEPENDENCY_REMOVED, TaskHistoryType.DEPENDENCY_REMOVED),
+                rows.stream().map(TaskHistoryEntry::getType).toList());
+        assertEquals(List.of(task, other, task, other), rows.stream().map(TaskHistoryEntry::getTask).toList());
+        assertEquals(List.of(6L, 5L, 6L, 5L), rows.stream().map(TaskHistoryEntry::getRefId).toList());
+        assertEquals("Blocks MOB-6", rows.get(0).getNewValue());
+        assertEquals("Blocked by MOB-5", rows.get(1).getNewValue());
+        assertEquals("Blocks MOB-6", rows.get(2).getOldValue());
+        assertEquals("Blocked by MOB-5", rows.get(3).getOldValue());
+        rows.forEach(row -> {
+            assertNull(row.getField());
+            assertEquals(42L, row.getActorId());
+        });
+        verifyNoInteractions(events);
     }
 
     @Test

@@ -1,20 +1,38 @@
-package team.sprintory_backend.dependency;
+package team.sprintory_backend.dependency.services;
 
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import team.sprintory_backend.dependency.DependencyDtos.*;
-import team.sprintory_backend.exceptionHandler.*;
-import team.sprintory_backend.project.models.*;
+import team.sprintory_backend.dependency.dto.DependencyCreateRequest;
+import team.sprintory_backend.dependency.dto.DependencyLinkResponse;
+import team.sprintory_backend.dependency.dto.DependencyResponse;
+import team.sprintory_backend.dependency.dto.DependencyTaskSummary;
+import team.sprintory_backend.dependency.dto.TaskDependenciesResponse;
+import team.sprintory_backend.dependency.exceptions.DependencyConflict;
+import team.sprintory_backend.dependency.models.TaskDependency;
+import team.sprintory_backend.dependency.repositories.DependencyRepository;
+import team.sprintory_backend.exceptionHandler.BadRequestException;
+import team.sprintory_backend.exceptionHandler.ErrorCode;
+import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.project.models.BoardColumnCategory;
+import team.sprintory_backend.project.models.ProjectLifecycleState;
+import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.repositories.ProjectRepository;
-import team.sprintory_backend.project.services.*;
+import team.sprintory_backend.project.services.ProjectAccess;
+import team.sprintory_backend.project.services.ProjectAccessResult;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
+import team.sprintory_backend.task.services.TaskStatusHistoryService;
 import team.sprintory_backend.user.models.User;
-import team.sprintory_backend.workspace.services.WorkspaceAccess;
-import jakarta.persistence.EntityManager;
-import java.util.*;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -23,32 +41,32 @@ public class DependencyService {
     private final TaskRepository tasks;
     private final ProjectRepository projects;
     private final ProjectAccess access;
-    private final org.springframework.context.ApplicationEventPublisher events;
+    private final TaskStatusHistoryService history;
     private final EntityManager entityManager;
     private final UnblockedTracker unblocked;
 
     @Transactional(readOnly = true)
-    public Response get(User user, Long taskId) {
+    public TaskDependenciesResponse get(User user, Long taskId) {
         Task task = tasks.findById(taskId).orElseThrow(DependencyService::missingTask);
         ProjectAccessResult viewer = membership(user, task.getProject().getId());
         boolean canManage = task.getParent() == null && viewer.can(ProjectPermission.DEPENDENCY_MANAGE)
                 && viewer.project().getLifecycleStatus() == ProjectLifecycleState.ACTIVE
                 && !viewer.workspaceMember().getWorkspace().isArchived();
-        List<Link> incoming = new ArrayList<>(), outgoing = new ArrayList<>();
+        List<DependencyLinkResponse> incoming = new ArrayList<>(), outgoing = new ArrayList<>();
         for (Object[] row : dependencies.liveLinks(task.getProject().getId(), taskId)) {
             Long id = ((Number) row[0]).longValue();
-            TaskSummary blocker = TaskSummary.fromRow(row, 1), blocked = TaskSummary.fromRow(row, 6);
-            if (blocked.id().equals(taskId)) incoming.add(new Link(id, blocker));
-            else outgoing.add(new Link(id, blocked));
+            DependencyTaskSummary blocker = DependencyTaskSummary.fromRow(row, 1), blocked = DependencyTaskSummary.fromRow(row, 6);
+            if (blocked.id().equals(taskId)) incoming.add(new DependencyLinkResponse(id, blocker));
+            else outgoing.add(new DependencyLinkResponse(id, blocked));
         }
-        Comparator<Link> byKey = Comparator.comparing((Link l) -> l.task().key()).thenComparing(l -> l.task().id());
+        Comparator<DependencyLinkResponse> byKey = Comparator.comparing((DependencyLinkResponse l) -> l.task().key()).thenComparing(l -> l.task().id());
         incoming.sort(byKey); outgoing.sort(byKey);
-        List<TaskSummary> open = incoming.stream().map(Link::task).filter(t -> t.statusCategory()!=BoardColumnCategory.DONE).toList();
-        return new Response(!open.isEmpty(), List.copyOf(incoming), List.copyOf(outgoing), open, canManage);
+        List<DependencyTaskSummary> open = incoming.stream().map(DependencyLinkResponse::task).filter(t -> t.statusCategory()!=BoardColumnCategory.DONE).toList();
+        return new TaskDependenciesResponse(!open.isEmpty(), List.copyOf(incoming), List.copyOf(outgoing), open, canManage);
     }
 
     @Transactional
-    public Edge add(User user, Long taskId, CreateRequest request) {
+    public DependencyResponse add(User user, Long taskId, DependencyCreateRequest request) {
         Task anchor = visibleTask(user, taskId);
         Long projectId = anchor.getProject().getId();
         lockWritable(user, projectId);
@@ -76,8 +94,8 @@ public class DependencyService {
             throw new DependencyConflict(ErrorCode.DEPENDENCY_CYCLE, "This would create a cycle: " + String.join(" -> ", cycle) + ".", cycle, null);
         }
         TaskDependency link = dependencies.saveAndFlush(new TaskDependency(projectId,a,b,user.getId()));
-        events.publishEvent(new DependencyAdded(a, blocker.getKey(), b, blocked.getKey(), user));
-        return new Edge(link.getId(),TaskSummary.from(blocker),TaskSummary.from(blocked));
+        history.recordDependencyAdded(blocker, blocked, user);
+        return new DependencyResponse(link.getId(),DependencyTaskSummary.from(blocker),DependencyTaskSummary.from(blocked));
     }
 
     @Transactional
@@ -98,8 +116,8 @@ public class DependencyService {
             keys.put(((Number) row[0]).longValue(), (String) row[1]);
         var before = unblocked.before(projectId);
         dependencies.delete(link);
-        events.publishEvent(new DependencyRemoved(link.getBlockerId(), keys.get(link.getBlockerId()),
-                link.getBlockedId(), keys.get(link.getBlockedId()), user));
+        history.recordDependencyRemoved(link.getBlockerId(), keys.get(link.getBlockerId()),
+                link.getBlockedId(), keys.get(link.getBlockedId()), user);
         unblocked.after(projectId,before,user);
     }
 
@@ -109,22 +127,40 @@ public class DependencyService {
         return task;
     }
     private ProjectAccessResult membership(User user, Long projectId) {
-        ProjectAccessResult result;
-        try { result = access.requireVisible(projectId,user); }
-        catch (ResourceNotFoundException ignored) { throw missingTask(); }
-        if (result.projectMember()==null || !result.can(ProjectPermission.VIEW_WORK)) throw missingTask();
-        return result;
+        return requireMemberAccess(user, projectId, ProjectPermission.VIEW_WORK, false);
     }
+
+    /** PMP-45 requires 404 for every non-project-member, including a workspace admin. */
+    private ProjectAccessResult requireMemberAccess(User user, Long projectId,
+                                                    ProjectPermission permission, boolean write) {
+        try {
+            ProjectAccessResult result = write ? access.requireActive(projectId, user, permission)
+                    : access.require(projectId, user, permission);
+            if (result.projectMember() == null) throw missingTask();
+            return result;
+        } catch (ResourceNotFoundException ignored) {
+            throw missingTask();
+        } catch (AccessDeniedException denied) {
+            // The shared access helper deliberately returns 403 for a visible workspace admin.
+            // For dependencies, mask that one case; project members still get 403 as usual.
+            ProjectAccessResult visible;
+            try { visible = access.requireVisible(projectId, user); }
+            catch (ResourceNotFoundException ignored) { throw missingTask(); }
+            if (visible.projectMember() == null) throw missingTask();
+            throw denied;
+        }
+    }
+
     private void lockWritable(User user, Long projectId) {
-        writable(user,projectId);
+        writable(user, projectId);
         projects.lockById(projectId).orElseThrow(DependencyService::missingTask);
     }
+
     private void writable(User user, Long projectId) {
-        ProjectAccessResult result = membership(user,projectId);
-        if (!result.can(ProjectPermission.DEPENDENCY_MANAGE)) throw new AccessDeniedException("Dependency management permission required.");
-        WorkspaceAccess.requireNotArchived(result.workspaceMember());
-        if (result.project().getLifecycleStatus()!=ProjectLifecycleState.ACTIVE)
-            throw conflict(ErrorCode.CONFLICT,"Dependencies are read-only when the project is completed or archived.");
+        ProjectAccessResult result = requireMemberAccess(user, projectId, ProjectPermission.DEPENDENCY_MANAGE, true);
+        // ProjectAccess.requireActive on this base checks workspace archive, not project lifecycle.
+        if (result.project().getLifecycleStatus() != ProjectLifecycleState.ACTIVE)
+            throw conflict(ErrorCode.CONFLICT, "Dependencies are read-only when the project is completed or archived.");
     }
     private Task endpoint(Long projectId, Long id) {
         Task task = tasks.findByIdAndProjectId(id,projectId).orElseThrow(() -> new BadRequestException("Both tasks must be live tasks in this project."));

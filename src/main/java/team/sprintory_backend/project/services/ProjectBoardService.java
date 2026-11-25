@@ -1,5 +1,6 @@
 package team.sprintory_backend.project.services;
 
+import team.sprintory_backend.dependency.services.UnblockedTracker;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -41,7 +42,7 @@ public class ProjectBoardService {
     private final TaskRepository taskRepository;
     private final TaskStatusHistoryService history;
     private final SprintRepository sprintRepository;
-    private final team.sprintory_backend.dependency.UnblockedTracker unblocked;
+    private final UnblockedTracker unblocked;
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void initialize(Project project) {

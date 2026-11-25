@@ -1,5 +1,7 @@
 package team.sprintory_backend.task.repositories;
 
+import team.sprintory_backend.project.models.BoardColumnCategory;
+import team.sprintory_backend.dependency.models.TaskDependency;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
@@ -51,14 +53,14 @@ public final class TaskSpecifications {
             }
             if (Boolean.TRUE.equals(filters.blockedOnly())) {
                 Subquery<Integer> open = query.subquery(Integer.class);
-                Root<team.sprintory_backend.dependency.TaskDependency> link = open.from(team.sprintory_backend.dependency.TaskDependency.class);
+                Root<TaskDependency> link = open.from(TaskDependency.class);
                 Root<Task> blocker = open.from(Task.class);
                 open.select(cb.literal(1)).where(
                     cb.equal(link.get("blockedId"), root.get("id")),
                     cb.equal(link.get("projectId"), projectId),
                     cb.equal(link.get("blockerId"), blocker.get("id")),
                     cb.isNull(blocker.get("deletedAt")),
-                    cb.notEqual(blocker.get("status").get("category"), team.sprintory_backend.project.models.BoardColumnCategory.DONE));
+                    cb.notEqual(blocker.get("status").get("category"), BoardColumnCategory.DONE));
                 predicates.add(cb.exists(open));
             }
             if (filters.label() != null) {

@@ -1,5 +1,6 @@
 package team.sprintory_backend.notification.services;
 
+import team.sprintory_backend.notification.events.TaskUnblocked;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -78,7 +79,7 @@ public class NotificationListener {
     }
 
     @EventListener
-    public void on(team.sprintory_backend.notification.events.TaskUnblocked event) {
+    public void on(TaskUnblocked event) {
         var assignee = event.task().getAssignee();
         if (assignee == null) return;
         // PMP-45 requires telling the assignee even if they completed the blocker themselves.
