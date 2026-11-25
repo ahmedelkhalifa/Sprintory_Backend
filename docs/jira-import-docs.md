@@ -6,9 +6,11 @@ One-time import of **current Jira Cloud issue state** into a Sprintory Scrum pro
 
 The importer is **disabled by default**. It may be enabled temporarily for an approved migration window by setting `SPRINTORY_JIRA_IMPORT_ENABLED=true` on the backend and building the frontend with `VITE_ENABLE_JIRA_IMPORT=true`. The server independently enforces authorization and the backend flag; hiding the UI is not a security boundary. Both flags default to false. Rebuild/redeploy the frontend when changing its build-time flag. Disable the backend flag again after migration. No live Jira API tokens are required.
 
-**No automatic source fetch:** the browser uploads a Jira Cloud **CSV (all fields)** plus sprint metadata JSON exported from `/rest/agile/1.0/board/{boardId}/sprint?maxResults=50`. Jira board configuration is *not required* for the PMP pilot: accepted statuses are `To Do`, `In Progress`, `In Review`, `Done`, with In Review added before Done if missing.
+**No automatic source fetch:** the browser uploads a Jira Cloud **CSV (all fields)** and optionally sprint metadata JSON exported from `/rest/agile/1.0/board/{boardId}/sprint?maxResults=50`. Jira board configuration is *not required* for the PMP pilot: accepted statuses are `To Do`, `In Progress`, `In Review`, `Done`, with In Review added before Done if missing.
 
 **Required migration sequence:** use the normal Sprintory UI to create a fresh, empty **Scrum** project (for example, a new production project key). Open **Project → Settings → Import from Jira**, upload files, preview, map assignees to members of the target project (optional), type `IMPORT`, then import.
+
+If `sprints` is omitted, no sprints are created and all imported top-level work items go to the backlog; their statuses and subtask relationships are preserved. Sprint assignments cannot be added later by re-importing into the migrated project. If a file is supplied, invalid JSON, known incomplete pages (`isLast: false`, nonzero `startAt`, or `total` different from `values.length`), and missing referenced sprint names are rejected. Legacy `values`-only exports remain supported; their pagination completeness cannot be proven. To recover, supply a complete export or remove the optional file and migrate without sprints.
 
 ## Endpoints
 
@@ -21,7 +23,7 @@ All endpoints require authenticated access, active workspace, **active Scrum pro
 | Part | Required | Meaning |
 |---|---|---|
 | `csv` | Yes | Jira Cloud CSV (all fields), max 10 MB, UTF-8, RFC-4180 quoting |
-| `sprints` | When CSV has sprint assignments | Jira Agile `board/{id}/sprint` JSON, max 1 MB |
+| `sprints` | No | Jira Agile `board/{id}/sprint` JSON, max 1 MB |
 
 Does **not write to the database**. Response includes `sourceIssues`, `epicsSkipped`, `orphanSubtasksSkipped`, `alreadyImported`, `newTopLevelItems`, `newSubtasks`, `newSprints`, `assignees: [{ jiraAccountId, displayName, issueCount }]`, `warnings`, `blockers`, and `ready`.
 

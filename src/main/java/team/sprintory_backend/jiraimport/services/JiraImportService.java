@@ -73,7 +73,7 @@ public class JiraImportService {
         Project project = permitted(actor, projectId);
         JiraCsvReader.Parsed parsed = csvReader.parse(csv);
         List<SourceSprint> sourceSprints = parseSprints(sprintJson);
-        return inspect(project, parsed, sourceSprints);
+        return inspect(project, parsed, sourceSprints, sprintJson != null);
     }
 
     @Transactional(readOnly = true)
@@ -100,7 +100,7 @@ public class JiraImportService {
         }
         JiraCsvReader.Parsed parsed = csvReader.parse(csv);
         List<SourceSprint> metadata = parseSprints(sprintJson);
-        JiraImportPreview preview = inspect(project, parsed, metadata);
+        JiraImportPreview preview = inspect(project, parsed, metadata, sprintJson != null);
         if (!preview.ready()) throw new BadRequestException("Import blocked: " + String.join("; ", preview.blockers()));
         Map<String, User> assignedUsers = mapUsers(projectId, mappingJson);
 
@@ -212,7 +212,8 @@ public class JiraImportService {
         return project;
     }
 
-    private JiraImportPreview inspect(Project project, JiraCsvReader.Parsed parsed, List<SourceSprint> sourceSprints) {
+    private JiraImportPreview inspect(Project project, JiraCsvReader.Parsed parsed, List<SourceSprint> sourceSprints,
+                                      boolean sprintMetadataProvided) {
         List<String> warnings = new ArrayList<>();
         List<String> blockers = new ArrayList<>();
         Map<String, JiraCsvReader.Issue> byId = new HashMap<>();
@@ -294,9 +295,15 @@ public class JiraImportService {
         } else if (top + subtasks > 0) {
             blockers.add("This project has already been migrated. New Jira issues are not appended; use a fresh destination project.");
         }
-        for (String name : neededSprints) {
-            if (sourceSprints.stream().noneMatch(s -> s.name().equals(name))) {
-                blockers.add("Missing sprint metadata for " + name + ". Upload the Jira sprints JSON.");
+        if (!sprintMetadataProvided) {
+            if (!neededSprints.isEmpty()) {
+                warnings.add("No sprint information provided. Work items will be imported into the backlog without their original sprints.");
+            }
+        } else {
+            for (String name : neededSprints) {
+                if (sourceSprints.stream().noneMatch(s -> s.name().equals(name))) {
+                    blockers.add("Missing sprint metadata for " + name + ". Export all sprints or remove the JSON file to import into the backlog instead.");
+                }
             }
         }
         if (sourceSprints.stream().filter(s -> s.status() == SprintStatus.ACTIVE).count() > 1) {
@@ -454,12 +461,15 @@ public class JiraImportService {
     }
 
     private List<SourceSprint> parseSprints(byte[] jsonBytes) {
-        if (jsonBytes == null || jsonBytes.length == 0) return List.of();
+        if (jsonBytes == null) return List.of();
+        if (jsonBytes.length == 0) throw new BadRequestException("Sprint JSON is empty. Choose a valid file or remove it to import without sprints.");
         if (jsonBytes.length > MAX_SPRINT_JSON_BYTES) throw new BadRequestException("Sprint JSON is too large.");
         try {
             JsonNode root = mapper.readTree(jsonBytes);
+            if (root == null || !root.isObject()) throw new BadRequestException("Sprint JSON must be a Jira export object.");
             JsonNode values = root.get("values");
             if (values == null || !values.isArray()) throw new BadRequestException("Sprint JSON must contain a values array.");
+            validateSprintPage(root, values.size());
             List<SourceSprint> result = new ArrayList<>();
             Set<Long> seenIds = new HashSet<>();
             Set<String> seenNames = new HashSet<>();
@@ -497,6 +507,22 @@ public class JiraImportService {
             return List.copyOf(result);
         } catch (JacksonException | NullPointerException | java.time.format.DateTimeParseException e) {
             throw new BadRequestException("Invalid Jira sprint JSON: " + e.getMessage());
+        }
+    }
+
+    /** Accept legacy values-only exports, but never silently import a known partial page. */
+    private static void validateSprintPage(JsonNode root, int count) {
+        JsonNode last = root.get("isLast");
+        JsonNode start = root.get("startAt");
+        JsonNode total = root.get("total");
+        if ((last != null && !last.isBoolean())
+                || (start != null && (!start.isIntegralNumber() || !start.canConvertToLong() || start.asLong() < 0))
+                || (total != null && (!total.isIntegralNumber() || !total.canConvertToLong() || total.asLong() < 0))) {
+            throw new BadRequestException("Invalid sprint export pagination metadata.");
+        }
+        if ((last != null && !last.asBoolean()) || (start != null && start.asLong() != 0)
+                || (total != null && total.asLong() != count)) {
+            throw new BadRequestException("The sprint export is incomplete. Contact support for a complete sprint export, or remove the JSON file to import work items into the backlog instead.");
         }
     }
 

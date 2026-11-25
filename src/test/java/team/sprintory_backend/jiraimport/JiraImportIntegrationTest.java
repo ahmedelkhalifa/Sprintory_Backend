@@ -135,12 +135,80 @@ class JiraImportIntegrationTest extends AbstractIntegrationTest {
         assertEquals(3, issueLinks.findByProjectId(projectId).size());
     }
 
-    @Test void missingSprintMetadataAndInvalidUserMappingsAbortWithoutWrites() {
+    @Test void csvOnlyImportPreservesHierarchyAndStatusButCreatesNoSprints() {
         var preview = importer.preview(pm, projectId, csv(), null);
-        assertFalse(preview.ready());
-        assertTrue(preview.blockers().stream().anyMatch(s -> s.contains("Missing sprint metadata")));
-        assertThrows(BadRequestException.class,
-                () -> importer.execute(pm, projectId, csv(), null, "", "IMPORT"));
+        assertTrue(preview.ready(), preview.blockers().toString());
+        assertEquals(0, preview.newSprints());
+        assertEquals(2, preview.newTopLevelItems());
+        assertEquals(1, preview.newSubtasks());
+        assertTrue(preview.warnings().stream().anyMatch(s -> s.contains("backlog")));
+        assertEquals(0, tasks.count());
+        var result = importer.execute(pm, projectId, csv(), null, "", "IMPORT");
+        assertEquals(2, result.createdTopLevel());
+        assertEquals(1, result.createdSubtasks());
+        assertEquals(0, result.createdSprints());
+        assertEquals(1, result.commentsImported());
+        assertTrue(sprints.findByProjectIdOrderByNumberAsc(projectId).isEmpty());
+        assertTrue(sprintLinks.findByProjectId(projectId).isEmpty());
+        var links = issueLinks.findByProjectId(projectId);
+        assertEquals(3, links.size());
+        assertTrue(links.stream().allMatch(l -> l.getTask().getSprint() == null
+                && l.getTask().getSprintPosition() == null));
+        Task parent = links.stream().filter(l -> l.getJiraKey().equals("PMP-11")).findFirst().orElseThrow().getTask();
+        Task child = links.stream().filter(l -> l.getJiraKey().equals("PMP-12")).findFirst().orElseThrow().getTask();
+        assertEquals(parent.getId(), child.getParent().getId());
+        assertEquals("Done", parent.getStatus().getName());
+        var repeat = importer.execute(pm, projectId, csv(), null, "", "IMPORT");
+        assertEquals(0, repeat.createdTopLevel());
+        assertEquals(0, repeat.createdSubtasks());
+        assertEquals(0, repeat.createdSprints());
+        assertEquals(3, repeat.skippedExisting());
+        assertFalse(importer.preview(pm, projectId, csv(), sprintJson()).ready(),
+                "One-time migration cannot be augmented with sprints later");
+    }
+
+    @Test void suppliedIncompleteOrInvalidSprintJsonIsNeverSilentlyIgnored() {
+        for (String json : List.of(
+                "{\"isLast\":false,\"values\":[]}",
+                "{\"startAt\":50,\"isLast\":true,\"values\":[]}",
+                "{\"total\":4,\"values\":[]}",
+                "{\"isLast\":\"true\",\"values\":[]}",
+                "{\"startAt\":-1,\"values\":[]}",
+                "", "not JSON", "null")) {
+            byte[] invalid = json.getBytes(StandardCharsets.UTF_8);
+            assertThrows(BadRequestException.class, () -> importer.preview(pm, projectId, csv(), invalid));
+            assertThrows(BadRequestException.class, () -> importer.execute(pm, projectId, csv(), invalid, "", "IMPORT"));
+        }
+        var missingNames = importer.preview(pm, projectId, csv(),
+                "{\"isLast\":true,\"startAt\":0,\"total\":0,\"values\":[]}".getBytes(StandardCharsets.UTF_8));
+        assertFalse(missingNames.ready());
+        assertTrue(missingNames.blockers().stream().anyMatch(s -> s.contains("Missing sprint metadata")));
+        assertEquals(0, tasks.count());
+        assertEquals(0, sprintLinks.findByProjectId(projectId).size());
+    }
+
+    @Test void completePagedExportIsAccepted() {
+        byte[] complete = new String(sprintJson(), StandardCharsets.UTF_8)
+                .replace("{\"values\":", "{\"isLast\":true,\"startAt\":0,\"total\":2,\"values\":")
+                .getBytes(StandardCharsets.UTF_8);
+        var preview = importer.preview(pm, projectId, csv(), complete);
+        assertTrue(preview.ready(), preview.blockers().toString());
+        assertEquals(2, preview.newSprints());
+    }
+
+    @Test void completeExportCanIncludeUndatedFutureSprint() {
+        String json = new String(sprintJson(), StandardCharsets.UTF_8)
+                .replace("{\"values\":", "{\"isLast\":true,\"startAt\":0,\"total\":3,\"values\":")
+                .replace("]}", ",{\"id\":39,\"name\":\"Sprint 3\",\"state\":\"future\"}]}");
+        var result = importer.execute(pm, projectId, csv(), json.getBytes(StandardCharsets.UTF_8), "", "IMPORT");
+        assertEquals(3, result.createdSprints());
+        Sprint future = sprints.findByProjectIdOrderByNumberAsc(projectId).get(2);
+        assertEquals(SprintStatus.PLANNED, future.getStatus());
+        assertNull(future.getStartDate());
+        assertNull(future.getEndDate());
+    }
+
+    @Test void invalidUserMappingsAbortWithoutWrites() {
         assertThrows(BadRequestException.class,
                 () -> importer.execute(pm, projectId, csv(), sprintJson(), "{\"jira-user-1\":999999}", "IMPORT"));
         assertEquals(0, tasks.count());
