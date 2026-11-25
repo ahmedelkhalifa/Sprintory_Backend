@@ -25,8 +25,16 @@ public interface RetrospectiveRepository extends JpaRepository<Retrospective, Lo
     List<Retrospective> findBySprintIdIn(Collection<Long> sprintIds);
 
     /**
-     * Loads the retro with a row lock. Votes take it so two votes by the same person cannot both
-     * pass the 3-per-retro check, and closing takes it so no change lands after the close.
+     * The project's latest retro before the sprint with this number, for {@code previousActions}.
+     * A sprint in between without a retro is skipped.
+     */
+    Optional<Retrospective> findFirstByProjectIdAndSprintNumberLessThanOrderBySprintNumberDesc(Long projectId,
+                                                                                              int sprintNumber);
+
+    /**
+     * Loads the retro with a row lock. Every change inside a retro takes it (cards, votes, actions,
+     * close): two votes by one person cannot both pass the 3-per-retro check, and no change lands
+     * after the close.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from Retrospective r where r.id = :retroId")

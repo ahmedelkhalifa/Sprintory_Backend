@@ -14,9 +14,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import team.sprintory_backend.comment.dto.CommentRequest;
+import team.sprintory_backend.retro.dto.RetroActionRequest;
+import team.sprintory_backend.retro.dto.RetroActionResponse;
 import team.sprintory_backend.retro.dto.RetroItemRequest;
 import team.sprintory_backend.retro.dto.RetroItemResponse;
 import team.sprintory_backend.retro.dto.RetroResponse;
+import team.sprintory_backend.retro.dto.RetroVoteResponse;
 import team.sprintory_backend.retro.services.RetroService;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 
@@ -63,5 +66,26 @@ public class RetroController {
                                            @PathVariable Long itemId) {
         retros.deleteItem(principal.getUser(), itemId);
         return ResponseEntity.noContent().build();
+    }
+
+    /** §3.6. */
+    @PostMapping("/retro-items/{itemId}/votes")
+    public RetroVoteResponse vote(@AuthenticationPrincipal AppUserDetails principal, @PathVariable Long itemId) {
+        return retros.vote(principal.getUser(), itemId);
+    }
+
+    /** §3.8: creates the task and links it to the retro. */
+    @PostMapping("/retros/{retroId}/actions")
+    public ResponseEntity<RetroActionResponse> createAction(@AuthenticationPrincipal AppUserDetails principal,
+                                                            @PathVariable Long retroId,
+                                                            @Valid @RequestBody RetroActionRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(retros.createAction(principal.getUser(), retroId, request));
+    }
+
+    /** §3.7: 200 with the new state, also when the caller had no vote. */
+    @DeleteMapping("/retro-items/{itemId}/votes")
+    public RetroVoteResponse unvote(@AuthenticationPrincipal AppUserDetails principal, @PathVariable Long itemId) {
+        return retros.unvote(principal.getUser(), itemId);
     }
 }

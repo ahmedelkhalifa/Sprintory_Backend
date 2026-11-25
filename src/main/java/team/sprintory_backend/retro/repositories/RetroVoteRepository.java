@@ -20,8 +20,17 @@ public interface RetroVoteRepository extends JpaRepository<RetroVote, Long> {
 
     List<RetroVote> findByItemId(Long itemId);
 
+    long countByItemId(Long itemId);
+
+    boolean existsByItemIdAndUserId(Long itemId, Long userId);
+
     /** A deleted card gives its votes back. */
     @Modifying
     @Query("delete from RetroVote v where v.item.id = :itemId")
     void deleteByItemId(@Param("itemId") Long itemId);
+
+    /** Removes the person's vote on the card; nothing happens when they have none. */
+    @Modifying
+    @Query("delete from RetroVote v where v.item.id = :itemId and v.user.id = :userId")
+    void deleteByItemIdAndUserId(@Param("itemId") Long itemId, @Param("userId") Long userId);
 }

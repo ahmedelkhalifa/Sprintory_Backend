@@ -252,9 +252,9 @@ There is no endpoint to list a project's retros: the sprint history (`GET /proje
 - **Who:** `RETRO_MANAGE`. Retro `OPEN`.
 - **Rules:**
   - `title` 1–255 characters (trimmed), required.
-  - `ownerId` required, a **member of this project**; otherwise `400` "The owner must be a member of this project.".
+  - `ownerId` required, a **member of this project**; otherwise `400` "The assignee must be a member of this project." (the same check and message as on the task form, because the task is created by the same code).
   - `itemId` optional; if given, a live card of **this** retro, otherwise `404` "Card not found.".
-  - `sprintId` optional; if given, a **`PLANNED`** sprint of this project, otherwise `400` "Actions can only go to the backlog or a planned sprint.". Omitted: the task goes to the end of the backlog.
+  - `sprintId` optional; if given, a **`PLANNED`** sprint of this project. A missing sprint or one of another project gives `404` "Sprint not found."; an active or ended one gives `400` "Actions can only go to the backlog or a planned sprint.". Omitted: the task goes to the end of the backlog.
 - **Effect, in one transaction:** a task is created exactly like `POST /projects/{projectId}/tasks` ([tasks-docs.md](./tasks-docs.md)): next key, first board column, type `TASK`, priority `MEDIUM`, label **`retro-action`**, assigned to the owner. With `sprintId` it is placed at the end of that sprint. The task gets its normal `CREATED` history entry, and the owner gets the normal `TASK_ASSIGNED` notification (unless they created it themselves).
 - **Response `201`:** `RetroActionResponse`.
 - After that the task is an ordinary task: edit, move or delete it through the task endpoints. The retro only shows its live state.
@@ -292,7 +292,7 @@ Every error uses the shared shape from [API conventions §4](./api-conventions.m
 | Code | Status | Message | When |
 | --- | --- | --- | --- |
 | `VALIDATION_ERROR` | 400 | Request validation failed. | A required field missing or too long; `fieldErrors` names it |
-| `BAD_REQUEST` | 400 | e.g. "The owner must be a member of this project.", "Actions can only go to the backlog or a planned sprint." | Action rules (3.8); malformed JSON |
+| `BAD_REQUEST` | 400 | e.g. "The assignee must be a member of this project.", "Actions can only go to the backlog or a planned sprint." | Action rules (3.8); malformed JSON |
 | `INVALID_RICH_TEXT` | 400 | e.g. "A card cannot be empty.", "A card can have at most 1000 characters." | Card body breaks [mentions-docs.md §2](./mentions-docs.md#2-rich-text-format) |
 | `INVALID_MENTION` | 400 | "Only members of this project can be mentioned." | A newly added mention outside the project |
 | `AUTHENTICATION_ERROR` | 401 | Authentication required. Please log in. | No valid access cookie |

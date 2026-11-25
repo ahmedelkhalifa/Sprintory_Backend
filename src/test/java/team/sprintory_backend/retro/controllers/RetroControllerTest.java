@@ -8,9 +8,12 @@ import org.springframework.http.ResponseEntity;
 import team.sprintory_backend.exceptionHandler.ErrorCode;
 import team.sprintory_backend.exceptionHandler.ErrorResponse;
 import team.sprintory_backend.exceptionHandler.ExceptionHandler;
+import team.sprintory_backend.retro.dto.RetroActionRequest;
+import team.sprintory_backend.retro.dto.RetroActionResponse;
 import team.sprintory_backend.retro.dto.RetroItemRequest;
 import team.sprintory_backend.retro.dto.RetroItemResponse;
 import team.sprintory_backend.retro.dto.RetroResponse;
+import team.sprintory_backend.retro.dto.RetroVoteResponse;
 import team.sprintory_backend.retro.models.RetroColumn;
 import team.sprintory_backend.retro.exceptions.RetroConflictException;
 import team.sprintory_backend.retro.services.RetroService;
@@ -70,6 +73,29 @@ class RetroControllerTest {
         assertSame(card, added.getBody());
         assertEquals(HttpStatus.NO_CONTENT, deleted.getStatusCode());
         verify(service).deleteItem(actor, 512L);
+    }
+
+    @Test
+    void votingAndUnvotingAnswerTheServicesResult() {
+        RetroVoteResponse voted = new RetroVoteResponse(512L, 3, true, 1);
+        RetroVoteResponse unvoted = new RetroVoteResponse(512L, 2, false, 2);
+        when(service.vote(actor, 512L)).thenReturn(voted);
+        when(service.unvote(actor, 512L)).thenReturn(unvoted);
+
+        assertSame(voted, controller.vote(principal, 512L));
+        assertSame(unvoted, controller.unvote(principal, 512L));
+    }
+
+    @Test
+    void creatingAnActionAnswers201() {
+        RetroActionRequest request = new RetroActionRequest("Time-box stand-ups", 31L, null, null);
+        RetroActionResponse action = mock(RetroActionResponse.class);
+        when(service.createAction(actor, 7L, request)).thenReturn(action);
+
+        var created = controller.createAction(principal, 7L, request);
+
+        assertEquals(HttpStatus.CREATED, created.getStatusCode());
+        assertSame(action, created.getBody());
     }
 
     @Test

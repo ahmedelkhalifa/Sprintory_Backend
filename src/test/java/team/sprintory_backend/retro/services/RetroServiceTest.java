@@ -10,10 +10,13 @@ import team.sprintory_backend.common.richtext.InvalidRichTextException;
 import team.sprintory_backend.common.richtext.RichTextDocument;
 import team.sprintory_backend.common.richtext.RichTextMention;
 import team.sprintory_backend.common.richtext.RichTextParser;
+import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ErrorCode;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.mention.services.MentionService;
+import team.sprintory_backend.project.models.BoardColumnCategory;
 import team.sprintory_backend.project.models.Project;
+import team.sprintory_backend.project.models.ProjectBoardColumn;
 import team.sprintory_backend.project.models.ProjectLifecycleState;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.models.ProjectRole;
@@ -21,21 +24,33 @@ import team.sprintory_backend.project.models.ProjectTemplate;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectAccess;
 import team.sprintory_backend.project.services.ProjectAccessResult;
+import team.sprintory_backend.retro.dto.RetroActionRequest;
+import team.sprintory_backend.retro.dto.RetroActionResponse;
 import team.sprintory_backend.retro.dto.RetroItemRequest;
 import team.sprintory_backend.retro.dto.RetroItemResponse;
 import team.sprintory_backend.retro.dto.RetroResponse;
+import team.sprintory_backend.retro.dto.RetroUser;
+import team.sprintory_backend.retro.dto.RetroVoteResponse;
 import team.sprintory_backend.retro.exceptions.RetroConflictException;
+import team.sprintory_backend.retro.models.RetroAction;
 import team.sprintory_backend.retro.models.RetroColumn;
 import team.sprintory_backend.retro.models.RetroItem;
 import team.sprintory_backend.retro.models.RetroStatus;
 import team.sprintory_backend.retro.models.RetroVote;
 import team.sprintory_backend.retro.models.Retrospective;
+import team.sprintory_backend.retro.repositories.RetroActionRepository;
 import team.sprintory_backend.retro.repositories.RetroItemRepository;
 import team.sprintory_backend.retro.repositories.RetroVoteRepository;
 import team.sprintory_backend.retro.repositories.RetrospectiveRepository;
 import team.sprintory_backend.sprint.models.Sprint;
 import team.sprintory_backend.sprint.models.SprintStatus;
 import team.sprintory_backend.sprint.repositories.SprintRepository;
+import team.sprintory_backend.task.dto.CreateTaskRequest;
+import team.sprintory_backend.task.dto.TaskResponse;
+import team.sprintory_backend.task.models.Task;
+import team.sprintory_backend.task.models.TaskType;
+import team.sprintory_backend.task.repositories.TaskRepository;
+import team.sprintory_backend.task.services.TaskApiService;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.workspace.exceptions.WorkspaceArchivedException;
 import team.sprintory_backend.workspace.models.Workspace;
@@ -54,14 +69,17 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
-/** Opening and reading a retro, and its cards (docs/retrospectives-docs.md §3.1–§3.5). */
+/** Opening and reading a retro, its cards, votes and actions (docs/retrospectives-docs.md §3.1–§3.8). */
 class RetroServiceTest {
 
     private RetrospectiveRepository retros;
     private RetroItemRepository items;
     private RetroVoteRepository votes;
+    private RetroActionRepository actions;
     private SprintRepository sprints;
     private ProjectRepository projects;
+    private TaskRepository tasks;
+    private TaskApiService taskApi;
     private ProjectAccess access;
     private MentionService mentions;
     private RetroService service;
@@ -78,11 +96,14 @@ class RetroServiceTest {
         retros = mock(RetrospectiveRepository.class);
         items = mock(RetroItemRepository.class);
         votes = mock(RetroVoteRepository.class);
+        actions = mock(RetroActionRepository.class);
         sprints = mock(SprintRepository.class);
         projects = mock(ProjectRepository.class);
+        tasks = mock(TaskRepository.class);
+        taskApi = mock(TaskApiService.class);
         access = mock(ProjectAccess.class);
         mentions = mock(MentionService.class);
-        service = new RetroService(retros, items, votes, sprints, projects, access,
+        service = new RetroService(retros, items, votes, actions, sprints, projects, tasks, taskApi, access,
                 new RichTextParser(JsonMapper.builder().build()), mentions);
 
         workspace = Workspace.builder().id(1L).name("Acme").slug("acme").build();
@@ -564,7 +585,293 @@ class RetroServiceTest {
                 () -> service.deleteItem(actor, 512L)).getMessage());
     }
 
+    // --- votes (§3.6, §3.7) ---
+
+    @Test
+    void aMemberVotesOnTheirOwnCardAfterTheRetroIsLocked() {
+        RetroItem card = editableCard(actor, ProjectRole.MEMBER);
+        when(votes.countByRetroIdAndUserId(7L, 9L)).thenReturn(1L);
+        when(votes.countByItemId(512L)).thenReturn(3L);
+
+        RetroVoteResponse response = service.vote(actor, 512L);
+
+        var order = inOrder(retros, votes);
+        order.verify(retros).lockById(7L);
+        order.verify(votes).countByRetroIdAndUserId(7L, 9L);
+        ArgumentCaptor<RetroVote> saved = ArgumentCaptor.forClass(RetroVote.class);
+        order.verify(votes).save(saved.capture());
+        assertSame(card, saved.getValue().getItem());
+        assertSame(card.getRetro(), saved.getValue().getRetro());
+        assertSame(actor, saved.getValue().getUser());
+        assertEquals(new RetroVoteResponse(512L, 3, true, 1), response);
+    }
+
+    @Test
+    void aSecondVoteOnTheSameCardIsAlreadyVoted() {
+        editableCard(damir, ProjectRole.MEMBER);
+        when(votes.existsByItemIdAndUserId(512L, 9L)).thenReturn(true);
+        when(votes.countByRetroIdAndUserId(7L, 9L)).thenReturn(3L);
+
+        RetroConflictException e = assertThrows(RetroConflictException.class, () -> service.vote(actor, 512L));
+
+        assertEquals(ErrorCode.ALREADY_VOTED, e.getCode());
+        verify(votes, never()).save(any());
+    }
+
+    @Test
+    void aFourthVoteIsNoVotesLeft() {
+        editableCard(damir, ProjectRole.MEMBER);
+        when(votes.countByRetroIdAndUserId(7L, 9L)).thenReturn(3L);
+
+        RetroConflictException e = assertThrows(RetroConflictException.class, () -> service.vote(actor, 512L));
+
+        assertEquals(ErrorCode.NO_VOTES_LEFT, e.getCode());
+        verify(votes, never()).save(any());
+    }
+
+    @Test
+    void unvoteGivesTheVoteBack() {
+        editableCard(damir, ProjectRole.MEMBER);
+        when(votes.countByItemId(512L)).thenReturn(2L);
+
+        RetroVoteResponse response = service.unvote(actor, 512L);
+
+        verify(votes).deleteByItemIdAndUserId(512L, 9L);
+        assertEquals(new RetroVoteResponse(512L, 2, false, 3), response);
+    }
+
+    @Test
+    void aViewerCannotVote() {
+        editableCard(damir, ProjectRole.VIEWER);
+        when(access.requireActive(10L, actor, ProjectPermission.RETRO_CONTRIBUTE))
+                .thenThrow(new AccessDeniedException("no"));
+
+        assertThrows(AccessDeniedException.class, () -> service.vote(actor, 512L));
+        assertThrows(AccessDeniedException.class, () -> service.unvote(actor, 512L));
+        verify(votes, never()).save(any());
+        verify(votes, never()).deleteByItemIdAndUserId(any(), any());
+    }
+
+    @Test
+    void aClosedRetroRefusesVotesAndTheirRemoval() {
+        editableCard(damir, ProjectRole.MEMBER).getRetro().setStatus(RetroStatus.CLOSED);
+
+        assertEquals(ErrorCode.RETRO_CLOSED,
+                assertThrows(RetroConflictException.class, () -> service.vote(actor, 512L)).getCode());
+        assertEquals(ErrorCode.RETRO_CLOSED,
+                assertThrows(RetroConflictException.class, () -> service.unvote(actor, 512L)).getCode());
+        verify(votes, never()).save(any());
+        verify(votes, never()).deleteByItemIdAndUserId(any(), any());
+    }
+
+    @Test
+    void aDeletedCardCannotBeVotedOn() {
+        editableCard(damir, ProjectRole.MEMBER).setDeletedAt(Instant.now());
+
+        assertEquals("Card not found.",
+                assertThrows(ResourceNotFoundException.class, () -> service.vote(actor, 512L)).getMessage());
+        verify(votes, never()).save(any());
+    }
+
+    // --- actions (§3.8) ---
+
+    /** Retro 7 is free to lock, the caller passes RETRO_MANAGE, and creating the task gives MOB-61. */
+    private Retrospective actionableAs(ProjectRole role) {
+        Retrospective retro = retro(7L);
+        when(retros.lockById(7L)).thenReturn(Optional.of(retro));
+        when(access.requireActive(10L, actor, ProjectPermission.RETRO_MANAGE)).thenReturn(accessAs(role));
+        TaskResponse created = mock(TaskResponse.class);
+        when(created.id()).thenReturn(260L);
+        when(taskApi.create(eq(actor), eq(10L), any(CreateTaskRequest.class))).thenReturn(created);
+        when(tasks.findById(260L)).thenReturn(Optional.of(task(260L, "MOB-61", column("To Do", BoardColumnCategory.TODO))));
+        when(actions.save(any(RetroAction.class))).thenAnswer(inv -> inv.getArgument(0));
+        return retro;
+    }
+
+    @Test
+    void aManagerTurnsACardIntoABacklogTask() {
+        Retrospective retro = actionableAs(ProjectRole.SCRUM_MASTER);
+        RetroItem card = card(512L, damir, doc(text("Stand-ups run long")));
+        when(items.findById(512L)).thenReturn(Optional.of(card));
+
+        RetroActionResponse response = service.createAction(actor, 7L,
+                new RetroActionRequest("Time-box stand-ups", 31L, 512L, null));
+
+        ArgumentCaptor<CreateTaskRequest> request = ArgumentCaptor.forClass(CreateTaskRequest.class);
+        verify(taskApi).create(eq(actor), eq(10L), request.capture());
+        assertEquals(new CreateTaskRequest("Time-box stand-ups", TaskType.TASK, null, 31L, null,
+                List.of("retro-action"), null), request.getValue());
+        ArgumentCaptor<RetroAction> saved = ArgumentCaptor.forClass(RetroAction.class);
+        verify(actions).save(saved.capture());
+        assertSame(retro, saved.getValue().getRetro());
+        assertSame(card, saved.getValue().getItem());
+        assertEquals(260L, saved.getValue().getTaskId());
+        assertEquals("MOB-61", saved.getValue().getTaskKey());
+        assertSame(actor, saved.getValue().getCreatedBy());
+        assertEquals(512L, response.itemId());
+        assertEquals(new RetroActionResponse.TaskRef(260L, "MOB-61", "Time-box stand-ups", "To Do",
+                BoardColumnCategory.TODO, new RetroUser(31L, "Damir Gabaidullin"), null, null, false), response.task());
+        verify(tasks, never()).findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(any());
+    }
+
+    @Test
+    void aPlannedSprintGetsTheTaskAtItsEnd() {
+        actionableAs(ProjectRole.PRODUCT_OWNER);
+        Sprint planned = sprint(44L, project, 4, SprintStatus.PLANNED);
+        when(sprints.findById(44L)).thenReturn(Optional.of(planned));
+        Task first = task(249L, "MOB-49", column("To Do", BoardColumnCategory.TODO));
+        first.setSprintPosition(1L);
+        Task last = task(250L, "MOB-50", column("To Do", BoardColumnCategory.TODO));
+        last.setSprintPosition(3L);
+        when(tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(44L)).thenReturn(List.of(first, last));
+
+        RetroActionResponse response = service.createAction(actor, 7L,
+                new RetroActionRequest("Pair on reviews", 31L, null, 44L));
+
+        Task created = tasks.findById(260L).orElseThrow();
+        assertSame(planned, created.getSprint());
+        assertEquals(4L, created.getSprintPosition());
+        assertEquals(44L, response.task().sprintId());
+        assertEquals("MOB Sprint 4", response.task().sprintName());
+        assertNull(response.itemId());
+    }
+
+    @Test
+    void theSprintMustBeAPlannedSprintOfThisProject() {
+        actionableAs(ProjectRole.SCRUM_MASTER);
+        when(sprints.findById(44L)).thenReturn(Optional.of(sprint(44L, project, 4, SprintStatus.ACTIVE)));
+        Project other = Project.builder().id(11L).workspace(workspace).name("Web").key("WEB").build();
+        when(sprints.findById(45L)).thenReturn(Optional.of(sprint(45L, other, 1, SprintStatus.PLANNED)));
+
+        assertEquals("Actions can only go to the backlog or a planned sprint.", assertThrows(BadRequestException.class,
+                () -> service.createAction(actor, 7L, new RetroActionRequest("x", 31L, null, 44L))).getMessage());
+        assertEquals("Sprint not found.", assertThrows(ResourceNotFoundException.class,
+                () -> service.createAction(actor, 7L, new RetroActionRequest("x", 31L, null, 45L))).getMessage());
+        verify(actions, never()).save(any());
+    }
+
+    @Test
+    void theCardMustBeALiveCardOfThisRetro() {
+        actionableAs(ProjectRole.SCRUM_MASTER);
+        RetroItem ofAnotherRetro = new RetroItem(retro(8L), RetroColumn.IDEAS, doc(text("x")), damir);
+        ofAnotherRetro.setId(600L);
+        when(items.findById(600L)).thenReturn(Optional.of(ofAnotherRetro));
+        RetroItem deleted = card(601L, damir, doc(text("x")));
+        deleted.setDeletedAt(Instant.now());
+        when(items.findById(601L)).thenReturn(Optional.of(deleted));
+
+        for (long itemId : new long[]{600L, 601L, 602L}) {
+            assertEquals("Card not found.", assertThrows(ResourceNotFoundException.class,
+                    () -> service.createAction(actor, 7L, new RetroActionRequest("x", 31L, itemId, null))).getMessage());
+        }
+        verify(taskApi, never()).create(any(), any(), any());
+    }
+
+    @Test
+    void aClosedRetroCreatesNoTask() {
+        actionableAs(ProjectRole.SCRUM_MASTER).setStatus(RetroStatus.CLOSED);
+
+        RetroConflictException e = assertThrows(RetroConflictException.class,
+                () -> service.createAction(actor, 7L, new RetroActionRequest("x", 31L, null, null)));
+
+        assertEquals(ErrorCode.RETRO_CLOSED, e.getCode());
+        verify(taskApi, never()).create(any(), any(), any());
+    }
+
+    @Test
+    void aMemberCannotCreateActions() {
+        when(retros.lockById(7L)).thenReturn(Optional.of(retro(7L)));
+        when(access.requireActive(10L, actor, ProjectPermission.RETRO_MANAGE)).thenThrow(new AccessDeniedException("no"));
+
+        assertThrows(AccessDeniedException.class,
+                () -> service.createAction(actor, 7L, new RetroActionRequest("x", 31L, null, null)));
+        verifyNoInteractions(taskApi);
+    }
+
+    @Test
+    void theBoardShowsEachActionsLiveTaskAndADeletedTaskByItsKey() {
+        readableAs(ProjectRole.MEMBER);
+        Retrospective retro = retro(7L);
+        RetroItem deletedCard = card(512L, damir, doc(text("x")));
+        deletedCard.setDeletedAt(Instant.now());
+        RetroAction live = new RetroAction(retro, deletedCard, 260L, "MOB-61", actor, Instant.parse("2026-11-26T10:30:00Z"));
+        RetroAction gone = new RetroAction(retro, null, 261L, "MOB-62", actor, Instant.parse("2026-11-26T10:31:00Z"));
+        when(actions.findByRetroIdOrderByCreatedAtAscIdAsc(7L)).thenReturn(List.of(live, gone));
+        Task task = task(260L, "MOB-61", column("In Progress", BoardColumnCategory.IN_PROGRESS));
+        task.setSprint(sprint(44L, project, 4, SprintStatus.PLANNED));
+        when(tasks.findAllById(List.of(260L, 261L))).thenReturn(List.of(task));
+
+        RetroResponse board = service.get(actor, 7L);
+
+        RetroActionResponse first = board.actions().get(0);
+        assertNull(first.itemId(), "its card was deleted later");
+        assertEquals(Instant.parse("2026-11-26T10:30:00Z"), first.createdAt());
+        assertEquals(new RetroActionResponse.TaskRef(260L, "MOB-61", "Time-box stand-ups", "In Progress",
+                BoardColumnCategory.IN_PROGRESS, new RetroUser(31L, "Damir Gabaidullin"), 44L, "MOB Sprint 4", false),
+                first.task());
+        assertEquals(new RetroActionResponse.TaskRef(261L, "MOB-62", null, null, null, null, null, null, true),
+                board.actions().get(1).task());
+        assertNull(board.previousActions());
+    }
+
+    @Test
+    void previousActionsAreTheUnfinishedOnesOfTheLatestEarlierRetro() {
+        readableAs(ProjectRole.MEMBER);
+        Retrospective earlier = givenEarlierRetroWithActionsOn(250L, 251L, 252L);
+        when(tasks.findAllById(List.of(250L, 251L, 252L))).thenReturn(List.of(
+                task(250L, "MOB-50", column("To Do", BoardColumnCategory.TODO)),
+                task(251L, "MOB-51", column("Done", BoardColumnCategory.DONE))));   // MOB-52 was deleted
+
+        RetroResponse.PreviousActions previous = service.get(actor, 7L).previousActions();
+
+        assertEquals(earlier.getId(), previous.retroId());
+        assertEquals("MOB Sprint 2", previous.sprintName());
+        assertEquals(List.of("MOB-50"), previous.actions().stream().map(action -> action.task().key()).toList());
+    }
+
+    @Test
+    void previousActionsIsNullWhenEverythingThereIsDone() {
+        readableAs(ProjectRole.MEMBER);
+        givenEarlierRetroWithActionsOn(251L);
+        when(tasks.findAllById(List.of(251L)))
+                .thenReturn(List.of(task(251L, "MOB-51", column("Done", BoardColumnCategory.DONE))));
+
+        assertNull(service.get(actor, 7L).previousActions());
+    }
+
+    /** Retro 6 of sprint 2 is the latest before retro 7 (sprint 3), with one action per task id. */
+    private Retrospective givenEarlierRetroWithActionsOn(Long... taskIds) {
+        Retrospective earlier = new Retrospective(project, sprint(41L, project, 2, SprintStatus.COMPLETED),
+                "MOB Sprint 2 Retrospective", actor);
+        earlier.setId(6L);
+        when(retros.findFirstByProjectIdAndSprintNumberLessThanOrderBySprintNumberDesc(10L, 3))
+                .thenReturn(Optional.of(earlier));
+        when(actions.findByRetroIdOrderByCreatedAtAscIdAsc(6L)).thenReturn(java.util.Arrays.stream(taskIds)
+                .map(id -> new RetroAction(earlier, null, id, "MOB-" + (id - 200), actor, Instant.now()))
+                .toList());
+        return earlier;
+    }
+
     // --- fixtures ---
+
+    private Sprint sprint(long id, Project owner, int number, SprintStatus status) {
+        Sprint result = new Sprint(owner, number, "MOB Sprint " + number, null, null,
+                LocalDate.of(2026, 11, 23), LocalDate.of(2026, 12, 6));
+        result.setId(id);
+        result.setStatus(status);
+        return result;
+    }
+
+    private Task task(long id, String key, ProjectBoardColumn status) {
+        return Task.builder().id(id).project(project).key(key).title("Time-box stand-ups")
+                .status(status).assignee(damir).build();
+    }
+
+    private static ProjectBoardColumn column(String name, BoardColumnCategory category) {
+        ProjectBoardColumn column = new ProjectBoardColumn(null, name, 0);
+        column.setCategory(category);
+        return column;
+    }
 
     /** A card of retro 7. */
     private RetroItem card(long id, User author, String body) {

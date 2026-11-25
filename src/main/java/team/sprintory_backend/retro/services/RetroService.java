@@ -11,27 +11,41 @@ import team.sprintory_backend.common.richtext.RichTextDocument;
 import team.sprintory_backend.common.richtext.RichTextMention;
 import team.sprintory_backend.common.richtext.RichTextParser;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.mention.services.MentionService;
+import team.sprintory_backend.project.models.BoardColumnCategory;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectLifecycleState;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectAccess;
 import team.sprintory_backend.project.services.ProjectAccessResult;
+import team.sprintory_backend.retro.dto.RetroActionRequest;
+import team.sprintory_backend.retro.dto.RetroActionResponse;
 import team.sprintory_backend.retro.dto.RetroItemRequest;
 import team.sprintory_backend.retro.dto.RetroItemResponse;
 import team.sprintory_backend.retro.dto.RetroResponse;
 import team.sprintory_backend.retro.dto.RetroUser;
+import team.sprintory_backend.retro.dto.RetroVoteResponse;
 import team.sprintory_backend.retro.exceptions.RetroConflictException;
+import team.sprintory_backend.retro.models.RetroAction;
 import team.sprintory_backend.retro.models.RetroItem;
 import team.sprintory_backend.retro.models.RetroStatus;
 import team.sprintory_backend.retro.models.RetroVote;
 import team.sprintory_backend.retro.models.Retrospective;
+import team.sprintory_backend.retro.repositories.RetroActionRepository;
 import team.sprintory_backend.retro.repositories.RetroItemRepository;
 import team.sprintory_backend.retro.repositories.RetroVoteRepository;
 import team.sprintory_backend.retro.repositories.RetrospectiveRepository;
 import team.sprintory_backend.sprint.models.Sprint;
+import team.sprintory_backend.sprint.models.SprintStatus;
 import team.sprintory_backend.sprint.repositories.SprintRepository;
+import team.sprintory_backend.task.dto.CreateTaskRequest;
+import team.sprintory_backend.task.dto.TaskResponse;
+import team.sprintory_backend.task.models.Task;
+import team.sprintory_backend.task.models.TaskType;
+import team.sprintory_backend.task.repositories.TaskRepository;
+import team.sprintory_backend.task.services.TaskApiService;
 import team.sprintory_backend.user.models.User;
 
 import java.time.Instant;
@@ -42,6 +56,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Sprint retrospectives (R31, PMP-44); the rules of docs/retrospectives-docs.md live here.
@@ -55,12 +70,17 @@ public class RetroService {
     public static final int VOTES_PER_MEMBER = 3;
     /** At most this many characters of plain text per card, mentions counted as {@code @Name}. */
     public static final int CARD_MAX_LENGTH = 1_000;
+    /** Every action task carries this label, so the board and the backlog can filter them. */
+    public static final String ACTION_LABEL = "retro-action";
 
     private final RetrospectiveRepository retros;
     private final RetroItemRepository items;
     private final RetroVoteRepository votes;
+    private final RetroActionRepository actions;
     private final SprintRepository sprints;
     private final ProjectRepository projects;
+    private final TaskRepository tasks;
+    private final TaskApiService taskApi;
     private final ProjectAccess access;
     private final RichTextParser richText;
     private final MentionService mentions;
@@ -170,6 +190,85 @@ public class RetroService {
         votes.deleteByItemId(itemId);
     }
 
+    /**
+     * One vote on a card (§3.6): at most one per card and {@value #VOTES_PER_MEMBER} per retro.
+     * The retro row lock makes two quick clicks wait for each other, so a 4th vote can never slip
+     * in; the unique (card, person) constraint is the backstop. Voting on one's own card is allowed.
+     */
+    @Transactional
+    public RetroVoteResponse vote(User actor, Long itemId) {
+        RetroItem item = lockedItem(itemId);
+        Retrospective retro = item.getRetro();
+        writable(actor, retro.getProject().getId(), ProjectPermission.RETRO_CONTRIBUTE, "Card not found.");
+        if (retro.isClosed()) {
+            throw RetroConflictException.closed();
+        }
+        if (votes.existsByItemIdAndUserId(itemId, actor.getId())) {
+            throw RetroConflictException.alreadyVoted();
+        }
+        long used = votes.countByRetroIdAndUserId(retro.getId(), actor.getId());
+        if (used >= VOTES_PER_MEMBER) {
+            throw RetroConflictException.noVotesLeft();
+        }
+        votes.save(new RetroVote(item, actor));
+        return new RetroVoteResponse(itemId, (int) votes.countByItemId(itemId), true,
+                (int) (VOTES_PER_MEMBER - used - 1));
+    }
+
+    /** Takes the caller's vote back (§3.7). Removing a vote one does not have is not an error. */
+    @Transactional
+    public RetroVoteResponse unvote(User actor, Long itemId) {
+        RetroItem item = lockedItem(itemId);
+        Retrospective retro = item.getRetro();
+        writable(actor, retro.getProject().getId(), ProjectPermission.RETRO_CONTRIBUTE, "Card not found.");
+        if (retro.isClosed()) {
+            throw RetroConflictException.closed();
+        }
+        votes.deleteByItemIdAndUserId(itemId, actor.getId());
+        long used = votes.countByRetroIdAndUserId(retro.getId(), actor.getId());
+        return new RetroVoteResponse(itemId, (int) votes.countByItemId(itemId), false,
+                (int) (VOTES_PER_MEMBER - used));
+    }
+
+    /**
+     * Turns a decision into a real task (§3.8). The task is made by {@link TaskApiService#create},
+     * exactly like {@code POST /projects/{id}/tasks} (key, first column, history, TaskCreated,
+     * TaskAssigned to the owner), so the owner check and its 400 come from there. Every
+     * RETRO_MANAGE role also has the EDIT_TASKS that it asks for.
+     */
+    @Transactional
+    public RetroActionResponse createAction(User actor, Long retroId, RetroActionRequest request) {
+        Retrospective retro = retros.lockById(retroId)
+                .orElseThrow(() -> new ResourceNotFoundException("Retrospective not found."));
+        Long projectId = retro.getProject().getId();
+        writable(actor, projectId, ProjectPermission.RETRO_MANAGE, "Retrospective not found.");
+        if (retro.isClosed()) {
+            throw RetroConflictException.closed();
+        }
+        RetroItem item = request.itemId() == null ? null : items.findById(request.itemId())
+                .filter(card -> card.getRetro().getId().equals(retroId) && !card.isDeleted())
+                .orElseThrow(() -> new ResourceNotFoundException("Card not found."));
+
+        TaskResponse created = taskApi.create(actor, projectId, new CreateTaskRequest(request.title(), TaskType.TASK,
+                null, request.ownerId(), null, List.of(ACTION_LABEL), null));
+        Task task = tasks.findById(created.id()).orElseThrow();
+        if (request.sprintId() != null) {
+            // Checked after create, which holds the project row lock that starting a sprint also
+            // takes: the sprint cannot turn ACTIVE between this check and the move.
+            Sprint sprint = sprints.findById(request.sprintId())
+                    .filter(found -> found.getProject().getId().equals(projectId))
+                    .orElseThrow(() -> new ResourceNotFoundException("Sprint not found."));
+            if (sprint.getStatus() != SprintStatus.PLANNED) {
+                throw new BadRequestException("Actions can only go to the backlog or a planned sprint.");
+            }
+            List<Task> planned = tasks.findBySprintIdAndParentIsNullOrderBySprintPositionAscIdAsc(sprint.getId());
+            task.setSprint(sprint);
+            task.setSprintPosition(planned.isEmpty() ? 1L : planned.get(planned.size() - 1).getSprintPosition() + 1);
+        }
+        RetroAction action = actions.save(new RetroAction(retro, item, task.getId(), task.getKey(), actor, Instant.now()));
+        return actionResponse(action, task);
+    }
+
     private RetroResponse response(Retrospective retro, User actor, ProjectAccessResult checked) {
         boolean changeable = retro.getStatus() == RetroStatus.OPEN
                 && !checked.workspaceMember().getWorkspace().isArchived()
@@ -182,7 +281,7 @@ public class RetroService {
         Map<Long, List<RetroVote>> votesByCard = retroVotes.stream()
                 .collect(Collectors.groupingBy(vote -> vote.getItem().getId()));
         long myVotes = retroVotes.stream().filter(vote -> vote.getUser().getId().equals(actor.getId())).count();
-        int votesLeft = contributor ? (int) Math.max(0, VOTES_PER_MEMBER - myVotes) : 0;
+        int votesLeft = contributor ? (int) (VOTES_PER_MEMBER - myVotes) : 0;
 
         List<RetroItem> cards = items.findByRetroIdAndDeletedAtIsNullOrderByCreatedAtAscIdAsc(retro.getId());
         List<RichTextDocument> bodies = cards.stream().map(card -> richText.parse(card.getBody())).toList();
@@ -193,12 +292,54 @@ public class RetroService {
             itemResponses.add(itemResponse(card, bodies.get(i), names,
                     votesByCard.getOrDefault(card.getId(), List.of()), actor, canContribute, canManage));
         }
-        // Actions and previous actions come in step 6 of PMP-44.
+        // This retro's actions, and the unfinished ones of the project's latest earlier retro.
+        List<RetroAction> ownActions = actions.findByRetroIdOrderByCreatedAtAscIdAsc(retro.getId());
+        Optional<Retrospective> previous = retros.findFirstByProjectIdAndSprintNumberLessThanOrderBySprintNumberDesc(
+                retro.getProject().getId(), retro.getSprint().getNumber());
+        List<RetroAction> previousActions = previous
+                .map(earlier -> actions.findByRetroIdOrderByCreatedAtAscIdAsc(earlier.getId()))
+                .orElse(List.of());
+        // One query for every task; a deleted task is not returned (@SQLRestriction on Task).
+        List<Long> taskIds = Stream.concat(ownActions.stream(), previousActions.stream())
+                .map(RetroAction::getTaskId).toList();
+        Map<Long, Task> liveTasks = tasks.findAllById(taskIds).stream()
+                .collect(Collectors.toMap(Task::getId, task -> task));
+        List<RetroActionResponse> actionResponses = ownActions.stream()
+                .map(action -> actionResponse(action, liveTasks.get(action.getTaskId())))
+                .toList();
+        List<RetroActionResponse> unfinished = previousActions.stream()
+                .filter(action -> {
+                    Task task = liveTasks.get(action.getTaskId());
+                    return task != null && task.getStatus().getCategory() != BoardColumnCategory.DONE;
+                })
+                .map(action -> actionResponse(action, liveTasks.get(action.getTaskId())))
+                .toList();
+        RetroResponse.PreviousActions carried = unfinished.isEmpty() ? null : new RetroResponse.PreviousActions(
+                previous.get().getId(), previous.get().getSprint().getName(), unfinished);
+
         return new RetroResponse(retro.getId(), retro.getProject().getId(), retro.getTitle(), retro.getStatus(),
                 toInstant(retro.getCreatedAt()), RetroUser.of(retro.getCreatedByUser()),
                 retro.getClosedAt(), RetroUser.of(retro.getClosedByUser()),
                 RetroResponse.SprintSummary.of(retro.getSprint()),
-                itemResponses, VOTES_PER_MEMBER, votesLeft, List.of(), null, canContribute, canManage);
+                itemResponses, VOTES_PER_MEMBER, votesLeft, actionResponses, carried, canContribute, canManage);
+    }
+
+    /**
+     * An action with its task as it is now; {@code task} is null once the task was deleted, and
+     * then only the id and the key snapshot are shown. The card link is hidden once the card was
+     * deleted (cards are soft-deleted, so the row and the link stay).
+     */
+    private static RetroActionResponse actionResponse(RetroAction action, Task task) {
+        RetroActionResponse.TaskRef ref = task == null
+                ? new RetroActionResponse.TaskRef(action.getTaskId(), action.getTaskKey(),
+                        null, null, null, null, null, null, true)
+                : new RetroActionResponse.TaskRef(task.getId(), task.getKey(), task.getTitle(),
+                        task.getStatus().getName(), task.getStatus().getCategory(), RetroUser.of(task.getAssignee()),
+                        task.getSprint() == null ? null : task.getSprint().getId(),
+                        task.getSprint() == null ? null : task.getSprint().getName(), false);
+        RetroItem card = action.getItem();
+        return new RetroActionResponse(action.getId(), card == null || card.isDeleted() ? null : card.getId(),
+                action.getCreatedAt(), ref);
     }
 
     /**
@@ -221,7 +362,7 @@ public class RetroService {
 
     /**
      * Locks the card's retro, then loads the card, so the card is never read before a close or
-     * another delete has committed. Used by edit and delete (and the votes, step 5).
+     * another delete has committed. Used by edit, delete, vote and unvote.
      */
     private RetroItem lockedItem(Long itemId) {
         Long retroId = items.findRetroIdById(itemId)
