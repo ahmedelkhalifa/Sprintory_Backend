@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import team.sprintory_backend.common.richtext.RichTextDocument;
+import team.sprintory_backend.common.richtext.RichTextMention;
 import team.sprintory_backend.common.richtext.RichTextParser;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.mention.dto.MentionablesResponse;
@@ -14,13 +15,16 @@ import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
 import team.sprintory_backend.project.services.ProjectAccess;
 import team.sprintory_backend.project.services.ProjectAccessResult;
+import team.sprintory_backend.team.models.Team;
 import team.sprintory_backend.team.repositories.TeamMemberRepository;
 import team.sprintory_backend.team.repositories.TeamRepository;
 import team.sprintory_backend.user.models.User;
+import team.sprintory_backend.user.repositories.UserRepository;
 import team.sprintory_backend.workspace.models.Workspace;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -45,6 +49,7 @@ class MentionServiceTest {
     private ProjectMemberRepository projectMemberRepository;
     private TeamRepository teamRepository;
     private TeamMemberRepository teamMemberRepository;
+    private UserRepository userRepository;
     private MentionService service;
     private Project project;
     private User ada;
@@ -55,7 +60,9 @@ class MentionServiceTest {
         projectMemberRepository = mock(ProjectMemberRepository.class);
         teamRepository = mock(TeamRepository.class);
         teamMemberRepository = mock(TeamMemberRepository.class);
-        service = new MentionService(access, projectMemberRepository, teamRepository, teamMemberRepository);
+        userRepository = mock(UserRepository.class);
+        service = new MentionService(access, projectMemberRepository, teamRepository, teamMemberRepository,
+                userRepository);
 
         Workspace workspace = Workspace.builder().id(WORKSPACE_ID).name("Acme").build();
         project = Project.builder().id(PROJECT_ID).workspace(workspace).name("Mobile App").key("MOB").build();
@@ -162,6 +169,28 @@ class MentionServiceTest {
 
         assertEquals(Set.of(DAMIR), service.newlyMentionedUserIds(project, text(team(BACKEND_TEAM), user(DAMIR)), before));
         verifyNoInteractions(teamMemberRepository);
+    }
+
+    // --- current names ---
+
+    @Test
+    void currentNamesShowsPeopleAndTeamsAsTheyAreNamedNow() {
+        User damir = User.builder().id(DAMIR).firstName("Damir").lastName("Gabaidullin").build();
+        when(userRepository.findAllById(Set.of(DAMIR))).thenReturn(List.of(damir));
+        when(teamRepository.findAllById(Set.of(BACKEND_TEAM)))
+                .thenReturn(List.of(Team.builder().id(BACKEND_TEAM).name("Backend").build()));
+
+        Map<RichTextMention, String> names = service.currentNames(
+                List.of(text(user(DAMIR)), text(team(BACKEND_TEAM), user(DAMIR))));
+
+        assertEquals(Map.of(RichTextMention.user(DAMIR), "Damir Gabaidullin",
+                RichTextMention.team(BACKEND_TEAM), "Backend"), names);
+    }
+
+    @Test
+    void currentNamesOfTextsWithoutMentionsQueriesNothing() {
+        assertEquals(Map.of(), service.currentNames(List.of(parser.parse(doc("")))));
+        verifyNoInteractions(userRepository, teamRepository);
     }
 
     // --- suggestions ---
