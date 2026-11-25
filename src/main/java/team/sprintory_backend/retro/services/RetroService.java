@@ -1,9 +1,14 @@
 package team.sprintory_backend.retro.services;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.comment.dto.CommentRequest;
 import team.sprintory_backend.comment.dto.CommentResponse;
 import team.sprintory_backend.common.richtext.InvalidRichTextException;
@@ -13,6 +18,7 @@ import team.sprintory_backend.common.richtext.RichTextParser;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.mention.services.MentionService;
+import team.sprintory_backend.notification.events.RetroClosed;
 import team.sprintory_backend.project.models.BoardColumnCategory;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectLifecycleState;
@@ -84,6 +90,8 @@ public class RetroService {
     private final ProjectAccess access;
     private final RichTextParser richText;
     private final MentionService mentions;
+    private final AuditLogService audit;
+    private final ApplicationEventPublisher events;
 
     /** The result of {@link #open}: {@code created} decides between 201 and 200. */
     public record Opened(RetroResponse retro, boolean created) {
@@ -267,6 +275,30 @@ public class RetroService {
         }
         RetroAction action = actions.save(new RetroAction(retro, item, task.getId(), task.getKey(), actor, Instant.now()));
         return actionResponse(action, task);
+    }
+
+    /**
+     * Closes the retro for good (§3.9): no card, vote or action changes after this, but the action
+     * tasks go on as normal tasks. Writes the RETRO_CLOSED audit entry (target: the sprint) and
+     * then publishes RetroClosed, all in one transaction.
+     */
+    @Transactional
+    public RetroResponse close(User actor, Long retroId) {
+        Retrospective retro = retros.lockById(retroId)
+                .orElseThrow(() -> new ResourceNotFoundException("Retrospective not found."));
+        ProjectAccessResult checked = writable(actor, retro.getProject().getId(),
+                ProjectPermission.RETRO_MANAGE, "Retrospective not found.");
+        if (retro.isClosed()) {
+            throw RetroConflictException.closed();
+        }
+        retro.setStatus(RetroStatus.CLOSED);
+        retro.setClosedAt(Instant.now());
+        retro.setClosedByUser(actor);
+        Project project = checked.project();
+        audit.record(project.getWorkspace(), actor, AuditAction.RETRO_CLOSED, AuditTarget.sprint(retro.getSprint()),
+                project, AuditChange.of("status", RetroStatus.OPEN.name(), RetroStatus.CLOSED.name()));
+        events.publishEvent(new RetroClosed(project, actor, retro.getSprint()));
+        return response(retro, actor, checked);
     }
 
     private RetroResponse response(Retrospective retro, User actor, ProjectAccessResult checked) {

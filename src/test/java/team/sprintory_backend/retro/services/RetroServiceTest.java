@@ -3,7 +3,12 @@ package team.sprintory_backend.retro.services;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.access.AccessDeniedException;
+import team.sprintory_backend.audit.models.AuditAction;
+import team.sprintory_backend.audit.models.AuditChange;
+import team.sprintory_backend.audit.models.AuditTarget;
+import team.sprintory_backend.audit.services.AuditLogService;
 import team.sprintory_backend.comment.dto.CommentRequest;
 import team.sprintory_backend.comment.dto.CommentResponse;
 import team.sprintory_backend.common.richtext.InvalidRichTextException;
@@ -14,6 +19,7 @@ import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ErrorCode;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.mention.services.MentionService;
+import team.sprintory_backend.notification.events.RetroClosed;
 import team.sprintory_backend.project.models.BoardColumnCategory;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
@@ -67,9 +73,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.*;
 
-/** Opening and reading a retro, its cards, votes and actions (docs/retrospectives-docs.md §3.1–§3.8). */
+/** The retro rules of docs/retrospectives-docs.md §3: open, read, cards, votes, actions and close. */
 class RetroServiceTest {
 
     private RetrospectiveRepository retros;
@@ -82,6 +89,8 @@ class RetroServiceTest {
     private TaskApiService taskApi;
     private ProjectAccess access;
     private MentionService mentions;
+    private AuditLogService audit;
+    private ApplicationEventPublisher events;
     private RetroService service;
 
     private Workspace workspace;
@@ -103,8 +112,10 @@ class RetroServiceTest {
         taskApi = mock(TaskApiService.class);
         access = mock(ProjectAccess.class);
         mentions = mock(MentionService.class);
+        audit = mock(AuditLogService.class);
+        events = mock(ApplicationEventPublisher.class);
         service = new RetroService(retros, items, votes, actions, sprints, projects, tasks, taskApi, access,
-                new RichTextParser(JsonMapper.builder().build()), mentions);
+                new RichTextParser(JsonMapper.builder().build()), mentions, audit, events);
 
         workspace = Workspace.builder().id(1L).name("Acme").slug("acme").build();
         project = Project.builder().id(10L).workspace(workspace).name("Mobile").key("MOB")
@@ -850,6 +861,68 @@ class RetroServiceTest {
                 .map(id -> new RetroAction(earlier, null, id, "MOB-" + (id - 200), actor, Instant.now()))
                 .toList());
         return earlier;
+    }
+
+    // --- close (§3.9) ---
+
+    @Test
+    void aManagerClosesTheRetroWithAnAuditEntryAndThenTheEvent() {
+        Retrospective retro = retro(7L);
+        when(retros.lockById(7L)).thenReturn(Optional.of(retro));
+        when(access.requireActive(10L, actor, ProjectPermission.RETRO_MANAGE))
+                .thenReturn(accessAs(ProjectRole.PRODUCT_OWNER));
+
+        RetroResponse closed = service.close(actor, 7L);
+
+        assertEquals(RetroStatus.CLOSED, retro.getStatus());
+        assertNotNull(retro.getClosedAt());
+        assertSame(actor, retro.getClosedByUser());
+        var order = inOrder(retros, access, audit, events);
+        order.verify(retros).lockById(7L);
+        order.verify(access).requireActive(10L, actor, ProjectPermission.RETRO_MANAGE);
+        order.verify(audit).record(same(workspace), same(actor), eq(AuditAction.RETRO_CLOSED),
+                eq(AuditTarget.sprint(sprint)), same(project), eq(AuditChange.of("status", "OPEN", "CLOSED")));
+        order.verify(events).publishEvent(new RetroClosed(project, actor, sprint));
+        assertEquals(RetroStatus.CLOSED, closed.status());
+        assertEquals(9L, closed.closedBy().id());
+        assertEquals(retro.getClosedAt(), closed.closedAt());
+        assertFalse(closed.canManage());
+        assertFalse(closed.canContribute());
+    }
+
+    @Test
+    void closingTwiceIsRetroClosedAndWritesNothing() {
+        Retrospective retro = retro(7L);
+        retro.setStatus(RetroStatus.CLOSED);
+        when(retros.lockById(7L)).thenReturn(Optional.of(retro));
+        when(access.requireActive(10L, actor, ProjectPermission.RETRO_MANAGE))
+                .thenReturn(accessAs(ProjectRole.SCRUM_MASTER));
+
+        RetroConflictException e = assertThrows(RetroConflictException.class, () -> service.close(actor, 7L));
+
+        assertEquals(ErrorCode.RETRO_CLOSED, e.getCode());
+        assertNull(retro.getClosedByUser());
+        verifyNoInteractions(audit, events);
+    }
+
+    @Test
+    void refusedClosesWriteNothing() {
+        Retrospective retro = retro(7L);
+        when(retros.lockById(7L)).thenReturn(Optional.of(retro));
+        when(access.requireActive(10L, actor, ProjectPermission.RETRO_MANAGE))
+                .thenThrow(new AccessDeniedException("no"))
+                .thenThrow(new ResourceNotFoundException("Project not found."))
+                .thenReturn(accessAs(ProjectRole.SCRUM_MASTER));
+
+        assertThrows(AccessDeniedException.class, () -> service.close(actor, 7L));
+        assertEquals("Retrospective not found.",
+                assertThrows(ResourceNotFoundException.class, () -> service.close(actor, 7L)).getMessage());
+        project.setLifecycleStatus(ProjectLifecycleState.COMPLETED);
+        assertEquals(ErrorCode.CONFLICT,
+                assertThrows(RetroConflictException.class, () -> service.close(actor, 7L)).getCode());
+
+        assertEquals(RetroStatus.OPEN, retro.getStatus());
+        verifyNoInteractions(audit, events);
     }
 
     // --- fixtures ---

@@ -61,6 +61,14 @@ class RetroControllerTest {
     }
 
     @Test
+    void closeAnswersTheClosedBoard() {
+        RetroResponse closed = mock(RetroResponse.class);
+        when(service.close(actor, 7L)).thenReturn(closed);
+
+        assertSame(closed, controller.close(principal, 7L));
+    }
+
+    @Test
     void addingACardAnswers201AndDeletingOne204() {
         RetroItemRequest request = new RetroItemRequest(RetroColumn.IDEAS, "{}");
         RetroItemResponse card = mock(RetroItemResponse.class);

@@ -83,6 +83,12 @@ public class RetroController {
                 .body(retros.createAction(principal.getUser(), retroId, request));
     }
 
+    /** §3.9: 200 with the closed board. */
+    @PostMapping("/retros/{retroId}/close")
+    public RetroResponse close(@AuthenticationPrincipal AppUserDetails principal, @PathVariable Long retroId) {
+        return retros.close(principal.getUser(), retroId);
+    }
+
     /** §3.7: 200 with the new state, also when the caller had no vote. */
     @DeleteMapping("/retro-items/{itemId}/votes")
     public RetroVoteResponse unvote(@AuthenticationPrincipal AppUserDetails principal, @PathVariable Long itemId) {
