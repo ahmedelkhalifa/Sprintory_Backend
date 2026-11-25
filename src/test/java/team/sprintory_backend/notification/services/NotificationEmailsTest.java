@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.LocalDate;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,7 @@ import team.sprintory_backend.notification.email.EmailTemplateRenderer;
 import team.sprintory_backend.notification.email.RenderedEmail;
 import team.sprintory_backend.notification.models.NotificationType;
 import team.sprintory_backend.project.models.Project;
+import team.sprintory_backend.sprint.models.Sprint;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
@@ -155,9 +157,19 @@ class NotificationEmailsTest {
     }
 
     @Test
+    void aRetroCardMentionEmailNamesTheRetrospective() {
+        Sprint sprint = new Sprint(project, 3, "MOB Sprint 3", null, null,
+                LocalDate.of(2026, 11, 9), LocalDate.of(2026, 11, 22));
+        sprint.setId(42L);
+
+        assertEquals("[Sprintory] You were mentioned in a retrospective in Mobile App",
+                NotificationEmails.subjectLine(NotificationType.MENTIONED, NotificationSubject.sprint(sprint, damir)));
+    }
+
+    @Test
     void everyTypeHasASubject() {
         for (NotificationType type : NotificationType.values()) {
-            NotificationSubject subject = new NotificationSubject(workspace, project, task, damir);
+            NotificationSubject subject = new NotificationSubject(workspace, project, task, null, damir);
             assertTrue(NotificationEmails.subjectLine(type, subject).startsWith("[Sprintory] "), type.name());
         }
         verify(outbox, never()).enqueue(any(), any());

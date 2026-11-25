@@ -48,6 +48,7 @@ All endpoints require an access-token cookie. Bodies and responses are JSON; fie
 | `overCapacity` | `true` if `capacity` exists and selectedPoints exceeds it. **Never prevents saving.** |
 | `committedPoints` | Point snapshot taken when sprint starts, unchanged afterward. |
 | `completedPoints` | Sum of DONE-category top-level task estimates at completion. |
+| `hasRetro`, `retroId` | Whether the sprint has a retrospective (open or closed) and its id, else `false` / `null` ([retrospectives-docs.md §4](./retrospectives-docs.md#4-changes-to-sprints), PMP-44). Always `false` for `PLANNED` and `ACTIVE` sprints. The history list reads all its retros in one query. |
 
 `CompleteSprintResponse` is `{sprint, carriedOver, toSprint}`. Closing is one transaction; a failure leaves the sprint `ACTIVE`.
 
@@ -57,6 +58,7 @@ All endpoints require an access-token cookie. Bodies and responses are JSON; fie
 - Each moved item's `carriedOverCount` (on `TaskResponse`) goes up by one, and its history gets a `CARRIED_OVER` entry: `oldValue` the closed sprint's name, `newValue` the destination sprint's name or `null` for the backlog, `refId` the closed sprint's id.
 - **Frozen at the end:** `completedPoints` (feeds velocity), `unfinishedPoints`, `goalAchieved`, `goalNote`, and one `sprint_outcomes` row per item (`DONE` or `CARRIED_OVER`, estimate at the end, destination). Later edits to the tasks never change them.
 - Closing writes the audit entry `SPRINT_COMPLETED` and publishes `SprintCompleted`; starting publishes `SprintStarted`. Committed item snapshots survive later estimate changes.
+- **After a close or cancel** the sprint can get a retrospective ([retrospectives-docs.md](./retrospectives-docs.md)): `SprintCompleted` / `SprintCancelled` carry the sprint, so their notifications open the sprint page, and the other retro managers get a `RETRO_REMINDER`.
 
 **Cancel** (`POST /cancel`) ends the sprint as `CANCELLED` with the same split, carry-over to the top of the backlog, `CARRIED_OVER` history, ×N marker and frozen `completedPoints` / `unfinishedPoints` / outcome rows, so reports stay accurate. It stores `cancelReason`, has no goal answer, writes the audit entry `SPRINT_CANCELLED` **including the reason**, and publishes `SprintCancelled` (the notification does not carry the reason). Velocity reads `COMPLETED` sprints only, so a cancelled sprint never counts toward the capacity suggestion.
 
@@ -136,11 +138,13 @@ All errors have the common `{status,code,message,path,timestamp}` shape (and opt
 | Carry-over to the top of the backlog / planned sprint / new sprint, "Carried over ×N", `CARRIED_OVER` history | Implemented (PMP-41) |
 | Daily overdue reminder to the Scrum Masters (`SPRINT_OVERDUE`) | Implemented (PMP-41) |
 | Scrum board: `activeSprint` summary and per-column sprint counts | Implemented (PMP-40) |
+| `hasRetro` / `retroId` on every `SprintResponse`; retro reminder on close and cancel | Implemented (PMP-44) |
 | Frontend wiring and acceptance validation | Separate (PMP-120 / PMP-121, PMP-123 / PMP-124) |
 
 **Migrations:**
 - `V15__sprint_planning.sql` (requires V14 attachments) creates sprint and history tables, assigns nullable task sprint IDs, installs cascade/SET NULL FKs, sets project default 14 and range 2–90, and extends `ck_task_history_type` with `SPRINT_SCOPE_CHANGED`.
 - `V16__sprint_close_cancel.sql` adds `CANCELLED` to `ck_sprint_status`; `unfinished_points`, `goal_achieved`, `outcome_note`, `cancel_reason` on `sprints`; `tasks.carry_over_count` (default 0); the `sprint_outcomes` table; and extends `ck_task_history_type` (`CARRIED_OVER`), `ck_audit_log_entries_action` (`SPRINT_COMPLETED`, `SPRINT_CANCELLED`), `ck_audit_log_entries_target_type` (`SPRINT`) and `ck_notifications_type` (`SPRINT_OVERDUE`).
+- `V18__retrospectives.sql` (PMP-44) adds the retro tables, which cascade from `sprints`, and `notifications.sprint_id` / `sprint_name`.
 
 The entity DDL annotations mirror these constraints for dev/test databases built by `ddl-auto`.
 

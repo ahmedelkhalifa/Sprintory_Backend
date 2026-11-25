@@ -73,8 +73,9 @@ public class NotificationEmails {
             case TASK_ASSIGNED -> task(subject) + ": you were assigned";
             case TASK_STATUS_CHANGED -> task(subject) + ": status changed";
             case TASK_COMMENTED -> task(subject) + ": new comment";
-            // A chat mention (PMP-137) has a project but no task.
+            // A retro card mention (PMP-44) has a sprint; a chat mention (PMP-137) only a project.
             case MENTIONED -> subject.task() != null ? task(subject) + ": you were mentioned"
+                    : subject.sprint() != null ? "You were mentioned in a retrospective in " + subject.project().getName()
                     : "You were mentioned in the " + subject.project().getName() + " chat";
             case PROJECT_MEMBER_ADDED -> "You were added to " + subject.project().getName();
             case PROJECT_ROLES_CHANGED -> "Your roles in " + subject.project().getName() + " changed";

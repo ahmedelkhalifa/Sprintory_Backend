@@ -1,6 +1,6 @@
 # Sprintory — Sprint retrospectives API contract (R31, PMP-44)
 
-**Status:** contract agreed, backend not started (PMP-147, branch `features/retrospectives-pmp-44`, 24 Nov 2026). Frontend (PMP-148, Mobeen) can build against this file now. Acceptance testing: PMP-149 (Amir). See [§11 Implementation status](#11-implementation-status).
+**Status:** backend complete and tested on PostgreSQL (PMP-147, branch `features/retrospectives`, 25 Nov 2026). Frontend (PMP-148, Mobeen) can build against this file now. Acceptance testing: PMP-149 (Amir). See [§11 Implementation status](#11-implementation-status).
 **Applies to:** backend `/api/v1/sprints/{sprintId}/retro`, `/api/v1/retros/**`, `/api/v1/retro-items/**`, the `hasRetro` / `retroId` fields of `SprintResponse`, and the `sprint` part of notifications.
 **Related:** [Sprints](./sprints-docs.md), [Tasks](./tasks-docs.md), [Mentions and rich text](./mentions-docs.md), [Notifications](./notifications-docs.md), [Audit log](./audit-log-docs.md), [Roles and permissions](./roles-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R31.
 
@@ -396,25 +396,27 @@ Migration `V18__retrospectives.sql`.
 - **No project-level retros**: one per sprint only.
 - **No reopening, renaming or deleting a retro**, and no restoring a deleted card.
 - **No editing an action** from the retro: change its task instead.
+- **The email of a retro or sprint notification links to the project page**, not the sprint page (there is no frontend sprint URL setting yet). The bell opens the sprint page ([§7.2](#72-notification-clicks)).
 
 ---
 
 ## 11. Implementation status
 
-As of 24 Nov 2026:
+As of 25 Nov 2026:
 
 | Part | Status |
 | --- | --- |
 | This contract | Written, agreed with the backend owner; frontend can start |
-| Permissions `RETRO_MANAGE`, `RETRO_CONTRIBUTE` | Not started |
-| `V18__retrospectives.sql`, entities, repositories | Not started |
-| Open / read (3.1, 3.2), `hasRetro` / `retroId` | Not started |
-| Cards and mentions (3.3–3.5) | Not started |
-| Voting (3.6, 3.7) | Not started |
-| Action items (3.8) | Not started |
-| Close and audit (3.9) | Not started |
-| Notifications (§6) and the `sprint` part | Not started |
-| Integration test on PostgreSQL | Not started |
+| Permissions `RETRO_MANAGE`, `RETRO_CONTRIBUTE` | Done (24 Nov), matrix test in `ProjectRoleTest` |
+| `V18__retrospectives.sql`, entities, repositories | Done (24 Nov), validated by the context test |
+| Open / read (3.1, 3.2), `hasRetro` / `retroId` | Done (24 Nov) |
+| Cards and mentions (3.3–3.5) | Done (25 Nov) |
+| Voting (3.6, 3.7) | Done (25 Nov) |
+| Action items (3.8), `actions`, `previousActions` | Done (25 Nov) |
+| Close and audit (3.9) | Done (25 Nov) |
+| Notifications (§6) and the `sprint` part | Done (25 Nov) |
+| Unit tests (`RetroServiceTest`, `RetroControllerTest`, notification tests) | Done |
+| Integration test on PostgreSQL | Done (25 Nov): `RetroIntegrationTest` (4): idempotent open and `UNIQUE(sprint_id)`, reminder and open notifications, `hasRetro` / `retroId` incl. history; cards, mentions, the vote limits and returned votes; actions as real tasks (label, owner, end of a planned sprint), live/deleted task state, `previousActions`; close audit entry, notifications and the frozen retro. Full `clean verify`: 1033 tests, 0 failures |
 | Frontend (PMP-148) and acceptance test (PMP-149) | Not started |
 
 ---
@@ -434,3 +436,7 @@ As of 24 Nov 2026:
 | 24 Nov 2026 | Opening is idempotent and serialized by the project row lock; `UNIQUE(sprint_id)` is the backstop. |
 | 24 Nov 2026 | Retro notifications use the existing `SPRINT` category. Notifications gain a `sprint` reference and a `SPRINT` open target, so the bell can lead to the sprint and its retro. |
 | 24 Nov 2026 | Paths are `/retro-items/…` instead of the story's `/items/…`, which is too generic under `/api/v1`. |
+| 25 Nov 2026 | Every change inside a retro (cards, votes, actions, close) takes the retro row lock first, so nothing lands after a close and two quick votes cannot spend a 4th vote. Edit and delete lock the retro before reading the card. |
+| 25 Nov 2026 | Cards are listed oldest first with no `?sort=`: the board comes whole, so the frontend sorts (by votes) itself, and new cards do not push the others down during a live meeting. |
+| 25 Nov 2026 | Action tasks are created by the normal task code, so a non-member owner gets the task form's message ("The assignee must be a member of this project."). The chosen sprint is checked after the task is created, under the project row lock that starting a sprint also takes. |
+| 25 Nov 2026 | The retro reminder goes to every member holding a role with `RETRO_MANAGE`, read from the permission matrix, except the person who ended the sprint. |

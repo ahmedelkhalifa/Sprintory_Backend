@@ -310,7 +310,7 @@ public class SprintService {
                 AuditChange.of("unfinishedPoints", null, String.valueOf(sprint.getUnfinishedPoints())),
                 AuditChange.of("goalAchieved", null, request.goalAchieved().name()),
                 AuditChange.of("carriedOver", null, carriedOverSummary(split, next)));
-        events.publishEvent(new SprintCompleted(project, actor, sprint.getName()));
+        events.publishEvent(new SprintCompleted(project, actor, sprint));
         return new CompleteSprintResponse(response(sprint), split.unfinished().size(),
                 next == null ? null : response(next));
     }
@@ -342,7 +342,7 @@ public class SprintService {
                 AuditChange.of("completedPoints", null, String.valueOf(sprint.getCompletedPoints())),
                 AuditChange.of("unfinishedPoints", null, String.valueOf(sprint.getUnfinishedPoints())),
                 AuditChange.of("carriedOver", null, carriedOverSummary(split, null)));
-        events.publishEvent(new SprintCancelled(project, actor, sprint.getName()));
+        events.publishEvent(new SprintCancelled(project, actor, sprint));
         return new CompleteSprintResponse(response(sprint), split.unfinished().size(), null);
     }
 

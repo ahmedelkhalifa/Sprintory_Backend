@@ -20,6 +20,8 @@ import team.sprintory_backend.exceptionHandler.ErrorCode;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.mention.services.MentionService;
 import team.sprintory_backend.notification.events.RetroClosed;
+import team.sprintory_backend.notification.events.RetroMentioned;
+import team.sprintory_backend.notification.events.RetroOpened;
 import team.sprintory_backend.project.models.BoardColumnCategory;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
@@ -68,6 +70,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -173,6 +176,7 @@ class RetroServiceTest {
         assertTrue(retro.canManage());
         assertTrue(retro.canContribute());
         assertEquals(3, retro.votesLeft());
+        verify(events).publishEvent(new RetroOpened(project, actor, sprint));
     }
 
     @Test
@@ -203,6 +207,7 @@ class RetroServiceTest {
         assertEquals(RetroStatus.CLOSED, opened.retro().status());
         assertFalse(opened.retro().canManage(), "a closed retro accepts no changes");
         verify(retros, never()).save(any());
+        verifyNoInteractions(events);
     }
 
     @Test
@@ -403,6 +408,7 @@ class RetroServiceTest {
     @Test
     void addLocksTheRetroThenSavesANormalizedCard() {
         Retrospective retro = addableAs(ProjectRole.MEMBER);
+        when(mentions.newlyMentionedUserIds(eq(project), any(RichTextDocument.class), isNull())).thenReturn(Set.of(31L));
         when(mentions.currentNames(any())).thenReturn(Map.of(RichTextMention.user(31L), "Damir Gabaidullin"));
         String sent = "{\"type\":\"doc\",\"style\":\"x\",\"content\":[{\"type\":\"paragraph\",\"content\":["
                 + text("Ask ") + "," + mention("user", 31, "Damir") + "]}]}";
@@ -425,6 +431,7 @@ class RetroServiceTest {
         assertNull(card.editedAt());
         assertTrue(card.canEdit());
         assertTrue(card.canDelete());
+        verify(events).publishEvent(new RetroMentioned(project, actor, sprint, Set.of(31L), "Ask @Damir"));
     }
 
     @Test
@@ -440,6 +447,7 @@ class RetroServiceTest {
 
         service.addItem(actor, 7L, new RetroItemRequest(RetroColumn.WENT_WELL, doc(text("x".repeat(1000)))));
         verify(items).save(any(RetroItem.class));
+        verifyNoInteractions(events);   // no mentions, nobody to tell
     }
 
     @Test
@@ -495,6 +503,8 @@ class RetroServiceTest {
         String before = card.getBody();
         when(votes.findByItemId(512L)).thenReturn(List.of(new RetroVote(card, damir)));
         String after = doc(text("Stand-ups run long "), mention("user", 31, "Damir"));
+        when(mentions.newlyMentionedUserIds(eq(project), any(RichTextDocument.class), any(RichTextDocument.class)))
+                .thenReturn(Set.of(31L));
 
         RetroItemResponse response = service.editItem(actor, 512L, new CommentRequest(after));
 
@@ -510,6 +520,7 @@ class RetroServiceTest {
         assertEquals(card.getEditedAt(), response.editedAt());
         assertEquals(1, response.voteCount());
         assertFalse(response.votedByMe());
+        verify(events).publishEvent(new RetroMentioned(project, actor, sprint, Set.of(31L), "Stand-ups run long @Damir"));
     }
 
     @Test
@@ -520,6 +531,7 @@ class RetroServiceTest {
 
         assertNull(card.getEditedAt());
         verify(mentions, never()).newlyMentionedUserIds(any(), any(), any());
+        verifyNoInteractions(events);
     }
 
     @Test

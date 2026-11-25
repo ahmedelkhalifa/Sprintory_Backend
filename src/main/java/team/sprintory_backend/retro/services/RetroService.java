@@ -19,6 +19,8 @@ import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.mention.services.MentionService;
 import team.sprintory_backend.notification.events.RetroClosed;
+import team.sprintory_backend.notification.events.RetroMentioned;
+import team.sprintory_backend.notification.events.RetroOpened;
 import team.sprintory_backend.project.models.BoardColumnCategory;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectLifecycleState;
@@ -61,6 +63,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -120,6 +123,7 @@ public class RetroService {
         }
         Retrospective retro = retros.save(
                 new Retrospective(project, sprint, sprint.getName() + " Retrospective", actor));
+        events.publishEvent(new RetroOpened(project, actor, sprint));
         return new Opened(response(retro, actor, checked), true);
     }
 
@@ -134,7 +138,7 @@ public class RetroService {
 
     /**
      * Adds a card (§3.3). The retro row is locked first, so a card never lands in a retro that is
-     * being closed. New mentions are checked before saving; they are notified from step 8 on.
+     * being closed. New mentions are checked before saving and then told (RetroMentioned).
      */
     @Transactional
     public RetroItemResponse addItem(User actor, Long retroId, RetroItemRequest request) {
@@ -146,15 +150,19 @@ public class RetroService {
             throw RetroConflictException.closed();
         }
         RichTextDocument body = parseCard(request.body());
-        mentions.newlyMentionedUserIds(checked.project(), body, null);
+        Set<Long> mentioned = mentions.newlyMentionedUserIds(checked.project(), body, null);
         RetroItem item = items.save(new RetroItem(retro, request.column(), body.json(), actor));
+        if (!mentioned.isEmpty()) {
+            events.publishEvent(new RetroMentioned(checked.project(), actor, retro.getSprint(), mentioned,
+                    body.plainText()));
+        }
         return itemResponse(item, body, mentions.currentNames(List.of(body)), List.of(), actor,
                 true, checked.can(ProjectPermission.RETRO_MANAGE));
     }
 
     /**
      * The author replaces the text (§3.4); nobody else, not even a manager. The same text again
-     * changes nothing; otherwise the card is marked edited and only new mentions are checked.
+     * changes nothing; otherwise the card is marked edited and only new mentions are checked and told.
      */
     @Transactional
     public RetroItemResponse editItem(User actor, Long itemId, CommentRequest request) {
@@ -170,9 +178,14 @@ public class RetroService {
         }
         RichTextDocument body = parseCard(request.body());
         if (!body.json().equals(item.getBody())) {
-            mentions.newlyMentionedUserIds(checked.project(), body, richText.parse(item.getBody()));
+            Set<Long> mentioned = mentions.newlyMentionedUserIds(checked.project(), body,
+                    richText.parse(item.getBody()));
             item.setBody(body.json());
             item.setEditedAt(Instant.now());
+            if (!mentioned.isEmpty()) {
+                events.publishEvent(new RetroMentioned(checked.project(), actor, retro.getSprint(), mentioned,
+                        body.plainText()));
+            }
         }
         return itemResponse(item, body, mentions.currentNames(List.of(body)), votes.findByItemId(itemId), actor,
                 true, checked.can(ProjectPermission.RETRO_MANAGE));

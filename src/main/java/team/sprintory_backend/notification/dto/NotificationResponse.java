@@ -21,7 +21,8 @@ public record NotificationResponse(
         Actor actor,
         WorkspaceRef workspace,
         ProjectRef project,
-        TaskRef task
+        TaskRef task,
+        SprintRef sprint
 ) {
 
     public record Actor(Long id, String name) {}
@@ -31,6 +32,9 @@ public record NotificationResponse(
     public record ProjectRef(Long id, String key, String name) {}
 
     public record TaskRef(Long id, String key, String title) {}
+
+    /** Sprint and retro notifications (PMP-44). */
+    public record SprintRef(Long id, String name) {}
 
     public static NotificationResponse from(Notification n) {
         return new NotificationResponse(
@@ -46,6 +50,7 @@ public record NotificationResponse(
                 // getId() on the lazy proxy reads the foreign key without loading the workspace.
                 n.getWorkspace() == null ? null : new WorkspaceRef(n.getWorkspace().getId(), n.getWorkspaceName()),
                 n.getProjectId() == null ? null : new ProjectRef(n.getProjectId(), n.getProjectKey(), n.getProjectName()),
-                n.getTaskId() == null ? null : new TaskRef(n.getTaskId(), n.getTaskKey(), n.getTaskTitle()));
+                n.getTaskId() == null ? null : new TaskRef(n.getTaskId(), n.getTaskKey(), n.getTaskTitle()),
+                n.getSprintId() == null ? null : new SprintRef(n.getSprintId(), n.getSprintName()));
     }
 }

@@ -7,10 +7,12 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -22,6 +24,9 @@ import team.sprintory_backend.notification.events.PasswordReset;
 import team.sprintory_backend.notification.events.ProjectMemberAdded;
 import team.sprintory_backend.notification.events.ProjectRolesChanged;
 import team.sprintory_backend.notification.events.RepeatedLoginFailures;
+import team.sprintory_backend.notification.events.RetroClosed;
+import team.sprintory_backend.notification.events.RetroMentioned;
+import team.sprintory_backend.notification.events.RetroOpened;
 import team.sprintory_backend.notification.events.SprintCancelled;
 import team.sprintory_backend.notification.events.SprintCompleted;
 import team.sprintory_backend.notification.events.SprintOverdue;
@@ -37,6 +42,7 @@ import team.sprintory_backend.notification.models.NotificationType;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectRole;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
+import team.sprintory_backend.sprint.models.Sprint;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
@@ -119,7 +125,7 @@ class NotificationListenerTest {
         listener.on(new TaskAssigned(task, damir, ada));
 
         verify(notifications).create(eq(17L), eq(NotificationType.TASK_ASSIGNED),
-                eq(new NotificationSubject(workspace, project, task, damir)), anyString(), isNull());
+                eq(new NotificationSubject(workspace, project, task, null, damir)), anyString(), isNull());
     }
 
     @Test
@@ -361,14 +367,83 @@ class NotificationListenerTest {
     }
 
     @Test
-    void completedAndCancelledSprintsUseTheirOwnTypes() {
-        listener.on(new SprintCompleted(project, damir, "MOB Sprint 4"));
-        listener.on(new SprintCancelled(project, damir, "MOB Sprint 5"));
+    void completedAndCancelledSprintsUseTheirOwnTypesAndPointToTheSprint() {
+        Sprint fourth = sprint(44L, "MOB Sprint 4");
+        Sprint fifth = sprint(45L, "MOB Sprint 5");
+
+        listener.on(new SprintCompleted(project, damir, fourth));
+        listener.on(new SprintCancelled(project, damir, fifth));
 
         verifyNotified(17L, NotificationType.SPRINT_COMPLETED,
                 "Damir Gabaidullin completed \"MOB Sprint 4\" in \"Mobile App\"");
         verifyNotified(17L, NotificationType.SPRINT_CANCELLED,
                 "Damir Gabaidullin cancelled \"MOB Sprint 5\" in \"Mobile App\"");
+        verify(notifications).create(eq(17L), eq(NotificationType.SPRINT_COMPLETED),
+                eq(NotificationSubject.sprint(fourth, damir)), anyString(), isNull());
+    }
+
+    // --- retrospectives (PMP-44) ---
+
+    @Test
+    void anEndedSprintRemindsTheOtherRetroManagersWhoAreStillMembers() {
+        // Damir ended it; Grace and Linus manage retros; 99 manages retros but left the project.
+        when(projectMembers.findUserIdsByProjectIdAndRoleIn(eq(PROJECT_ID), any())).thenReturn(List.of(31L, 18L, 19L, 99L));
+        Sprint sprint = sprint(42L, "MOB Sprint 3");
+
+        listener.on(new SprintCompleted(project, damir, sprint));
+        listener.on(new SprintCancelled(project, damir, sprint));
+
+        String reminder = "\"MOB Sprint 3\" in \"Mobile App\" ended. Start the retrospective.";
+        verify(notifications, times(2)).create(18L, NotificationType.RETRO_REMINDER,
+                NotificationSubject.sprint(sprint, damir), reminder, null);
+        verify(notifications, times(2)).create(19L, NotificationType.RETRO_REMINDER,
+                NotificationSubject.sprint(sprint, damir), reminder, null);
+        verify(notifications, never()).create(eq(17L), eq(NotificationType.RETRO_REMINDER), any(), any(), any());
+        verify(notifications, never()).create(eq(31L), eq(NotificationType.RETRO_REMINDER), any(), any(), any());
+        verifyNotNotified(99L);
+    }
+
+    @Test
+    void theReminderAsksForTheRolesThatManageRetrosInTheMatrix() {
+        listener.on(new SprintCompleted(project, damir, sprint(42L, "MOB Sprint 3")));
+
+        verify(projectMembers).findUserIdsByProjectIdAndRoleIn(PROJECT_ID,
+                List.of(ProjectRole.PROJECT_MANAGER, ProjectRole.PRODUCT_OWNER, ProjectRole.SCRUM_MASTER));
+    }
+
+    @Test
+    void anOpenedOrClosedRetroNotifiesEveryMemberButTheActor() {
+        Sprint sprint = sprint(42L, "MOB Sprint 3");
+
+        listener.on(new RetroOpened(project, linus, sprint));
+        listener.on(new RetroClosed(project, linus, sprint));
+
+        for (Long member : List.of(17L, 18L, 31L)) {
+            verify(notifications).create(member, NotificationType.RETRO_OPENED, NotificationSubject.sprint(sprint, linus),
+                    "Linus Torvalds opened the retrospective of \"MOB Sprint 3\" in \"Mobile App\"", null);
+            verify(notifications).create(member, NotificationType.RETRO_CLOSED, NotificationSubject.sprint(sprint, linus),
+                    "Linus Torvalds closed the retrospective of \"MOB Sprint 3\" in \"Mobile App\"", null);
+        }
+        verifyNotNotified(19L);
+    }
+
+    @Test
+    void aCardMentionNotifiesOnlyTheMentionedMembersWithAnExcerpt() {
+        Sprint sprint = sprint(42L, "MOB Sprint 3");
+
+        listener.on(new RetroMentioned(project, damir, sprint, Set.of(17L, 31L, 99L), "Ask @Ada about the build"));
+
+        verify(notifications).create(17L, NotificationType.MENTIONED, NotificationSubject.sprint(sprint, damir),
+                "Damir Gabaidullin mentioned you in the retrospective of \"MOB Sprint 3\"", "Ask @Ada about the build");
+        verifyNotNotified(31L);
+        verifyNotNotified(99L);
+        verifyNotNotified(18L);
+    }
+
+    private Sprint sprint(Long id, String name) {
+        Sprint sprint = new Sprint(project, 3, name, null, null, LocalDate.of(2026, 11, 9), LocalDate.of(2026, 11, 22));
+        sprint.setId(id);
+        return sprint;
     }
 
     @Test

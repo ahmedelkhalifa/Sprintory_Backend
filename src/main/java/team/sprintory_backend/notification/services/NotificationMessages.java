@@ -72,6 +72,23 @@ public final class NotificationMessages {
                 + " ago and is still active. Close it to carry over unfinished work.";
     }
 
+    /** "MOB Sprint 3" in "Mobile App" ended. Start the retrospective. */
+    public static String retroReminder(Project project, String sprintName) {
+        return quoted(sprintName) + " in " + quoted(project.getName()) + " ended. Start the retrospective.";
+    }
+
+    public static String retroOpened(User actor, Project project, String sprintName) {
+        return name(actor) + " opened the retrospective of " + quoted(sprintName) + " in " + quoted(project.getName());
+    }
+
+    public static String retroClosed(User actor, Project project, String sprintName) {
+        return name(actor) + " closed the retrospective of " + quoted(sprintName) + " in " + quoted(project.getName());
+    }
+
+    public static String mentionedInRetro(User actor, String sprintName) {
+        return name(actor) + " mentioned you in the retrospective of " + quoted(sprintName);
+    }
+
     public static String invited(User inviter, Workspace workspace) {
         return name(inviter) + " invited you to the workspace " + quoted(workspace.getName())
                 + ". Open the invitation email to join.";
