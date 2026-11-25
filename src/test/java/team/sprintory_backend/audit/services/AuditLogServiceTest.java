@@ -205,9 +205,10 @@ class AuditLogServiceTest {
         assertEquals(AuditArea.PROJECT, AuditAction.PROJECT_ROLES_CHANGED.area());
         assertEquals(AuditArea.PROJECT, AuditAction.SPRINT_COMPLETED.area());
         assertEquals(AuditArea.PROJECT, AuditAction.SPRINT_CANCELLED.area());
+        assertEquals(AuditArea.PROJECT, AuditAction.RETRO_CLOSED.area());
         assertEquals(AuditArea.TASK, AuditAction.TASK_RESTORED.area());
         assertEquals(AuditArea.SECURITY, AuditAction.LOGIN_FAILED_REPEATED.area());
-        assertEquals(22, AuditAction.values().length, "a new action needs a migration and a row in the docs");
+        assertEquals(23, AuditAction.values().length, "a new action needs a migration and a row in the docs");
     }
 
     // --- reading the log ---

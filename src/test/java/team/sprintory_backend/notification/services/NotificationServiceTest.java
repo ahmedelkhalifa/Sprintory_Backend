@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -43,6 +44,7 @@ import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.services.ProjectAccess;
 import team.sprintory_backend.project.services.ProjectAccessResult;
+import team.sprintory_backend.sprint.models.Sprint;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.user.models.User;
@@ -109,6 +111,22 @@ class NotificationServiceTest {
                 "assigned", null);
 
         verify(events).publishEvent(new NotificationCreated(17L, NotificationResponse.from(n)));
+    }
+
+    @Test
+    void aSprintNotificationStoresAndShowsTheSprint() {
+        Sprint sprint = new Sprint(project, 3, "MOB Sprint 3", null, null,
+                LocalDate.of(2026, 11, 9), LocalDate.of(2026, 11, 22));
+        sprint.setId(42L);
+
+        Notification n = service.create(17L, NotificationType.RETRO_OPENED, NotificationSubject.sprint(sprint, actor),
+                "opened", null);
+
+        assertEquals(15L, n.getProjectId());
+        assertEquals(42L, n.getSprintId());
+        assertEquals("MOB Sprint 3", n.getSprintName());
+        assertNull(n.getTaskId());
+        assertEquals(new NotificationResponse.SprintRef(42L, "MOB Sprint 3"), NotificationResponse.from(n).sprint());
     }
 
     @Test
@@ -280,6 +298,25 @@ class NotificationServiceTest {
     }
 
     @Test
+    void aSprintNotificationPointsAtTheSprintWhileItsProjectIsVisible() {
+        givenNotification(sprintNotification(904L));
+        when(projectAccess.requireVisible(15L, recipient))
+                .thenReturn(new ProjectAccessResult(project, null, null, Set.of()));
+
+        assertEquals(NotificationTargetResponse.sprint(4L, 15L, 42L), service.open(recipient, 904L));
+        verifyNoInteractions(taskRepository);
+    }
+
+    @Test
+    void aSprintNotificationOfAnInvisibleProjectIs404ButRead() {
+        Notification n = givenNotification(sprintNotification(904L));
+        when(projectAccess.requireVisible(15L, recipient)).thenThrow(new ResourceNotFoundException("Project not found."));
+
+        assertThrows(ResourceNotFoundException.class, () -> service.open(recipient, 904L));
+        assertNotNull(n.getReadAt());
+    }
+
+    @Test
     void invitationAndSecurityNotificationsHaveNothingToOpen() {
         Notification invitation = givenNotification(Notification.builder().id(903L).recipient(recipient)
                 .type(NotificationType.WORKSPACE_INVITATION).workspace(workspace).workspaceName("Acme")
@@ -352,6 +389,15 @@ class NotificationServiceTest {
                 .workspace(workspace).workspaceName("Acme")
                 .projectId(15L).projectKey("MOB").projectName("Mobile App")
                 .actorId(31L).actorName("Damir Gabaidullin").message("added")
+                .createdAt(Instant.now()).build();
+    }
+
+    private Notification sprintNotification(Long id) {
+        return Notification.builder().id(id).recipient(recipient).type(NotificationType.RETRO_CLOSED)
+                .workspace(workspace).workspaceName("Acme")
+                .projectId(15L).projectKey("MOB").projectName("Mobile App")
+                .sprintId(42L).sprintName("MOB Sprint 3")
+                .actorId(31L).actorName("Damir Gabaidullin").message("closed")
                 .createdAt(Instant.now()).build();
     }
 }

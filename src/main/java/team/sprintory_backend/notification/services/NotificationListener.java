@@ -1,5 +1,6 @@
 package team.sprintory_backend.notification.services;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -13,6 +14,9 @@ import team.sprintory_backend.notification.events.PasswordReset;
 import team.sprintory_backend.notification.events.ProjectMemberAdded;
 import team.sprintory_backend.notification.events.ProjectRolesChanged;
 import team.sprintory_backend.notification.events.RepeatedLoginFailures;
+import team.sprintory_backend.notification.events.RetroClosed;
+import team.sprintory_backend.notification.events.RetroMentioned;
+import team.sprintory_backend.notification.events.RetroOpened;
 import team.sprintory_backend.notification.events.SprintCancelled;
 import team.sprintory_backend.notification.events.SprintCompleted;
 import team.sprintory_backend.notification.events.SprintOverdue;
@@ -26,7 +30,9 @@ import team.sprintory_backend.notification.events.WorkspaceInvited;
 import team.sprintory_backend.notification.models.NotificationChannel;
 import team.sprintory_backend.notification.models.NotificationType;
 import team.sprintory_backend.project.models.Project;
+import team.sprintory_backend.project.models.ProjectPermission;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
+import team.sprintory_backend.sprint.models.Sprint;
 import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
@@ -127,20 +133,56 @@ public class NotificationListener {
 
     @EventListener
     public void on(SprintStarted event) {
-        notifyProject(NotificationType.SPRINT_STARTED, event.project(), event.actor(),
+        notifyProject(NotificationType.SPRINT_STARTED, NotificationSubject.project(event.project(), event.actor()),
                 NotificationMessages.sprintStarted(event.actor(), event.project(), event.sprintName()));
     }
 
     @EventListener
     public void on(SprintCompleted event) {
-        notifyProject(NotificationType.SPRINT_COMPLETED, event.project(), event.actor(),
-                NotificationMessages.sprintCompleted(event.actor(), event.project(), event.sprintName()));
+        notifyProject(NotificationType.SPRINT_COMPLETED, NotificationSubject.sprint(event.sprint(), event.actor()),
+                NotificationMessages.sprintCompleted(event.actor(), event.project(), event.sprint().getName()));
+        remindRetroManagers(event.project(), event.actor(), event.sprint());
     }
 
     @EventListener
     public void on(SprintCancelled event) {
-        notifyProject(NotificationType.SPRINT_CANCELLED, event.project(), event.actor(),
-                NotificationMessages.sprintCancelled(event.actor(), event.project(), event.sprintName()));
+        notifyProject(NotificationType.SPRINT_CANCELLED, NotificationSubject.sprint(event.sprint(), event.actor()),
+                NotificationMessages.sprintCancelled(event.actor(), event.project(), event.sprint().getName()));
+        remindRetroManagers(event.project(), event.actor(), event.sprint());
+    }
+
+    // --- retrospectives (PMP-44) ---
+
+    @EventListener
+    public void on(RetroOpened event) {
+        notifyProject(NotificationType.RETRO_OPENED, NotificationSubject.sprint(event.sprint(), event.actor()),
+                NotificationMessages.retroOpened(event.actor(), event.project(), event.sprint().getName()));
+    }
+
+    @EventListener
+    public void on(RetroClosed event) {
+        notifyProject(NotificationType.RETRO_CLOSED, NotificationSubject.sprint(event.sprint(), event.actor()),
+                NotificationMessages.retroClosed(event.actor(), event.project(), event.sprint().getName()));
+    }
+
+    @EventListener
+    public void on(RetroMentioned event) {
+        deliver(NotificationType.MENTIONED, NotificationSubject.sprint(event.sprint(), event.actor()),
+                event.userIds(), NotificationMessages.mentionedInRetro(event.actor(), event.sprint().getName()),
+                NotificationMessages.excerpt(event.plainText()));
+    }
+
+    /**
+     * When a sprint ends, everyone who may open its retro, except the person who ended it (they
+     * get the prompt instead). The roles come from the matrix, never from role names.
+     */
+    private void remindRetroManagers(Project project, User actor, Sprint sprint) {
+        List<ProjectRole> managers = Arrays.stream(ProjectRole.values())
+                .filter(role -> role.permissions().contains(ProjectPermission.RETRO_MANAGE))
+                .toList();
+        deliver(NotificationType.RETRO_REMINDER, NotificationSubject.sprint(sprint, actor),
+                projectMembers.findUserIdsByProjectIdAndRoleIn(project.getId(), managers),
+                NotificationMessages.retroReminder(project, sprint.getName()), null);
     }
 
     /** The daily reminder (PMP-41) goes to the Scrum Masters only; it has no actor. */
@@ -177,9 +219,9 @@ public class NotificationListener {
 
     // --- delivery ---
 
-    private void notifyProject(NotificationType type, Project project, User actor, String message) {
-        deliver(type, NotificationSubject.project(project, actor),
-                projectMembers.findUserIdsByProjectId(project.getId()), message, null);
+    /** Every member of the subject's project (but the actor). */
+    private void notifyProject(NotificationType type, NotificationSubject subject, String message) {
+        deliver(type, subject, projectMembers.findUserIdsByProjectId(subject.project().getId()), message, null);
     }
 
     private void deliver(NotificationType type, NotificationSubject subject, Collection<Long> candidates,

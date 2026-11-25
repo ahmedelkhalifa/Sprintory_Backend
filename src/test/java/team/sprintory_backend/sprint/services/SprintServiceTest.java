@@ -14,6 +14,8 @@ import team.sprintory_backend.project.services.ProjectAccess;
 import team.sprintory_backend.project.services.ProjectAccessResult;
 import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.repositories.ProjectMemberRepository;
+import team.sprintory_backend.retro.models.Retrospective;
+import team.sprintory_backend.retro.repositories.RetrospectiveRepository;
 import team.sprintory_backend.sprint.dto.*;
 import team.sprintory_backend.sprint.exceptions.SprintConflictException;
 import team.sprintory_backend.sprint.models.*;
@@ -57,6 +59,7 @@ class SprintServiceTest {
     private SprintOutcomeRepository outcomes;
     private TaskStatusHistoryService taskHistory;
     private AuditLogService audit;
+    private RetrospectiveRepository retros;
     private SprintService service;
     private Project project;
     private Sprint sprint;
@@ -81,9 +84,61 @@ class SprintServiceTest {
                 LocalDate.now(), LocalDate.now().plusDays(13));
         sprint.setId(20L);
         actor = User.builder().id(2L).firstName("Sam").lastName("Master").email("sam@test.invalid").build();
+        retros = mock(RetrospectiveRepository.class);
         service = new SprintService(repository, availability, commitments, changes, access, projects,
                 members, users, tasks, events, mock(ProjectService.class), mock(SprintScopeHistoryWriter.class),
-                outcomes, taskHistory, audit);
+                outcomes, taskHistory, audit, retros);
+    }
+
+    // --- PMP-44: hasRetro / retroId ---
+
+    private void readableAsMember() {
+        when(access.require(10L, actor, ProjectPermission.VIEW_WORK))
+                .thenReturn(new ProjectAccessResult(project, null, null, Set.of(ProjectPermission.VIEW_WORK)));
+    }
+
+    @Test void anEndedSprintShowsItsRetro() {
+        readableAsMember();
+        sprint.setStatus(SprintStatus.COMPLETED);
+        when(repository.findById(20L)).thenReturn(Optional.of(sprint));
+        when(retros.findIdBySprintId(20L)).thenReturn(Optional.of(7L));
+
+        SprintResponse response = service.get(actor, 20L);
+
+        assertTrue(response.hasRetro());
+        assertEquals(7L, response.retroId());
+    }
+
+    @Test void aPlannedSprintHasNoRetroAndIsNotLookedUp() {
+        readableAsMember();
+        when(repository.findById(20L)).thenReturn(Optional.of(sprint));
+
+        SprintResponse response = service.get(actor, 20L);
+
+        assertFalse(response.hasRetro());
+        assertNull(response.retroId());
+        verify(retros, never()).findIdBySprintId(any());
+    }
+
+    @Test void historyReadsTheRetrosOfAllEndedSprintsInOneQuery() {
+        readableAsMember();
+        sprint.setStatus(SprintStatus.COMPLETED);
+        Sprint cancelled = new Sprint(project, 2, "SPR Sprint 2", "Goal", null, null, null);
+        cancelled.setId(21L);
+        cancelled.setStatus(SprintStatus.CANCELLED);
+        when(repository.findByProjectIdAndStatusInOrderByNumberAsc(10L,
+                List.of(SprintStatus.COMPLETED, SprintStatus.CANCELLED))).thenReturn(List.of(sprint, cancelled));
+        Retrospective retro = new Retrospective(project, sprint, "SPR Sprint 1 Retrospective", actor);
+        retro.setId(7L);
+        when(retros.findBySprintIdIn(List.of(20L, 21L))).thenReturn(List.of(retro));
+
+        List<SprintResponse> history = service.history(actor, 10L);
+
+        assertEquals(7L, history.get(0).retroId());
+        assertTrue(history.get(0).hasRetro());
+        assertNull(history.get(1).retroId());
+        assertFalse(history.get(1).hasRetro());
+        verify(retros, never()).findIdBySprintId(any());
     }
 
     private void writable() {
