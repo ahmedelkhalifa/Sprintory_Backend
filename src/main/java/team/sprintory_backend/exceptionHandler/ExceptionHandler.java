@@ -1,5 +1,6 @@
 package team.sprintory_backend.exceptionHandler;
 
+import team.sprintory_backend.dependency.exceptions.DependencyConflict;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +45,13 @@ import java.util.Map;
 public class ExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ExceptionHandler.class);
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(DependencyConflict.class)
+    public ResponseEntity<ErrorResponse> handleDependencyConflict(DependencyConflict e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.builder()
+            .timestamp(Instant.now()).status(409).code(e.code()).message(e.getMessage())
+            .path(request.getRequestURI()).cyclePath(e.cyclePath()).openBlockers(e.openBlockers()).build());
+    }
 
     /**
      * Both cases return the same body on purpose, so the response never reveals

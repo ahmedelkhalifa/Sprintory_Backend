@@ -1,5 +1,7 @@
 package team.sprintory_backend.task.services;
 
+import team.sprintory_backend.dependency.services.UnblockedTracker;
+import team.sprintory_backend.dependency.services.BlockedStateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
@@ -78,6 +80,8 @@ public class TaskApiService {
     private final ApplicationEventPublisher events;
     private final TaskContent content;
     private final SprintScopeHistoryWriter sprintHistory;
+    private final BlockedStateService blockedState;
+    private final UnblockedTracker unblocked;
 
     /**
      * Creates the task with the next key ({@code MOB-42}) in the board's first column: To Do for
@@ -135,9 +139,11 @@ public class TaskApiService {
         var page = taskRepository.findAll(TaskSpecifications.matching(projectId, filters), sorted);
         Map<Long, int[]> progress = progressByParentIds(page.getContent().stream()
                 .map(Task::getId).toList());
+        var blockers = blockedState.openBlockers(page.getContent().stream().map(Task::getId).toList());
         return PageResponse.from(page.map(task -> {
             int[] counts = progress.getOrDefault(task.getId(), new int[]{0, 0});
-            return TaskResponse.from(task).withProgress(counts[0], counts[1]);
+            return TaskResponse.from(task).withProgress(counts[0], counts[1])
+                    .withBlockers(blockers.getOrDefault(task.getId(), List.of()));
         }));
     }
 
@@ -154,12 +160,15 @@ public class TaskApiService {
     @Transactional
     public TaskResponse update(User user, Long projectId, Long taskId, UpdateTaskRequest request) {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
-        // Board configuration and moves lock the project; do the same before loading status.
-        if (request.statusId() != null) projectRepository.lockById(projectId);
+        // Only status edits need the board/project lock, before loading the task.
+        if (request.statusId() != null) {
+            projectRepository.lockById(projectId);
+        }
         Task task = requireTask(projectId, taskId);
         if (task.getParent() != null) {
             throw new BadRequestException("Use the subtask endpoint to edit a subtask.");
         }
+        Set<Long> previouslyBlocked = request.statusId() != null ? unblocked.before(projectId) : Set.of();
         TaskSnapshot before = TaskSnapshot.of(task);
         // Check a new description and its newly added mentions before anything changes.
         RichTextDocument description = request.clearDescription() ? null
@@ -179,6 +188,7 @@ public class TaskApiService {
         if (request.statusId() != null) {
             ProjectBoardColumn status = requireColumn(projectId, request.statusId());
             if (!status.getId().equals(task.getStatus().getId())) {
+                blockedState.requireMoveConfirmation(task, status, request.confirmBlocked());
                 requireCompletionConfirmation(task, status, request.confirmOpenSubtasks());
                 // Last in the new column. Read the column before the task joins it, under the lock.
                 long position = TaskRanks.last(taskRepository.findMaxBoardPosition(projectId, status.getId()));
@@ -222,6 +232,7 @@ public class TaskApiService {
             events.publishEvent(new TaskAssigned(task, user, newAssignee));
         }
         content.publishMentions(task, user, mentioned, description);
+        if (changedColumn) unblocked.after(projectId, previouslyBlocked, user);
         return changedColumn ? saved.withWipWarning(wipWarning(projectId, task.getStatus())) : saved;
     }
 
@@ -231,6 +242,7 @@ public class TaskApiService {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
         projectRepository.lockById(projectId);
         Task task = requireTask(projectId, taskId);
+        Set<Long> previouslyBlocked = unblocked.before(projectId);
         Instant deletedAt = Instant.now();
         if (task.getParent() == null) {
             // Only currently live children are cascade-deleted. A child deleted earlier by its
@@ -252,6 +264,7 @@ public class TaskApiService {
         task.setDeletedAt(deletedAt);
         taskRepository.save(task);
         auditLog.record(project.getWorkspace(), user, AuditAction.TASK_DELETED, AuditTarget.task(task), project);
+        unblocked.after(projectId, previouslyBlocked, user);
     }
 
     /** Restore a deleted task; only cascade-deleted children follow their parent back. */
@@ -294,7 +307,9 @@ public class TaskApiService {
             throw new BadRequestException("Subtasks cannot appear as separate board cards.");
         }
         ProjectBoardColumn target = requireColumn(projectId, request.statusId());
+        blockedState.requireMoveConfirmation(task, target, request.confirmBlocked());
         requireCompletionConfirmation(task, target, request.confirmOpenSubtasks());
+        Set<Long> previouslyBlocked = unblocked.before(projectId);
         Task after = requirePlaceAfter(projectId, task, request.afterTaskId());
         if (after != null && !after.getStatus().getId().equals(target.getId())) {
             throw new BadRequestException("The task to place it after must be in the target column.");
@@ -315,6 +330,7 @@ public class TaskApiService {
                     Task::setBoardPosition);
         }
         TaskResponse saved = responseWithProgress(taskRepository.saveAndFlush(task));
+        unblocked.after(projectId, previouslyBlocked, user);
         return saved.withWipWarning(wipWarning(projectId, target));
     }
 
@@ -411,7 +427,8 @@ public class TaskApiService {
         if (task.getParent() != null) return response;
         Map<Long, int[]> progress = progressByParentIds(List.of(task.getId()));
         int[] counts = progress.getOrDefault(task.getId(), new int[]{0, 0});
-        return response.withProgress(counts[0], counts[1]);
+        return response.withProgress(counts[0], counts[1]).withBlockers(
+                blockedState.openBlockers(List.of(task.getId())).getOrDefault(task.getId(), List.of()));
     }
 
     private Map<Long, int[]> progressByParentIds(List<Long> parentIds) {

@@ -128,6 +128,29 @@ public class TaskStatusHistoryService {
         save(task, TaskHistoryType.ATTACHMENT_REMOVED, null, attachment.getFileName(), null, attachment.getId(), actor);
     }
 
+    /** A dependency was created: append one directional entry to each live task. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordDependencyAdded(Task blocker, Task blocked, User actor) {
+        save(blocker, TaskHistoryType.DEPENDENCY_ADDED, null, null,
+                "Blocks " + blocked.getKey(), blocked.getId(), actor);
+        save(blocked, TaskHistoryType.DEPENDENCY_ADDED, null, null,
+                "Blocked by " + blocker.getKey(), blocker.getId(), actor);
+    }
+
+    /**
+     * A retained dependency was removed. The caller resolved both keys within the authorized
+     * project, including deleted rows. Use ID-only JPA references for the history foreign keys:
+     * the Task SQLRestriction hides tombstones from reads, so never dereference these references.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordDependencyRemoved(Long blockerId, String blockerKey, Long blockedId,
+                                        String blockedKey, User actor) {
+        save(taskRepository.getReferenceById(blockerId), TaskHistoryType.DEPENDENCY_REMOVED,
+                null, "Blocks " + blockedKey, null, blockedId, actor);
+        save(taskRepository.getReferenceById(blockedId), TaskHistoryType.DEPENDENCY_REMOVED,
+                null, "Blocked by " + blockerKey, null, blockerId, actor);
+    }
+
     /** A sprint membership change; null from/to means product backlog. */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordSprintScopeChanged(Task task, String from, String to, User actor, Long sprintId) {

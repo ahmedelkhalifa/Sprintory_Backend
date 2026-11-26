@@ -449,3 +449,7 @@ The frontend shows a warning, allows explicit confirmation, and retries the *sam
 ### 11.5 Test expectations
 
 The full suite is `bash ./mvnw clean verify` (Docker required for PostgreSQL Testcontainers). New integration tests cover restoration including a removed column, uniqueness of keys, cascade versus manual deletion, parent progress, distinct estimate units, board/WIP exclusion, DONE confirmation, column rehoming history and role-based access checks. Validate against a Flyway-created schema at V10. **Do not mark these tests as passing until they run in the project's Java/Maven environment.**
+
+## Task dependencies (PMP-45)
+
+`TaskResponse` adds `blocked` and `openBlockers`; list accepts `blockedOnly=true`. Board position and task PATCH accept `confirmBlocked` for forward moves after the dependency warning. See [dependencies-docs.md](./dependencies-docs.md) for exact fields, errors and flows.

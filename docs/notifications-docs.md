@@ -597,3 +597,7 @@ Code lives in `notification/{events,models,repositories,services,controllers,dto
 - **A `FAILED` email is not resent automatically after its last retry.** It is visible only in the server log and the outbox table.
 - **A rare duplicate email is possible.** If the database fails in the moment between the mail server accepting an email and the outbox row being marked `SENT`, the row stays `PENDING` and the email is sent again on the next run.
 - **Changing preferences does not touch emails already queued.** They are still sent.
+
+## Task unblocked (PMP-45)
+
+`TASK_UNBLOCKED` uses `STATUS_CHANGE` preferences and ordinary task navigation. Message `KEY is no longer blocked.` goes only to the current member assignee, including when the assignee is the actor (an explicit exception to the usual actor-exclusion rule). See [dependencies-docs.md §7](./dependencies-docs.md#7-history-and-notifications).

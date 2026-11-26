@@ -25,5 +25,7 @@ public enum TaskHistoryType {
      * {@code newValue} the destination sprint's name (null for the backlog), {@code refId} the
      * source sprint id.
      */
-    CARRIED_OVER
+    CARRIED_OVER,
+    DEPENDENCY_ADDED,
+    DEPENDENCY_REMOVED
 }

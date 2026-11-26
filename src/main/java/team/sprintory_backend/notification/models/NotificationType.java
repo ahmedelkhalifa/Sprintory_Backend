@@ -7,6 +7,7 @@ package team.sprintory_backend.notification.models;
 public enum NotificationType {
     TASK_ASSIGNED(NotificationCategory.ASSIGNMENT),
     TASK_STATUS_CHANGED(NotificationCategory.STATUS_CHANGE),
+    TASK_UNBLOCKED(NotificationCategory.STATUS_CHANGE),
     TASK_COMMENTED(NotificationCategory.COMMENT),
     MENTIONED(NotificationCategory.MENTION),
     PROJECT_MEMBER_ADDED(NotificationCategory.PROJECT_MEMBERSHIP),

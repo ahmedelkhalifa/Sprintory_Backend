@@ -1,5 +1,8 @@
 package team.sprintory_backend.task.services;
 
+import team.sprintory_backend.sprint.services.SprintScopeHistoryWriter;
+import team.sprintory_backend.dependency.services.UnblockedTracker;
+import team.sprintory_backend.dependency.services.BlockedStateService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -104,7 +107,7 @@ class TaskApiServiceTest {
                 columnRepository, userRepository,
                 new ProjectBoardStrategies(List.of(new ScrumBoardStrategy(), new KanbanBoardStrategy())),
                 history, auditLog, events,
-                new TaskContent(new RichTextParser(JsonMapper.builder().build()), mentions, events), mock(team.sprintory_backend.sprint.services.SprintScopeHistoryWriter.class));
+                new TaskContent(new RichTextParser(JsonMapper.builder().build()), mentions, events), mock(SprintScopeHistoryWriter.class), mock(BlockedStateService.class), mock(UnblockedTracker.class));
         user = User.builder().id(42L).firstName("Ada").lastName("Lovelace")
                 .email("ada@example.com").build();
 
@@ -252,6 +255,18 @@ class TaskApiServiceTest {
         assertEquals(doc("Details"), response.description());
         assertEquals(7L, response.assigneeId(), "assignee was not sent, so it is unchanged");
         assertEquals("MOB-5", task.getKey());
+    }
+
+    @Test
+    void titleOnlyUpdateDoesNotLockProject() {
+        givenTask();
+
+        TaskResponse updated = service.update(user, PROJECT_ID, 5L,
+                new UpdateTaskRequest("New title", null, null, null, null,
+                        null, null, null, false, false, false));
+
+        assertEquals("New title", updated.title());
+        verify(projectRepository, never()).lockById(anyLong());
     }
 
     @Test

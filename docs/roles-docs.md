@@ -62,6 +62,7 @@ The creator of a workspace is its first admin; people who accept an invitation j
 | `COMMENT` | Comment on tasks; edit and delete own comments | R10 | ✓ | ✓ | ✓ | ✓ | | |
 | `MODERATE_COMMENTS` | Delete anyone's comment, chat message or attachment (never edit it) | R10 / PMP-133, R25 / PMP-141 | ✓ | | | | | |
 | `EDIT_CHARTER` | Edit charter goals, scope and stakeholders | R08 / PMP-116 | ✓ | ✓ | | | | |
+| `DEPENDENCY_MANAGE` | Add/remove task dependencies | PMP-45 | ✓ | ✓ | ✓ | ✓ | | |
 | `LOG_TIME` | Log time on tasks | R19 | ✓ | ✓ | ✓ | ✓ | | |
 | `RETRO_MANAGE` | Open a sprint retrospective, add action items, close it, delete anyone's card | R31 / PMP-44 | ✓ | ✓ | ✓ | | | |
 | `RETRO_CONTRIBUTE` | Add, edit and delete own retrospective cards; vote | R31 / PMP-44 | ✓ | ✓ | ✓ | ✓ | | |
@@ -109,7 +110,7 @@ Example project response for a Scrum Master who is also Product Owner:
   "name": "Mobile App",
   "template": "SCRUM",
   "roles": ["PRODUCT_OWNER", "SCRUM_MASTER"],
-  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "MANAGE_BACKLOG", "MANAGE_SPRINTS", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE"]
+  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "MANAGE_BACKLOG", "MANAGE_SPRINTS", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE", "DEPENDENCY_MANAGE"]
 }
 ```
 

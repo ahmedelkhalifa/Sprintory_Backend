@@ -1,5 +1,6 @@
 package team.sprintory_backend.project.services;
 
+import team.sprintory_backend.dependency.services.UnblockedTracker;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -62,7 +63,7 @@ class ProjectBoardServiceTest {
         when(access.requireVisible(projectId, pm)).thenReturn(granted);
         service = new ProjectBoardService(boards, columns,
                 new ProjectBoardStrategies(List.of(new KanbanBoardStrategy(), new ScrumBoardStrategy())),
-                access, projects, tasks, history, sprints);
+                access, projects, tasks, history, sprints, mock(UnblockedTracker.class));
     }
 
     @Test

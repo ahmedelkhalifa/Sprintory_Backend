@@ -52,7 +52,9 @@ public enum ProjectPermission {
      */
     RETRO_MANAGE,
     /** Add, edit and delete one's own retrospective cards, and vote (R31, PMP-44). Everyone but the Viewer. */
-    RETRO_CONTRIBUTE;
+    RETRO_CONTRIBUTE,
+    /** Add or remove task dependencies (PMP-45). */
+    DEPENDENCY_MANAGE;
 
     /**
      * What a workspace admin may do in every project of their workspace, member or not: manage
