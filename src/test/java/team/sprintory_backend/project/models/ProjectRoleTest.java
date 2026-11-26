@@ -21,12 +21,15 @@ class ProjectRoleTest {
         Map<ProjectRole, Set<ProjectPermission>> matrix = Map.of(
                 PROJECT_MANAGER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, EDIT_SETTINGS, ARCHIVE_PROJECT,
                         MANAGE_MEMBERS, MANAGE_ROLES, CONFIGURE_BOARD, CANCEL_SPRINTS, EDIT_TASKS, COMMENT,
-                        MODERATE_COMMENTS, EDIT_CHARTER, LOG_TIME, RETRO_MANAGE, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE),
+                        MODERATE_COMMENTS, EDIT_CHARTER, LOG_TIME, RETRO_MANAGE, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE,
+                        MILESTONE_MANAGE, MILESTONE_LINK),
                 PRODUCT_OWNER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, CANCEL_SPRINTS, EDIT_TASKS, COMMENT,
-                        EDIT_CHARTER, LOG_TIME, RETRO_MANAGE, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE),
+                        EDIT_CHARTER, LOG_TIME, RETRO_MANAGE, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE,
+                        MILESTONE_MANAGE, MILESTONE_LINK),
                 SCRUM_MASTER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_SPRINTS, EDIT_TASKS, COMMENT, LOG_TIME,
-                        RETRO_MANAGE, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE),
-                MEMBER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, EDIT_TASKS, COMMENT, LOG_TIME, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE),
+                        RETRO_MANAGE, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE, MILESTONE_LINK),
+                MEMBER, EnumSet.of(VIEW_PROJECT, VIEW_WORK, EDIT_TASKS, COMMENT, LOG_TIME, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE,
+                        MILESTONE_LINK),
                 VIEWER, EnumSet.of(VIEW_PROJECT, VIEW_WORK));
 
         assertEquals(EnumSet.allOf(ProjectRole.class), matrix.keySet(), "every role is in the matrix");
@@ -76,7 +79,8 @@ class ProjectRoleTest {
         Set<ProjectPermission> combined = ProjectRole.permissionsOf(List.of(PRODUCT_OWNER, SCRUM_MASTER));
 
         assertEquals(EnumSet.of(VIEW_PROJECT, VIEW_WORK, MANAGE_BACKLOG, MANAGE_SPRINTS, CANCEL_SPRINTS,
-                EDIT_TASKS, COMMENT, EDIT_CHARTER, LOG_TIME, RETRO_MANAGE, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE), combined);
+                EDIT_TASKS, COMMENT, EDIT_CHARTER, LOG_TIME, RETRO_MANAGE, RETRO_CONTRIBUTE, DEPENDENCY_MANAGE,
+                MILESTONE_MANAGE, MILESTONE_LINK), combined);
     }
 
     @Test
@@ -169,6 +173,25 @@ class ProjectRoleTest {
             assertEquals(role != VIEWER, role.permissions().contains(RETRO_CONTRIBUTE), role.name());
         }
         assertFalse(ProjectPermission.WORKSPACE_ADMIN.contains(RETRO_CONTRIBUTE), "admins do not see project work");
+    }
+
+    // --- PMP-46 milestones ---
+
+    @Test
+    void onlyTheProjectManagerAndProductOwnerManageMilestones() {
+        for (ProjectRole role : ProjectRole.values()) {
+            assertEquals(role == PROJECT_MANAGER || role == PRODUCT_OWNER,
+                    role.permissions().contains(MILESTONE_MANAGE), role.name());
+        }
+        assertFalse(ProjectPermission.WORKSPACE_ADMIN.contains(MILESTONE_MANAGE), "admins do not see project work");
+    }
+
+    @Test
+    void everyoneButTheViewerLinksTasksToMilestones() {
+        for (ProjectRole role : ProjectRole.values()) {
+            assertEquals(role != VIEWER, role.permissions().contains(MILESTONE_LINK), role.name());
+        }
+        assertFalse(ProjectPermission.WORKSPACE_ADMIN.contains(MILESTONE_LINK), "admins do not see project work");
     }
 
     // --- story 6 acceptance criterion 14 ---

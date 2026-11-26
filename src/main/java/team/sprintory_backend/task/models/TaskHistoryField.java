@@ -17,5 +17,7 @@ public enum TaskHistoryField {
     ESTIMATE_MINUTES,
     LABELS,
     /** Recorded without text: old and new values are always null. */
-    DESCRIPTION
+    DESCRIPTION,
+    /** Linked, moved or unlinked (R12); the values are milestone names, null = none. Top-level tasks only. */
+    MILESTONE
 }

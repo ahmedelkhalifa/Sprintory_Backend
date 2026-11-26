@@ -121,7 +121,7 @@ A page past the end returns `200` with an empty `content`.
 { "id": 21, "workspaceId": 3, "name": "Mobile App", "key": "MOB",
   "description": "The iOS and Android app.", "template": "SCRUM",
   "roles": ["PROJECT_MANAGER"],
-  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "MODERATE_COMMENTS", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE"] }
+  "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "MODERATE_COMMENTS", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE", "DEPENDENCY_MANAGE", "MILESTONE_MANAGE", "MILESTONE_LINK"] }
 
 // ProjectMemberResponse: public profile data and that member's project roles
 { "userId": 7, "firstName": "Ada", "lastName": "Lovelace", "email": "ada@example.com",
@@ -157,7 +157,7 @@ Creates a project in the workspace and makes the caller its Project Manager.
 - **Response `201`:**
   ```json
   { "id": 21, "workspaceId": 3, "name": "Mobile App", "key": "MOB", "description": null, "template": "SCRUM",
-    "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "MODERATE_COMMENTS", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE"] }
+    "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "MODERATE_COMMENTS", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE", "DEPENDENCY_MANAGE", "MILESTONE_MANAGE", "MILESTONE_LINK"] }
   ```
 - **After creation**, all in one transaction (if any part fails, nothing is created):
   - the caller appears in 3.4 with the `PROJECT_MANAGER` role
@@ -191,7 +191,7 @@ One page of projects, sorted by name.
   {
     "content": [
       { "id": 21, "workspaceId": 3, "name": "Mobile App", "key": "MOB", "description": null, "template": "SCRUM",
-    "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "MODERATE_COMMENTS", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE"] },
+    "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "MODERATE_COMMENTS", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE", "DEPENDENCY_MANAGE", "MILESTONE_MANAGE", "MILESTONE_LINK"] },
       { "id": 22, "workspaceId": 3, "name": "Website", "key": "WEB", "template": "KANBAN" }
     ],
     "page": 0,
@@ -218,7 +218,7 @@ One page of projects, sorted by name.
   ```json
   { "id": 21, "workspaceId": 3, "name": "Mobile App", "key": "MOB",
     "description": "The iOS and Android app.", "template": "SCRUM",
-    "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "MODERATE_COMMENTS", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE"] }
+    "roles": ["PROJECT_MANAGER"], "permissions": ["VIEW_PROJECT", "VIEW_WORK", "EDIT_SETTINGS", "ARCHIVE_PROJECT", "MANAGE_MEMBERS", "MANAGE_ROLES", "CONFIGURE_BOARD", "CANCEL_SPRINTS", "EDIT_TASKS", "COMMENT", "MODERATE_COMMENTS", "EDIT_CHARTER", "LOG_TIME", "RETRO_MANAGE", "RETRO_CONTRIBUTE", "DEPENDENCY_MANAGE", "MILESTONE_MANAGE", "MILESTONE_LINK"] }
   ```
 - **Errors:**
 
