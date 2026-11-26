@@ -17,5 +17,7 @@ public enum TaskHistoryField {
     ESTIMATE_MINUTES,
     LABELS,
     /** Recorded without text: old and new values are always null. */
-    DESCRIPTION
+    DESCRIPTION,
+    START_DATE,
+    DUE_DATE
 }

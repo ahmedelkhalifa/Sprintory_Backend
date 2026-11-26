@@ -21,6 +21,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.ColumnDefault;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.annotations.SQLRestriction;
@@ -31,6 +32,7 @@ import team.sprintory_backend.sprint.models.Sprint;
 import team.sprintory_backend.user.models.User;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -43,6 +45,8 @@ import java.util.Set;
 @Table(name = "tasks",
         uniqueConstraints = @UniqueConstraint(columnNames = {"project_id", "task_number"}))
 @SQLRestriction("deleted_at is null")
+// An unrelated edit must not write stale dates back over a concurrent scheduling edit.
+@DynamicUpdate
 @Getter
 @Setter
 @Builder
@@ -97,6 +101,12 @@ public class Task extends BaseEntity {
 
     @Column(columnDefinition = "text")
     private String description;
+
+    @Column(name = "start_date")
+    private LocalDate startDate;
+
+    @Column(name = "due_date")
+    private LocalDate dueDate;
 
     /** Order inside the status column; lower comes first. Internal, never sent to clients. */
     @Column(name = "board_position", nullable = false)

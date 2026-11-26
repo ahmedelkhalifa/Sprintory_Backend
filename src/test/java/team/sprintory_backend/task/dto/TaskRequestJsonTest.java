@@ -26,6 +26,17 @@ class TaskRequestJsonTest {
     }
 
     @Test
+    void datePairAndClearFlagDeserialize() {
+        var set = mapper.readValue("{\"startDate\":\"2026-11-10\",\"dueDate\":\"2026-11-10\"}", UpdateTaskRequest.class);
+        assertEquals(java.time.LocalDate.of(2026, 11, 10), set.startDate());
+        assertEquals(set.startDate(), set.dueDate());
+        assertTrue(set.changesDates());
+        assertFalse(set.clearDates());
+        assertTrue(mapper.readValue("{\"clearDates\":true}", UpdateTaskRequest.class).changesDates());
+        assertFalse(mapper.readValue("{}", UpdateTaskRequest.class).changesDates());
+    }
+
+    @Test
     void clearFlagSentAsNullMeansFalse() {
         UpdateTaskRequest request = mapper.readValue("{\"clearEstimate\":null}", UpdateTaskRequest.class);
         assertFalse(request.clearEstimate());

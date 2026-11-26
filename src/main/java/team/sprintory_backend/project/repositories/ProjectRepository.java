@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectRole;
+import team.sprintory_backend.project.models.ProjectLifecycleState;
 
 import java.util.List;
 import java.util.Optional;
@@ -37,6 +38,10 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     /** A scalar query, so it reads the database and not a project already loaded in memory. */
     @Query("select p.lastTaskNumber from Project p where p.id = :projectId")
     int findLastTaskNumber(@Param("projectId") Long projectId);
+
+    /** Read current state from the database, not an already managed entity. */
+    @Query("select p.lifecycleStatus from Project p where p.id = :projectId")
+    Optional<ProjectLifecycleState> findLifecycleState(@Param("projectId") Long projectId);
 
     /**
      * Locks the project row until the transaction ends, so role changes in one project run one at

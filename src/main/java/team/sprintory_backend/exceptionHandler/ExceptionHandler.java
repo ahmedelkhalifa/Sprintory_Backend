@@ -19,6 +19,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import team.sprintory_backend.sprint.exceptions.SprintAlreadyActiveException;
 import team.sprintory_backend.sprint.exceptions.SprintConflictException;
+import team.sprintory_backend.task.exceptions.TaskDatesReadOnlyException;
 import team.sprintory_backend.attachment.exceptions.FileTooLargeException;
 import team.sprintory_backend.attachment.exceptions.FileTypeNotAllowedException;
 import team.sprintory_backend.attachment.exceptions.TooManyFilesException;
@@ -105,6 +106,11 @@ public class ExceptionHandler {
     public ResponseEntity<ErrorResponse> handleSprintConflict(
             SprintConflictException e,
             HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), ErrorCode.CONFLICT, e.getMessage(), request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(TaskDatesReadOnlyException.class)
+    public ResponseEntity<ErrorResponse> handleTaskDatesReadOnly(TaskDatesReadOnlyException e, HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), ErrorCode.CONFLICT, e.getMessage(), request);
     }
 
