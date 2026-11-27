@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Size;
 import team.sprintory_backend.task.models.TaskPriority;
 import team.sprintory_backend.task.models.TaskType;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -28,7 +29,10 @@ public record UpdateTaskRequest(
         Boolean clearEstimate,
         Boolean clearDescription,
         Boolean confirmOpenSubtasks,
-        Boolean confirmBlocked
+        Boolean confirmBlocked,
+        LocalDate startDate,
+        LocalDate dueDate,
+        Boolean clearDates
 ) {
     /** Absent flags mean false. Jackson 3 rejects a missing field for a primitive boolean with 400. */
     public UpdateTaskRequest {
@@ -37,6 +41,20 @@ public record UpdateTaskRequest(
         clearDescription = Boolean.TRUE.equals(clearDescription);
         confirmOpenSubtasks = Boolean.TRUE.equals(confirmOpenSubtasks);
         confirmBlocked = Boolean.TRUE.equals(confirmBlocked);
+        clearDates = Boolean.TRUE.equals(clearDates);
+    }
+
+    public UpdateTaskRequest(String title, TaskType type, TaskPriority priority, Long statusId,
+                             Long assigneeId, Integer estimate, List<String> labels, String description,
+                             Boolean clearAssignee, Boolean clearEstimate, Boolean clearDescription,
+                             Boolean confirmOpenSubtasks, Boolean confirmBlocked) {
+        this(title, type, priority, statusId, assigneeId, estimate, labels, description,
+                clearAssignee, clearEstimate, clearDescription, confirmOpenSubtasks, confirmBlocked,
+                null, null, false);
+    }
+
+    public boolean changesDates() {
+        return clearDates || startDate != null || dueDate != null;
     }
 
     /** Existing clients may keep their 11-field constructor. */

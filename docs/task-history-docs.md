@@ -113,6 +113,8 @@ Reading needs `VIEW_WORK`.
 | `ESTIMATE_MINUTES` | subtask edit with `estimateMinutes` or `clearEstimateMinutes` (time estimate, subtasks only) | the number of minutes; `null` = not estimated | `60` → `90` |
 | `LABELS` | task or subtask edit with `labels` | the labels sorted and joined with `, `; `null` = none | `backend` → `backend, R09` |
 | `DESCRIPTION` | task or subtask edit with `description` or `clearDescription` | always `null` → `null`: the entry means "changed the description" | |
+| `START_DATE` | task creation with dates, task date edit or `clearDates` | ISO calendar date or `null` | `2026-11-10` → `2026-11-11` |
+| `DUE_DATE` | task creation with dates, task date edit or `clearDates` | ISO calendar date or `null` | `2026-11-12` → `2026-11-13` |
 | `MILESTONE` | linking or unlinking a top-level task (`PUT /tasks/{taskId}/milestone`, "Add tasks"), or deleting its milestone (PMP-46, [milestones-docs.md §6](./milestones-docs.md#6-task-history-and-audit-log)) | the milestone's name at the time; `null` = none | `null` → `Beta release` |
 
 - "Task edit" is `PATCH …/tasks/{taskId}`. "Subtask edit" is `PATCH …/tasks/{parentId}/subtasks/{subtaskId}`; that entry goes to the **subtask's** own history.
