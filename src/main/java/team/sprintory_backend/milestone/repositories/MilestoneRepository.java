@@ -29,7 +29,21 @@ public interface MilestoneRepository extends JpaRepository<Milestone, Long> {
             order by m.targetDate, lower(m.name), m.id""")
     List<Milestone> findListByProjectId(@Param("projectId") Long projectId);
 
-    /** A deleted milestone, for restore; native because the JPA queries cannot see deleted rows. */
+    /**
+     * The project of a live milestone, without loading it: a write locks the project first and
+     * only then loads the milestone, so it never works on a copy read before a concurrent delete.
+     */
+    @Query("select m.project.id from Milestone m where m.id = :id")
+    Optional<Long> findProjectIdById(@Param("id") Long id);
+
+    /** A live milestone of this project: a task links only to its own project's milestones. */
+    Optional<Milestone> findByIdAndProjectId(Long id, Long projectId);
+
+    /** The same for a deleted milestone, for restore; native because JPA cannot see deleted rows. */
+    @Query(value = "select project_id from milestones where id = :id and deleted_at is not null", nativeQuery = true)
+    Optional<Long> findProjectIdOfDeletedById(@Param("id") Long id);
+
+    /** A deleted milestone, for restore. */
     @Query(value = "select * from milestones where id = :id and deleted_at is not null", nativeQuery = true)
     Optional<Milestone> findDeletedById(@Param("id") Long id);
 }
