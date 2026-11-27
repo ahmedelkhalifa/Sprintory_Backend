@@ -22,6 +22,7 @@ This document is the single reference for tasks end to end. If the code and this
   | Status | One of the project's board columns ([projects-docs §3.8](./projects-docs.md#38-read-the-projects-board)). Default: the first column. |
   | Assignee | Optional. Must be a member of the project. Someone who leaves the project (removed from it, or leaving or removed from the workspace) is unassigned from its tasks; a deleted user too. |
   | Estimate | Optional story points, 0 or more (whole numbers). |
+  | Start / due dates | Optional paired calendar dates (`YYYY-MM-DD`), due on or after start. See [Timeline API](./schedule-docs.md). |
   | Labels | Optional free-text tags, e.g. `R09`, `backend`. At most 20, each at most 50 characters. |
   | Description | Optional rich text: a string holding a **TipTap JSON document**, checked and normalized by the backend, and able to @mention people and teams ([mentions-docs.md §2](./mentions-docs.md#2-rich-text-format)). No length limit. A document with no text is stored as no description. |
 
@@ -90,6 +91,7 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
   "type": "BUG", "priority": "HIGH", "statusId": 12, "statusName": "To Do",
   "assigneeId": 7, "estimate": 3, "labels": ["R09", "backend"],
   "description": "{\"type\":\"doc\",\"content\":[...]}", "sprintId": null,
+  "startDate": null, "dueDate": null,
   "createdAt": "2026-10-26T09:30:00Z", "updatedAt": "2026-10-26T09:30:00Z",
   "wipWarning": null,
   "parentTaskId": null, "estimateMinutes": null,
@@ -453,3 +455,8 @@ The full suite is `bash ./mvnw clean verify` (Docker required for PostgreSQL Tes
 ## Task dependencies (PMP-45)
 
 `TaskResponse` adds `blocked` and `openBlockers`; list accepts `blockedOnly=true`. Board position and task PATCH accept `confirmBlocked` for forward moves after the dependency warning. See [dependencies-docs.md](./dependencies-docs.md) for exact fields, errors and flows.
+
+
+## Timeline dates (PMP-48 / PMP-153)
+
+Task creation and editing accept `startDate` and `dueDate` together. To remove both, use `clearDates: true` on PATCH; omitting dates leaves them unchanged. Dates are read-only in completed or archived projects and are never changed by sprint carry-over. Each changed date gets its own history entry. All date and schedule details, filtering, conflicts and frontend contract are in [schedule-docs.md](./schedule-docs.md).

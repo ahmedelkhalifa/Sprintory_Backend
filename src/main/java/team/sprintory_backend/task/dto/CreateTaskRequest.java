@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Size;
 import team.sprintory_backend.task.models.TaskPriority;
 import team.sprintory_backend.task.models.TaskType;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -20,6 +21,12 @@ public record CreateTaskRequest(
         @Positive Long assigneeId,
         @PositiveOrZero Integer estimate,
         @Size(max = 20) List<@NotBlank @Size(max = 50) String> labels,
-        String description
+        String description,
+        LocalDate startDate,
+        LocalDate dueDate
 ) {
+    public CreateTaskRequest(String title, TaskType type, TaskPriority priority, Long assigneeId,
+                             Integer estimate, List<String> labels, String description) {
+        this(title, type, priority, assigneeId, estimate, labels, description, null, null);
+    }
 }

@@ -18,6 +18,7 @@ import team.sprintory_backend.common.richtext.RichTextDocument;
 import team.sprintory_backend.notification.events.TaskAssigned;
 import team.sprintory_backend.notification.events.TaskCreated;
 import team.sprintory_backend.project.models.Project;
+import team.sprintory_backend.project.models.ProjectLifecycleState;
 import team.sprintory_backend.sprint.models.SprintStatus;
 import team.sprintory_backend.sprint.models.SprintScopeChange;
 import team.sprintory_backend.sprint.services.SprintScopeHistoryWriter;
@@ -39,9 +40,11 @@ import team.sprintory_backend.task.dto.WipWarning;
 import team.sprintory_backend.task.dto.TaskHistoryEntryResponse;
 import team.sprintory_backend.task.dto.UpdateTaskRequest;
 import team.sprintory_backend.task.models.Task;
+import team.sprintory_backend.task.models.TaskHistoryField;
 import team.sprintory_backend.task.models.TaskPriority;
 import team.sprintory_backend.project.models.BoardColumnCategory;
 import team.sprintory_backend.task.exceptions.OpenSubtasksConfirmationRequiredException;
+import team.sprintory_backend.task.exceptions.TaskDatesReadOnlyException;
 import team.sprintory_backend.task.models.TaskType;
 import team.sprintory_backend.task.repositories.TaskRepository;
 import team.sprintory_backend.task.repositories.TaskSpecifications;
@@ -49,9 +52,11 @@ import team.sprintory_backend.user.models.User;
 import team.sprintory_backend.user.repositories.UserRepository;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.HashMap;
 import java.util.Set;
 import java.util.function.ObjLongConsumer;
@@ -91,6 +96,8 @@ public class TaskApiService {
     @Transactional
     public TaskResponse create(User user, Long projectId, CreateTaskRequest request) {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
+        validateDates(request.startDate(), request.dueDate(), false);
+        if (request.startDate() != null) requireDateEditing(project);
         User assignee = (request.assigneeId() == null) ? null : requireAssignee(projectId, request.assigneeId());
         // Check the description and its mentions before anything is written.
         RichTextDocument description = content.parseDescription(request.description());
@@ -98,6 +105,7 @@ public class TaskApiService {
         // Lock before selecting a column: a concurrent board edit could soft-delete or reorder
         // the old first column. Keep the selection and insert in the same locked transaction.
         projectRepository.incrementTaskNumber(projectId);
+        if (request.startDate() != null) requireCurrentDateEditing(projectId);
         ProjectBoardColumn status = firstColumn(projectId);
         int number = projectRepository.findLastTaskNumber(projectId);
         long boardPosition = TaskRanks.last(taskRepository.findMaxBoardPosition(projectId, status.getId()));
@@ -113,12 +121,16 @@ public class TaskApiService {
                 .status(status)
                 .assignee(assignee)
                 .estimate(request.estimate())
+                .startDate(request.startDate())
+                .dueDate(request.dueDate())
                 .description(description == null ? null : description.json())
                 .labels(TaskContent.normalizeLabels(request.labels()))
                 .boardPosition(boardPosition)
                 .backlogRank(backlogRank)
                 .build());
         statusHistory.recordCreated(task, user);
+        recordDateChange(task, TaskHistoryField.START_DATE, null, task.getStartDate(), user);
+        recordDateChange(task, TaskHistoryField.DUE_DATE, null, task.getDueDate(), user);
         events.publishEvent(new TaskCreated(task, user));
         if (assignee != null) {
             events.publishEvent(new TaskAssigned(task, user, assignee));
@@ -160,14 +172,19 @@ public class TaskApiService {
     @Transactional
     public TaskResponse update(User user, Long projectId, Long taskId, UpdateTaskRequest request) {
         Project project = projectAccess.requireActive(projectId, user, ProjectPermission.EDIT_TASKS).project();
-        // Only status edits need the board/project lock, before loading the task.
-        if (request.statusId() != null) {
+        // Date and status edits share the project lock; ordinary title edits do not.
+        if (request.changesDates()) {
+            validateDates(request.startDate(), request.dueDate(), request.clearDates());
+            requireDateEditing(project);
+        }
+        if (request.statusId() != null || request.changesDates()) {
             projectRepository.lockById(projectId);
         }
         Task task = requireTask(projectId, taskId);
         if (task.getParent() != null) {
             throw new BadRequestException("Use the subtask endpoint to edit a subtask.");
         }
+        if (request.changesDates()) requireCurrentDateEditing(projectId);
         Set<Long> previouslyBlocked = request.statusId() != null ? unblocked.before(projectId) : Set.of();
         TaskSnapshot before = TaskSnapshot.of(task);
         // Check a new description and its newly added mentions before anything changes.
@@ -224,6 +241,13 @@ public class TaskApiService {
             task.getLabels().clear();
             task.getLabels().addAll(TaskContent.normalizeLabels(request.labels()));
         }
+        if (request.changesDates()) {
+            LocalDate oldStart = task.getStartDate(), oldDue = task.getDueDate();
+            task.setStartDate(request.clearDates() ? null : request.startDate());
+            task.setDueDate(request.clearDates() ? null : request.dueDate());
+            recordDateChange(task, TaskHistoryField.START_DATE, oldStart, task.getStartDate(), user);
+            recordDateChange(task, TaskHistoryField.DUE_DATE, oldDue, task.getDueDate(), user);
+        }
         // One history entry per field that really changed; the status move was recorded above.
         statusHistory.recordChanges(task, before, TaskSnapshot.of(task), user);
         // Flush now so the response carries the new updatedAt.
@@ -234,6 +258,33 @@ public class TaskApiService {
         content.publishMentions(task, user, mentioned, description);
         if (changedColumn) unblocked.after(projectId, previouslyBlocked, user);
         return changedColumn ? saved.withWipWarning(wipWarning(projectId, task.getStatus())) : saved;
+    }
+
+    private static void validateDates(LocalDate start, LocalDate due, boolean clear) {
+        if (clear && (start != null || due != null))
+            throw new BadRequestException("Dates cannot be set and cleared together.");
+        if ((start == null) != (due == null))
+            throw new BadRequestException("Set both dates or none.");
+        if (start != null && (start.getYear() < 1 || due.getYear() > 9999))
+            throw new BadRequestException("Task dates must be in years 0001 through 9999.");
+        if (start != null && due.isBefore(start))
+            throw new BadRequestException("Due date must be on or after start date.");
+    }
+
+    private void requireCurrentDateEditing(Long projectId) {
+        if (projectRepository.findLifecycleState(projectId)
+                .orElseThrow(() -> new ResourceNotFoundException("Project not found.")) != ProjectLifecycleState.ACTIVE)
+            throw new TaskDatesReadOnlyException();
+    }
+
+    private static void requireDateEditing(Project project) {
+        if (project.getLifecycleStatus() != ProjectLifecycleState.ACTIVE)
+            throw new TaskDatesReadOnlyException();
+    }
+
+    private void recordDateChange(Task task, TaskHistoryField field, LocalDate before, LocalDate after, User actor) {
+        if (!Objects.equals(before, after))
+            statusHistory.recordChange(task, field, Objects.toString(before, null), Objects.toString(after, null), actor);
     }
 
     /** Soft delete: the row stays, the key is never handed out again, and every read hides it. */
