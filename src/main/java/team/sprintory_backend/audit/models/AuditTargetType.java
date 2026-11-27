@@ -6,6 +6,7 @@ public enum AuditTargetType {
     TEAM,
     PROJECT,
     SPRINT,
+    MILESTONE,
     TASK,
     USER,
     INVITATION

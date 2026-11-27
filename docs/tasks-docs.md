@@ -54,7 +54,7 @@ All paths are under `/api/v1/projects/{projectId}/tasks`. Bodies are JSON in `ca
 | # | Method | Path | Request | Success | Permission |
 | --- | --- | --- | --- | --- | --- |
 | 3.1 | POST | `` | `CreateTaskRequest` | `201` + `TaskResponse` | `EDIT_TASKS` |
-| 3.2 | GET | `?q=&type=&priority=&statusId=&assigneeId=&label=&sprintId=&noSprint=&order=&page=&size=` | none | `200` + `PageResponse<TaskResponse>` | `VIEW_WORK` |
+| 3.2 | GET | `?q=&type=&priority=&statusId=&assigneeId=&label=&sprintId=&noSprint=&blockedOnly=&milestoneId=&noMilestone=&order=&page=&size=` | none | `200` + `PageResponse<TaskResponse>` | `VIEW_WORK` |
 | 3.3 | GET | `/{taskId}` | none | `200` + `TaskResponse` | `VIEW_WORK` |
 | 3.4 | PATCH | `/{taskId}` | `UpdateTaskRequest` | `200` + `TaskResponse` | `EDIT_TASKS` |
 | 3.5 | DELETE | `/{taskId}` | none | `204` | `EDIT_TASKS` |
@@ -95,7 +95,9 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
   "createdAt": "2026-10-26T09:30:00Z", "updatedAt": "2026-10-26T09:30:00Z",
   "wipWarning": null,
   "parentTaskId": null, "estimateMinutes": null,
-  "subtaskTotal": 0, "subtaskDone": 0, "carriedOverCount": 0 }
+  "subtaskTotal": 0, "subtaskDone": 0, "carriedOverCount": 0,
+  "blocked": false, "openBlockers": [],
+  "milestone": { "id": 4, "name": "Beta release", "targetDate": "2026-12-15" } }
 ```
 
 - `labels` come back sorted. Labels are trimmed, and duplicates that differ only in case collapse into the first spelling (`["backend", "Backend"]` stores `backend`).
@@ -150,6 +152,8 @@ A `{taskId}` is always looked up **inside** `{projectId}`: a task of another pro
   | `statusId` | tasks in that column |
   | `assigneeId` | tasks assigned to that user |
   | `label` | tasks with that label, ignoring case |
+  | `milestoneId` | tasks linked to that milestone (PMP-46, [milestones-docs.md §5](./milestones-docs.md#5-changes-to-tasks)) |
+  | `noMilestone=true` | tasks with no milestone; together with `milestoneId` → `400` |
 
 - **Order** (`?order=`, ignoring case):
 
@@ -456,7 +460,10 @@ The full suite is `bash ./mvnw clean verify` (Docker required for PostgreSQL Tes
 
 `TaskResponse` adds `blocked` and `openBlockers`; list accepts `blockedOnly=true`. Board position and task PATCH accept `confirmBlocked` for forward moves after the dependency warning. See [dependencies-docs.md](./dependencies-docs.md) for exact fields, errors and flows.
 
-
 ## Timeline dates (PMP-48 / PMP-153)
 
 Task creation and editing accept `startDate` and `dueDate` together. To remove both, use `clearDates: true` on PATCH; omitting dates leaves them unchanged. Dates are read-only in completed or archived projects and are never changed by sprint carry-over. Each changed date gets its own history entry. All date and schedule details, filtering, conflicts and frontend contract are in [schedule-docs.md](./schedule-docs.md).
+
+## Milestones (PMP-46)
+
+`TaskResponse` adds `milestone` (`{ id, name, targetDate }` or `null`; a subtask shows its parent's). The list accepts `milestoneId={id}` or `noMilestone=true`. A task is linked or unlinked through `PUT /api/v1/tasks/{taskId}/milestone` (permission `MILESTONE_LINK`), never through the task PATCH; only top-level tasks can be linked. The change is a `FIELD_CHANGED` history entry with field `MILESTONE`. See [milestones-docs.md](./milestones-docs.md) for exact fields, errors and flows.

@@ -39,7 +39,7 @@ public final class ScheduleConflicts {
             ScheduleMilestone milestone = byMilestone.get(task.milestoneId());
             if (milestone != null && milestone.targetDate() != null && task.dueDate().isAfter(milestone.targetDate())) {
                 result.add(new ScheduleConflict(ScheduleConflictType.MILESTONE, List.of(task.id()),
-                        null, milestone.id(), task.key() + " ends after milestone " + milestone.title()));
+                        null, milestone.id(), task.key() + " ends after milestone " + milestone.name()));
             }
         }
         return List.copyOf(result);

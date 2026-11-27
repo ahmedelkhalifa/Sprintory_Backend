@@ -774,6 +774,24 @@ class TaskApiServiceTest {
         verify(taskRepository, never()).findAll(any(Specification.class), any(Pageable.class));
     }
 
+    /** docs/milestones-docs.md §5: the task's milestone; a subtask shows its parent's. */
+    @Test
+    void responsesCarryTheMilestoneAndASubtaskShowsItsParents() {
+        Task task = givenTask();
+        var date = java.time.LocalDate.of(2026, 12, 15);
+        var beta = new team.sprintory_backend.milestone.models.Milestone(project, "Beta release", date, null, user);
+        beta.setId(4L);
+        task.setMilestone(beta);
+        Task subtask = otherTask(6L, task.getStatus(), 0, 0);
+        subtask.setParent(task);
+
+        var expected = new team.sprintory_backend.milestone.dto.MilestoneSummary(4L, "Beta release", date);
+        assertEquals(expected, service.get(user, PROJECT_ID, 5L).milestone());
+        assertEquals(expected, service.get(user, PROJECT_ID, 6L).milestone());
+        task.setMilestone(null);
+        assertNull(service.get(user, PROJECT_ID, 5L).milestone());
+    }
+
     /** MOB-5 in To Do: a bug with an assignee, estimate, label and description. */
     private Task givenTask() {
         Task task = Task.builder().id(5L).project(project).number(5).key("MOB-5").title("Old title")

@@ -26,6 +26,7 @@ import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.annotations.SQLRestriction;
 import team.sprintory_backend.audit.BaseEntity;
+import team.sprintory_backend.milestone.models.Milestone;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.project.models.ProjectBoardColumn;
 import team.sprintory_backend.sprint.models.Sprint;
@@ -124,6 +125,15 @@ public class Task extends BaseEntity {
 
     @Column(name = "sprint_position")
     private Long sprintPosition;
+
+    /**
+     * At most one milestone (R12); top-level tasks only, subtasks show their parent's. Deleting the
+     * milestone clears it on every task, deleted ones included.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "milestone_id")
+    @OnDelete(action = OnDeleteAction.SET_NULL)
+    private Milestone milestone;
 
     /** "Carried over ×N": how many ended sprints this task left unfinished (PMP-41). Parents only. */
     @Builder.Default

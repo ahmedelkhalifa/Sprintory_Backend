@@ -31,6 +31,7 @@ import team.sprintory_backend.project.exceptions.InvalidProjectRolesException;
 import team.sprintory_backend.project.exceptions.LastProjectManagerException;
 import team.sprintory_backend.project.exceptions.ProjectKeyTakenException;
 import team.sprintory_backend.retro.exceptions.RetroConflictException;
+import team.sprintory_backend.milestone.exceptions.MilestoneConflictException;
 import team.sprintory_backend.security.exceptions.EmailAlreadyRegisteredException;
 import team.sprintory_backend.security.exceptions.InvalidTokenException;
 import team.sprintory_backend.security.exceptions.ProviderMismatchException;
@@ -117,6 +118,13 @@ public class ExceptionHandler {
     /** Every retro 409 carries its own code (docs/retrospectives-docs.md §5). */
     @org.springframework.web.bind.annotation.ExceptionHandler(RetroConflictException.class)
     public ResponseEntity<ErrorResponse> handleRetroConflict(RetroConflictException e, HttpServletRequest request) {
+        return body(HttpStatus.CONFLICT.value(), e.getCode(), e.getMessage(), request);
+    }
+
+    /** Every milestone 409 carries its own code (docs/milestones-docs.md §3). */
+    @org.springframework.web.bind.annotation.ExceptionHandler(MilestoneConflictException.class)
+    public ResponseEntity<ErrorResponse> handleMilestoneConflict(MilestoneConflictException e,
+                                                                 HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), e.getCode(), e.getMessage(), request);
     }
 

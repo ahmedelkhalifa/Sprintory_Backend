@@ -63,7 +63,7 @@ Any other method on these paths (`POST`, `PUT`, `PATCH`, `DELETE`) answers `405`
     "email": "ada@example.com"                 // snapshot at the time of the action
   },
   "target": {                                  // what the action was done to; never null
-    "type": "USER",                            // WORKSPACE | TEAM | PROJECT | SPRINT | TASK | USER | INVITATION
+    "type": "USER",                            // WORKSPACE | TEAM | PROJECT | SPRINT | MILESTONE | TASK | USER | INVITATION
     "id": 23,                                  // null only for INVITATION
     "name": "Linus Torvalds"                   // snapshot; for INVITATION the invited email
   },
@@ -211,6 +211,10 @@ For every project action, `project` is the project concerned.
 | `SPRINT_COMPLETED` | The Scrum Master closes the active sprint (`POST /sprints/{id}/complete`, PMP-41). Not written when the close is refused (early close without confirmation, missing goal answer). | the Scrum Master | `SPRINT` (name at the time, e.g. `MOB Sprint 4`) | the project | `status`: `ACTIVE` → `COMPLETED`; `completedPoints`: null → points; `unfinishedPoints`: null → points; `goalAchieved`: null → `YES` / `PARTIALLY` / `NO`; `carriedOver`: null → e.g. `3 items to the backlog` / `1 item to MOB Sprint 5` | *Sam closed "MOB Sprint 4" in "Mobile App": 20 points done, goal partially achieved* |
 | `SPRINT_CANCELLED` | The Product Owner or Project Manager cancels the active sprint (`POST /sprints/{id}/cancel`, PMP-41) | the person who cancelled | `SPRINT` | the project | `status`: `ACTIVE` → `CANCELLED`; `reason`: null → the reason (free text, ≤ 1000 characters); `completedPoints`, `unfinishedPoints`, `carriedOver` as for a close | *Polly cancelled "MOB Sprint 4" in "Mobile App": "Goal became obsolete"* |
 | `RETRO_CLOSED` | A Scrum Master, Product Owner or Project Manager closes a sprint's retrospective (`POST /retros/{id}/close`, PMP-44). Closing an already closed retro is refused and logs nothing. | the person who closed it | `SPRINT` (the retro's sprint) | the project | `status`: `OPEN` → `CLOSED` | *Linus closed the retrospective of "MOB Sprint 3" in "Mobile App"* |
+| `MILESTONE_CREATED` | A Product Owner or Project Manager creates a milestone (`POST /projects/{id}/milestones`, PMP-46) | the creator | `MILESTONE` (name at the time) | the project | `name`: null → name; `targetDate`: null → `YYYY-MM-DD`; `description`: null → text (only when given) | *Ada created the milestone "Beta release" (15 Dec 2026) in "Mobile App"* |
+| `MILESTONE_UPDATED` | Someone edits a milestone (`PUT /milestones/{id}`) and at least one field actually changes | the editor | `MILESTONE` (the new name) | the project | Only the fields that changed, in this order: `name`, `targetDate`, `description` (old → new; `null` = no description) | *Ada moved the milestone "Beta release" from 15 Dec to 22 Dec 2026* |
+| `MILESTONE_DELETED` | Someone deletes a milestone (`DELETE /milestones/{id}`); its tasks are unlinked | the person who deleted it | `MILESTONE` | the project | `unlinkedTasks`: null → the number of unlinked tasks that are not deleted (also `0`) | *Ada deleted the milestone "Beta release" in "Mobile App" (5 tasks unlinked)* |
+| `MILESTONE_RESTORED` | Someone restores a deleted milestone (`POST /milestones/{id}/restore`); its tasks are not relinked | the person who restored it | `MILESTONE` | the project | none | *Ada restored the milestone "Beta release" in "Mobile App"* |
 
 ### 4.4 Tasks (`area: "TASK"`)
 
@@ -259,7 +263,7 @@ These actions write **no** audit entry (by decision, see [§13](#13-decisions)):
 | `actor.id` | number | never | The user id. It stays valid for filtering after the person leaves. |
 | `actor.name` | string | never | `firstName lastName` at the time. |
 | `actor.email` | string | never | Email at the time. |
-| `target.type` | string enum | never | `WORKSPACE`, `TEAM`, `PROJECT`, `SPRINT`, `TASK`, `USER`, `INVITATION`. |
+| `target.type` | string enum | never | `WORKSPACE`, `TEAM`, `PROJECT`, `SPRINT`, `MILESTONE`, `TASK`, `USER`, `INVITATION`. |
 | `target.id` | number | only for `INVITATION` | Do **not** turn a target into a link without checking it still exists: teams can be deleted, people can leave, tasks can be deleted. |
 | `target.name` | string | never | Snapshot. Person: `firstName lastName`; task: `KEY title`; invitation: the email. |
 | `project` | object | yes | Set for `PROJECT` and `TASK` area actions only. |
@@ -421,4 +425,5 @@ Every service test also checks that a refused or no-op action writes no entry (a
 | 2 Nov 2026 | `TASK_RESTORED` is defined now so PMP-131 needs no migration. |
 | 9 Nov 2026 | `SPRINT_COMPLETED` / `SPRINT_CANCELLED` and the `SPRINT` target type (PMP-41, V16). They sit in the `PROJECT` area, so the project filter finds them. A cancel's reason is logged because PMP-41 asks for it; the close note is not. |
 | 25 Nov 2026 | `RETRO_CLOSED` (PMP-44, V18), in the `PROJECT` area. Its target is the retro's **sprint** (there is no retro target type, and a retro belongs to exactly one sprint). Opening a retro, cards, votes and actions are not logged; action tasks get their normal task history. |
+| 26 Nov 2026 | `MILESTONE_CREATED` / `UPDATED` / `DELETED` / `RESTORED` and the `MILESTONE` target type (PMP-46, V21), in the `PROJECT` area. The story asks only for edits; create, delete and restore are logged too, because a delete unlinks tasks. Linking tasks is not logged: the task history records it. |
 | 2 Nov 2026 | The story's criterion "a Member changes another member's project role" is read as "whoever holds `MANAGE_ROLES`" (the Project Manager or a workspace admin); members cannot change roles. |

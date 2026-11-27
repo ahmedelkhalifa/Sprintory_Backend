@@ -115,6 +115,7 @@ Reading needs `VIEW_WORK`.
 | `DESCRIPTION` | task or subtask edit with `description` or `clearDescription` | always `null` → `null`: the entry means "changed the description" | |
 | `START_DATE` | task creation with dates, task date edit or `clearDates` | ISO calendar date or `null` | `2026-11-10` → `2026-11-11` |
 | `DUE_DATE` | task creation with dates, task date edit or `clearDates` | ISO calendar date or `null` | `2026-11-12` → `2026-11-13` |
+| `MILESTONE` | linking or unlinking a top-level task (`PUT /tasks/{taskId}/milestone`, "Add tasks"), or deleting its milestone (PMP-46, [milestones-docs.md §6](./milestones-docs.md#6-task-history-and-audit-log)) | the milestone's name at the time; `null` = none | `null` → `Beta release` |
 
 - "Task edit" is `PATCH …/tasks/{taskId}`. "Subtask edit" is `PATCH …/tasks/{parentId}/subtasks/{subtaskId}`; that entry goes to the **subtask's** own history.
 - One edit that changes several fields writes **one entry per field**, all with the same `occurredAt`.

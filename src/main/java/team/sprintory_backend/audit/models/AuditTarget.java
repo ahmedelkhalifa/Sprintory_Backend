@@ -1,5 +1,6 @@
 package team.sprintory_backend.audit.models;
 
+import team.sprintory_backend.milestone.models.Milestone;
 import team.sprintory_backend.project.models.Project;
 import team.sprintory_backend.sprint.models.Sprint;
 import team.sprintory_backend.task.models.Task;
@@ -27,6 +28,10 @@ public record AuditTarget(AuditTargetType type, Long id, String name) {
 
     public static AuditTarget sprint(Sprint sprint) {
         return new AuditTarget(AuditTargetType.SPRINT, sprint.getId(), sprint.getName());
+    }
+
+    public static AuditTarget milestone(Milestone milestone) {
+        return new AuditTarget(AuditTargetType.MILESTONE, milestone.getId(), milestone.getName());
     }
 
     /** Named "KEY title", e.g. "MOB-42 Fix login". */

@@ -19,5 +19,7 @@ public enum TaskHistoryField {
     /** Recorded without text: old and new values are always null. */
     DESCRIPTION,
     START_DATE,
-    DUE_DATE
+    DUE_DATE,
+    /** Linked, moved or unlinked (R12); the values are milestone names, null = none. Top-level tasks only. */
+    MILESTONE
 }

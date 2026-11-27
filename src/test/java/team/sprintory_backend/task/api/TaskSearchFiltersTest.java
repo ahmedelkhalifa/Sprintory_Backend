@@ -103,4 +103,23 @@ class TaskSearchFiltersTest {
                 () -> TaskSearchFilters.fromQuery(null, null, null, null, null, null, -1L, null));
     }
 
+    /** docs/milestones-docs.md §5. */
+    @Test
+    void milestoneIdAndNoMilestoneAreExclusiveAndValidated() {
+        var linked = new TaskSearchFilters(null, null, null, null, null, null, null, null, null, 4L, null);
+        assertEquals(4L, linked.milestoneId());
+        assertFalse(linked.isUnfiltered());
+        var none = new TaskSearchFilters(null, null, null, null, null, null, null, null, null, null, true);
+        assertTrue(none.noMilestone());
+        assertFalse(none.isUnfiltered());
+        assertNull(new TaskSearchFilters(null, null, null, null, null, null, null, null, null, null, false)
+                .noMilestone(), "false means no filter");
+
+        var both = assertThrows(team.sprintory_backend.exceptionHandler.BadRequestException.class,
+                () -> new TaskSearchFilters(null, null, null, null, null, null, null, null, null, 4L, true));
+        assertEquals("Choose milestoneId or noMilestone, not both.", both.getMessage());
+        var negative = assertThrows(team.sprintory_backend.exceptionHandler.BadRequestException.class,
+                () -> new TaskSearchFilters(null, null, null, null, null, null, null, null, null, 0L, null));
+        assertEquals("'milestoneId' must be a positive ID.", negative.getMessage());
+    }
 }

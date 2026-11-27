@@ -51,6 +51,11 @@ public final class TaskSpecifications {
             } else if (Boolean.TRUE.equals(filters.noSprint())) {
                 predicates.add(cb.isNull(root.get("sprint")));
             }
+            if (filters.milestoneId() != null) {
+                predicates.add(cb.equal(root.get("milestone").get("id"), filters.milestoneId()));
+            } else if (Boolean.TRUE.equals(filters.noMilestone())) {
+                predicates.add(cb.isNull(root.get("milestone")));
+            }
             if (Boolean.TRUE.equals(filters.blockedOnly())) {
                 Subquery<Integer> open = query.subquery(Integer.class);
                 Root<TaskDependency> link = open.from(TaskDependency.class);

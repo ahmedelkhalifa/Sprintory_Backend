@@ -28,9 +28,9 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
     @EntityGraph(attributePaths = {"status", "assignee"})
     Optional<Task> findByIdAndProjectId(Long id, Long projectId);
 
-    /** The filtered task list; the status column and assignee come in the same query. */
+    /** The filtered task list; the status column, assignee and milestone come in the same query. */
     @Override
-    @EntityGraph(attributePaths = {"status", "assignee"})
+    @EntityGraph(attributePaths = {"status", "assignee", "milestone"})
     Page<Task> findAll(Specification<Task> spec, Pageable pageable);
 
     /** Sprint order; the parent owns the assignment, and subtasks follow it. */
@@ -72,6 +72,38 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
             + "where t.deleted_at is null and t.parent_task_id in (:parentIds) "
             + "group by t.parent_task_id", nativeQuery = true)
     List<Object[]> findSubtaskProgress(@Param("parentIds") Collection<Long> parentIds);
+
+    /**
+     * The progress of several milestones in one query (docs/milestones-docs.md §4): per milestone
+     * id, the number of tasks, of done tasks, and their story points (unestimated = 0), over live
+     * top-level tasks. A milestone without tasks has no row.
+     */
+    @Query("""
+            select t.milestone.id, count(t),
+                sum(case when t.status.category = :done then 1 else 0 end),
+                coalesce(sum(t.estimate), 0),
+                coalesce(sum(case when t.status.category = :done then t.estimate else 0 end), 0)
+            from Task t
+            where t.milestone.id in :milestoneIds and t.parent is null
+            group by t.milestone.id""")
+    List<Object[]> countByMilestone(@Param("milestoneIds") Collection<Long> milestoneIds,
+                                    @Param("done") BoardColumnCategory done);
+
+    /** The project of a live task, without loading it: linking locks the project before loading the task. */
+    @Query("select t.project.id from Task t where t.id = :id")
+    Optional<Long> findProjectIdById(@Param("id") Long id);
+
+    /** The live top-level tasks of the project among these ids, with their milestone (bulk link). */
+    @EntityGraph(attributePaths = "milestone")
+    List<Task> findByIdInAndProjectIdAndParentIsNull(Collection<Long> ids, Long projectId);
+
+    /** The live tasks linked to a milestone. */
+    List<Task> findByMilestoneId(Long milestoneId);
+
+    /** Unlinks every task of a milestone, deleted ones included (native: @SQLRestriction hides them). */
+    @Modifying(flushAutomatically = true)
+    @Query(value = "update tasks set milestone_id = null where milestone_id = :milestoneId", nativeQuery = true)
+    int clearMilestoneIncludingDeleted(@Param("milestoneId") Long milestoneId);
 
     /**
      * Deleted tasks cannot be fetched by JPA because Task has @SQLRestriction. A task whose sprint
