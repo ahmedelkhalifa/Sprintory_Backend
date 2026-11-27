@@ -23,6 +23,9 @@ import team.sprintory_backend.dependency.dto.DependencyCreateRequest;
 import team.sprintory_backend.dependency.services.DependencyService;
 import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
+import team.sprintory_backend.milestone.dto.MilestoneRequest;
+import team.sprintory_backend.milestone.dto.MilestoneTasksRequest;
+import team.sprintory_backend.milestone.services.MilestoneService;
 import team.sprintory_backend.project.dto.CreateProjectRequest;
 import team.sprintory_backend.project.models.BoardColumnCategory;
 import team.sprintory_backend.project.models.ProjectMember;
@@ -33,6 +36,8 @@ import team.sprintory_backend.project.repositories.ProjectRepository;
 import team.sprintory_backend.project.services.ProjectBoardService;
 import team.sprintory_backend.project.services.ProjectService;
 import team.sprintory_backend.schedule.api.ScheduleFilters;
+import team.sprintory_backend.schedule.dto.ScheduleConflictType;
+import team.sprintory_backend.schedule.dto.ScheduleMilestone;
 import team.sprintory_backend.schedule.dto.ScheduleTask;
 import team.sprintory_backend.schedule.services.ScheduleService;
 import team.sprintory_backend.security.auth.AuthCookieFactory;
@@ -80,6 +85,7 @@ class ScheduleIntegrationTest extends AbstractIntegrationTest {
     @Autowired private JwtService jwt;
     @Autowired private SprintService sprints;
     @Autowired private ScheduleService schedule;
+    @Autowired private MilestoneService milestones;
     @Autowired private TaskApiService tasks;
     @Autowired private TaskRepository taskRepository;
     @Autowired private SubtaskService subtasks;
@@ -233,6 +239,41 @@ class ScheduleIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, schedule.get(pm, projectId, new ScheduleFilters(null, null, null, null, null, null, true, null, null)).tasks().size());
     }
 
+    /** PMP-46: diamonds, the milestone filter and "ends after milestone" conflicts on real milestones. */
+    @Test void milestonesAreDiamondsFilterRowsAndRaiseConflicts() {
+        var late = create(projectId, "Late", DAY, DAY.plusDays(3), null);
+        var onTime = create(projectId, "On time", DAY, DAY.plusDays(1), null);
+        var other = create(projectId, "Other", DAY, DAY, null);
+        var beta = milestones.create(pm, projectId, new MilestoneRequest("Beta release", DAY.plusDays(1), null));
+        milestones.create(pm, projectId, new MilestoneRequest("Launch", DAY.plusDays(9), null));
+        milestones.linkTasks(pm, beta.id(), new MilestoneTasksRequest(List.of(late.id(), onTime.id())));
+
+        var result = schedule.get(viewer, projectId, ALL);
+        assertTrue(result.milestonesAvailable());
+        assertEquals(List.of("Beta release", "Launch"), result.milestones().stream().map(ScheduleMilestone::name).toList());
+        assertEquals(beta.id(), row(result.tasks(), late.id()).milestoneId());
+        assertNull(row(result.tasks(), other.id()).milestoneId());
+        var conflicts = result.conflicts().stream().filter(c -> c.type() == ScheduleConflictType.MILESTONE).toList();
+        assertEquals(1, conflicts.size());
+        assertEquals(List.of(late.id()), conflicts.get(0).taskIds());
+        assertEquals(late.key() + " ends after milestone Beta release", conflicts.get(0).message());
+
+        var filtered = schedule.get(pm, projectId, new ScheduleFilters(null, null, null, beta.id(), null, null, false, null, null));
+        assertEquals(Set.of(late.id(), onTime.id()),
+                Set.copyOf(filtered.tasks().stream().map(ScheduleTask::id).toList()));
+        assertEquals(2, filtered.milestones().size(), "diamonds stay project-wide");
+
+        milestones.delete(pm, beta.id());
+        var after = schedule.get(pm, projectId, ALL);
+        assertEquals(List.of("Launch"), after.milestones().stream().map(ScheduleMilestone::name).toList());
+        assertTrue(after.tasks().stream().allMatch(row -> row.milestoneId() == null));
+        assertTrue(after.conflicts().isEmpty());
+    }
+
+    private static ScheduleTask row(List<ScheduleTask> rows, Long id) {
+        return rows.stream().filter(row -> row.id().equals(id)).findFirst().orElseThrow();
+    }
+
     @Test void datesSurviveSprintCarryOverAndSprintFilter() {
         tx.executeWithoutResult(status -> projectMembers.findWithRolesByProjectIdAndUserId(projectId, pm.getId())
                 .orElseThrow().getRoles().add(ProjectRole.SCRUM_MASTER));
@@ -280,7 +321,11 @@ class ScheduleIntegrationTest extends AbstractIntegrationTest {
         assertEquals(404, http(admin, HttpMethod.GET, schedulePath, null).status());
         assertEquals(404, http(outsider, HttpMethod.GET, schedulePath, null).status());
         assertEquals(400, http(pm, HttpMethod.GET, schedulePath + "?from=2026-11-11&to=2026-11-10", null).status());
-        assertEquals(400, http(pm, HttpMethod.GET, schedulePath + "?milestoneId=1", null).status());
+        assertEquals(400, http(pm, HttpMethod.GET, schedulePath + "?milestoneId=0", null).status());
+        var noSuchMilestone = http(pm, HttpMethod.GET, schedulePath + "?milestoneId=999999", null);
+        assertEquals(200, noSuchMilestone.status());
+        assertTrue(noSuchMilestone.body().get("milestonesAvailable").asBoolean());
+        assertEquals(0, noSuchMilestone.body().get("tasks").size());
         jdbc.update("update projects set lifecycle_status='ARCHIVED' where id=?", projectId);
         assertEquals(409, http(pm, HttpMethod.PATCH, taskPath, "{\"clearDates\":true}").status());
     }

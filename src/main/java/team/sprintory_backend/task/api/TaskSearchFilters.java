@@ -23,7 +23,9 @@ public record TaskSearchFilters(
         String label,
         Long sprintId,
         Boolean noSprint,
-        Boolean blockedOnly
+        Boolean blockedOnly,
+        Long milestoneId,
+        Boolean noMilestone
 ) {
     private static final Set<String> TYPES = Set.of("STORY", "TASK", "BUG");
     private static final Set<String> PRIORITIES = Set.of("HIGHEST", "HIGH", "MEDIUM", "LOW", "LOWEST");
@@ -41,12 +43,23 @@ public record TaskSearchFilters(
         if (sprintId != null && noSprint != null) {
             throw new BadRequestException("Choose sprintId or noSprint, not both.");
         }
+        milestoneId = optionalPositiveId(milestoneId, "milestoneId");
+        noMilestone = Boolean.TRUE.equals(noMilestone) ? true : null;
+        if (milestoneId != null && noMilestone != null) {
+            throw new BadRequestException("Choose milestoneId or noMilestone, not both.");
+        }
     }
 
     /** Backwards-compatible constructor for callers without sprint filtering. */
     public TaskSearchFilters(String q, String type, String priority, Long statusId,
                              Long assigneeId, String label) {
-        this(q, type, priority, statusId, assigneeId, label, null, null, null);
+        this(q, type, priority, statusId, assigneeId, label, null, null, null, null, null);
+    }
+
+    /** Backwards-compatible constructor for callers without milestone filtering. */
+    public TaskSearchFilters(String q, String type, String priority, Long statusId, Long assigneeId,
+                             String label, Long sprintId, Boolean noSprint, Boolean blockedOnly) {
+        this(q, type, priority, statusId, assigneeId, label, sprintId, noSprint, blockedOnly, null, null);
     }
 
     /**
@@ -72,7 +85,8 @@ public record TaskSearchFilters(
     public boolean isUnfiltered() {
         return q == null && type == null && priority == null
                 && statusId == null && assigneeId == null && label == null
-                && sprintId == null && noSprint == null && blockedOnly == null;
+                && sprintId == null && noSprint == null && blockedOnly == null
+                && milestoneId == null && noMilestone == null;
     }
 
     private static String optionalText(String value) {

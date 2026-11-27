@@ -5,7 +5,6 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
-import team.sprintory_backend.exceptionHandler.BadRequestException;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.project.models.ProjectLifecycleState;
 import team.sprintory_backend.project.models.ProjectPermission;
@@ -41,9 +40,8 @@ public class ScheduleService {
         if (checked.projectMember() == null) throw new ResourceNotFoundException("Project not found.");
         if (!checked.can(ProjectPermission.VIEW_WORK)) throw new AccessDeniedException("Project permission required: VIEW_WORK");
         filters.validate();
-        // PMP-46 has not landed on this base. Integrate its projection here, not a guessed schema.
-        if (filters.milestoneId() != null) throw new BadRequestException("Milestone filtering is not available yet.");
-        List<ScheduleMilestone> milestones = List.of();
+        // Project-wide like the unscheduled panel: the filters narrow task rows, never the diamonds.
+        List<ScheduleMilestone> milestones = repository.findMilestones(projectId);
         List<ScheduleTask> all = repository.findRows(projectId);
         Map<Long, ScheduleTask> index = new HashMap<>();
         for (ScheduleTask row : all) index.put(row.id(), row);
@@ -64,7 +62,7 @@ public class ScheduleService {
         boolean canEdit = checked.can(ProjectPermission.EDIT_TASKS)
                 && checked.project().getLifecycleStatus() == ProjectLifecycleState.ACTIVE
                 && !checked.workspaceMember().getWorkspace().isArchived();
-        return new ScheduleResponse(LocalDate.now(), earliest, latest, canEdit, false, visible, arrows,
+        return new ScheduleResponse(LocalDate.now(), earliest, latest, canEdit, true, visible, arrows,
                 milestones, conflicts, unscheduled(all, links, index));
     }
 

@@ -1,8 +1,8 @@
 # Sprintory — Milestones API contract (R12, PMP-46)
 
-**Status:** contract written before the code (26 Nov 2026), so the frontend (PMP-151, Amir) can start now. Backend: PMP-150, branch `features/milestones`, not started yet. Acceptance testing: PMP-152 (Aliaksandr). See [§11 Implementation status](#11-implementation-status).
+**Status:** contract written before the code (26 Nov 2026) for the frontend (PMP-151, Amir). Backend (PMP-150, branch `features/milestones`) implemented on 27 Nov 2026 as written here; the one wording change is the delete audit count (§3.5). Acceptance testing: PMP-152 (Aliaksandr). See [§11 Implementation status](#11-implementation-status).
 **Applies to:** backend `/api/v1/projects/{projectId}/milestones`, `/api/v1/milestones/**`, `/api/v1/tasks/{taskId}/milestone`, the `milestone` field of `TaskResponse`, and the `milestoneId` / `noMilestone` task list filters.
-**Related:** [Tasks](./tasks-docs.md), [Task history](./task-history-docs.md), [Audit log](./audit-log-docs.md), [Roles and permissions](./roles-docs.md), [Project charter](./project-charter-docs.md) (the Overview page), [Board](./board-docs.md) (column categories), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R12.
+**Related:** [Tasks](./tasks-docs.md), [Timeline / Gantt](./schedule-docs.md), [Task history](./task-history-docs.md), [Audit log](./audit-log-docs.md), [Roles and permissions](./roles-docs.md), [Project charter](./project-charter-docs.md) (the Overview page), [Board](./board-docs.md) (column categories), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R12.
 
 This document is the single reference for milestones. The backend implements it, the frontend builds the milestone screens against it, and acceptance testing checks it. If the code and this file disagree, fix one of them in the same PR.
 
@@ -20,7 +20,7 @@ The story: *"As a project manager or Product Owner, I want to define milestones 
 - **Deleting a milestone** is a soft delete that **unlinks its tasks**. It can be restored, but restoring does **not** relink the tasks ([§3.5](#35-delete-a-milestone), [§3.6](#36-restore-a-milestone)).
 - **Projects are private** ([API conventions §5](./api-conventions.md#5-private-projects-and-access-control)). Someone who cannot see the project gets `404`.
 - **Read-only states:** in an archived workspace (`409 WORKSPACE_ARCHIVED`) or a `COMPLETED` / `ARCHIVED` project (`409 CONFLICT`), milestones and links can be read but not changed.
-- **Out of scope:** milestone dependencies, automatic date shifting, recurring milestones, overdue reminders or notifications, calendar (iCal) entries, cross-project milestones. Milestone diamonds on the Gantt chart (PMP-48, Damir) and milestone progress in reports (PMP-55) are built in those stories and read the same data.
+- **Out of scope:** milestone dependencies, automatic date shifting, recurring milestones, overdue reminders or notifications, calendar (iCal) entries, cross-project milestones. Milestone diamonds on the Gantt chart (PMP-48) are in the timeline response ([schedule-docs.md §4](./schedule-docs.md#4-milestones-pmp-46)); milestone progress in reports (PMP-55) is built in that story and reads the same data.
 
 ### Who can do what
 
@@ -173,8 +173,8 @@ There is no endpoint that lists a milestone's tasks: the milestone page uses the
   - the milestone is soft-deleted and disappears from every list, the task field dropdown and the task labels;
   - **every task linked to it is unlinked** (`milestone` becomes `null`). This includes deleted tasks, so a task restored later never points at a deleted milestone;
   - every unlinked task that is not deleted gets a history entry `MILESTONE`: name → `null`;
-  - an audit entry `MILESTONE_DELETED` with the number of unlinked tasks.
-- **Confirmation:** the dialog says "N tasks will be unlinked." Take N from `progress.totalTasks` of the milestone already on screen. Deleted tasks are not counted there; they are unlinked silently.
+  - an audit entry `MILESTONE_DELETED` with the number of unlinked tasks that are **not deleted** (the same N as the dialog below).
+- **Confirmation:** the dialog says "N tasks will be unlinked." Take N from `progress.totalTasks` of the milestone already on screen. Deleted tasks are not counted there or in the audit entry; they are unlinked silently.
 - **Response:** `204`. Deleting it again gives `404` "Milestone not found.".
 - **Errors:** `401`; `403`; `404`; `409 WORKSPACE_ARCHIVED`; `409 CONFLICT`.
 
@@ -216,6 +216,27 @@ There is no endpoint that lists a milestone's tasks: the milestone page uses the
 - **Side effects:** a history entry `MILESTONE`, old name → new name (`null` = none). So A → B, `null` → A and A → `null` are each one entry.
 - **Response `200`:** the updated `TaskResponse`, with `milestone` set.
 - **Errors:** `400 BAD_REQUEST`; `401`; `403` (a Viewer, or a workspace admin not in the project); `404` "Task not found." (missing, deleted, or a project the caller cannot see); `409 WORKSPACE_ARCHIVED`; `409 CONFLICT`.
+
+### Error messages
+
+Every error has the usual shape ([API conventions §4](./api-conventions.md)). Branch on `code`; the messages below are exact and can be shown as they are.
+
+| Status, `code` | Where | `message` |
+| --- | --- | --- |
+| `400 VALIDATION_ERROR` | 3.2, 3.4 (name, date, description), 3.7 (`taskIds`) | per field in `fieldErrors` |
+| `400 BAD_REQUEST` | 3.7 | "Only live top-level tasks of this project can be linked." |
+| `400 BAD_REQUEST` | 3.8, a subtask | "Only top-level tasks can be linked to a milestone." |
+| `400 BAD_REQUEST` | 3.8, a milestone that is missing, deleted or in another project | "The milestone does not belong to this project." |
+| `400 BAD_REQUEST` | task list, both filters | "Choose milestoneId or noMilestone, not both." |
+| `400 BAD_REQUEST` | task list, `milestoneId` ≤ 0 | "'milestoneId' must be a positive ID." |
+| `403 ACCESS_DENIED` | any, without the permission | "You do not have access to this resource." |
+| `404 RESOURCE_NOT_FOUND` | 3.1, 3.2 | "Project not found." |
+| `404 RESOURCE_NOT_FOUND` | 3.3–3.7 | "Milestone not found." |
+| `404 RESOURCE_NOT_FOUND` | 3.8 | "Task not found." |
+| `409 MILESTONE_NAME_TAKEN` | 3.2, 3.4, 3.6 | "A milestone with this name already exists in this project." |
+| `409 MILESTONE_LIMIT_REACHED` | 3.2, 3.6 | "A project can have at most 50 milestones." |
+| `409 CONFLICT` | every write, project `COMPLETED` / `ARCHIVED` | "Milestones are read-only when the project is completed or archived." |
+| `409 WORKSPACE_ARCHIVED` | every write, workspace archived | "Workspace is archived." |
 
 ---
 
@@ -299,7 +320,7 @@ Suggested sentence: ***Ada Lovelace** changed the milestone: None → Beta relea
 | --- | --- | --- |
 | `MILESTONE_CREATED` | 3.2 succeeds | `name`: null → name; `targetDate`: null → date; `description`: null → text (only when given) |
 | `MILESTONE_UPDATED` | 3.4 changes at least one field | only the fields that changed, in this order: `name`, `targetDate`, `description` (old → new) |
-| `MILESTONE_DELETED` | 3.5 succeeds | `unlinkedTasks`: null → the number (also `0`) |
+| `MILESTONE_DELETED` | 3.5 succeeds | `unlinkedTasks`: null → the number of unlinked tasks that are not deleted (also `0`) |
 | `MILESTONE_RESTORED` | 3.6 succeeds | none |
 
 Linking and unlinking tasks writes no audit entry: the task history already has it. Refused requests write nothing.
@@ -358,8 +379,8 @@ Migration `V21__milestones.sql`. V20 is the Gantt's task dates (PMP-48, Damir) a
 - **One milestone per task** is the `tasks.milestone_id` column itself; there is no link table.
 - **Milestones are soft-deleted** (`deleted_at`) and never listed again. Restoring clears `deleted_at`.
 - Also in V21: `MILESTONE` in `ck_task_history_field`; the four new actions in `ck_audit_log_entries_action`; `MILESTONE` in `ck_audit_log_entries_target_type`.
-- **Readers in other stories:** the Gantt (PMP-48) reads `milestones` (diamonds on `target_date`) and `tasks.milestone_id` (the "ends after milestone" conflict). The time views (PMP-50) filter by `tasks.milestone_id`.
-- **Code:** `milestone/{models,repositories,services,controllers,dto,exceptions}`. `MilestoneService` holds the rules. Every write takes the project row lock (`ProjectRepository.lockById`), which serializes the name check, the 50 limit and linking against a delete.
+- **Readers in other stories:** the Gantt (PMP-48, `ScheduleRepository`) reads `milestones` (diamonds on `target_date`) and `tasks.milestone_id` (the filter and the "ends after milestone" conflict). The time views (PMP-50) filter by `tasks.milestone_id`.
+- **Code:** `milestone/{models,repositories,services,controllers,dto,exceptions}`. `MilestoneService` holds the rules, including both linking endpoints (3.7, 3.8). Every write takes the project row lock (`ProjectRepository.lockById`), which serializes the name check, the 50 limit and linking against a delete. Progress for a whole list is one grouped query (`TaskRepository.countByMilestone`); the task list fetches each task's milestone in its page query.
 
 ---
 
@@ -386,18 +407,19 @@ Migration `V21__milestones.sql`. V20 is the Gantt's task dates (PMP-48, Damir) a
 
 ## 11. Implementation status
 
-As of 26 Nov 2026:
+As of 27 Nov 2026:
 
 | Part | Status |
 | --- | --- |
-| This contract | Written before the code, agreed with the backend owner; the frontend can start |
-| Permissions `MILESTONE_MANAGE`, `MILESTONE_LINK` | Not started |
-| `V21__milestones.sql`, entities, repositories | Not started |
-| Status and progress calculation (§4) | Not started |
-| Create, read, edit, delete, restore (3.1–3.6), audit entries | Not started |
-| Linking (3.7, 3.8), task history | Not started |
-| `TaskResponse.milestone`, `milestoneId` / `noMilestone` filters (§5) | Not started |
-| Integration test on PostgreSQL | Not started |
+| This contract | Written before the code (26 Nov), agreed with the backend owner |
+| Permissions `MILESTONE_MANAGE`, `MILESTONE_LINK` | Done; matrix tested in `ProjectRoleTest` |
+| `V21__milestones.sql`, entities, repositories | Done; V21 applies on PostgreSQL after V20 |
+| Status and progress calculation (§4) | Done; `MilestoneStatusTest`, `MilestoneProgressTest` |
+| Create, read, edit, delete, restore (3.1–3.6), audit entries | Done; `MilestoneServiceTest`, `MilestoneControllerTest` |
+| Linking (3.7, 3.8), task history | Done; `MilestoneServiceTest` |
+| `TaskResponse.milestone`, `milestoneId` / `noMilestone` filters (§5) | Done; `TaskSearchFiltersTest`, `TaskApiServiceTest` |
+| Integration test on PostgreSQL | Done; `MilestoneIntegrationTest` (service flow and HTTP errors) |
+| Gantt milestones (PMP-48): diamonds, `milestoneId` filter, conflicts | Done; `ScheduleIntegrationTest`, [schedule-docs.md §4](./schedule-docs.md#4-milestones-pmp-46) |
 | Frontend (PMP-151) and acceptance test (PMP-152) | Not started |
 
 ---
@@ -418,3 +440,4 @@ As of 26 Nov 2026:
 | 26 Nov 2026 | `basis` is `POINTS` as soon as one linked task has story points. Unestimated tasks then count 0 points. The status always counts tasks. |
 | 26 Nov 2026 | Read-only project (`COMPLETED` / `ARCHIVED`) answers `409 CONFLICT` on every write, as for retros and dependencies, until PMP-63 centralizes it. |
 | 26 Nov 2026 | Migration `V21`: V20 is taken by the Gantt (PMP-48) and must be merged first. |
+| 27 Nov 2026 | The `MILESTONE_DELETED` count is the live tasks unlinked, the same N as the confirmation dialog. Deleted tasks are unlinked too but not counted. |

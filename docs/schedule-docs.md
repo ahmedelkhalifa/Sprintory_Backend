@@ -1,6 +1,6 @@
 # Sprintory — Timeline / schedule API (PMP-48, backend PMP-153)
 
-**Status:** task dates and schedule/dependency API implemented against main `e0130ad`. V20 is reserved for PMP-153. Real milestone retrieval awaits PMP-46; this document explicitly identifies the pending integration. Full clean Maven verification on PostgreSQL passed on 26 November 2026: 1,066 tests, zero failures, errors or skipped tests; V20 applied successfully.
+**Status:** task dates and schedule/dependency API implemented against main `e0130ad`. V20 is reserved for PMP-153. Milestones (PMP-46, V21) are integrated since 27 November 2026 ([§4](#4-milestones-pmp-46)). Full clean Maven verification on PostgreSQL passed on 26 November 2026: 1,066 tests, zero failures, errors or skipped tests; V20 applied successfully.
 
 ## 1. Dates on tasks
 
@@ -30,13 +30,13 @@ Optional query parameters (all combine with AND):
 | `assigneeId` | User ID |
 | `statusId` | Project board column ID |
 | `statusCategory` | `TODO`, `IN_PROGRESS`, `DONE` |
-| `milestoneId` | Reserved for PMP-46; currently returns 400 if supplied |
+| `milestoneId` | Tasks linked to that milestone; an id of another project or a deleted milestone finds nothing |
 | `sprintId` | Sprint ID |
 | `type` | `STORY`, `TASK`, `BUG` |
 | `hideDone` | `true` excludes DONE rows |
 | `from`, `to` | Inclusive date window; include any bar overlapping the window; either bound may be omitted |
 
-Invalid enum/date/ID/window inputs return 400. No pagination: the endpoint returns all matching rows. Filters apply to scheduled rows only; the Unscheduled panel remains project-wide, and milestones will be project-wide. Hidden endpoints suppress arrows, but do not suppress conflicts on visible rows. The global bounds remain the project's full scheduled range. A UI may extend its axis to include `today` when outside this range, or when there are no scheduled tasks; no dates are changed. Bars use their original dates even when they overlap a window boundary.
+Invalid enum/date/ID/window inputs return 400. No pagination: the endpoint returns all matching rows. Filters apply to scheduled rows only; the Unscheduled panel and the milestones remain project-wide. Hidden endpoints suppress arrows, but do not suppress conflicts on visible rows. The global bounds remain the project's full scheduled range. A UI may extend its axis to include `today` when outside this range, or when there are no scheduled tasks; no dates are changed. Bars use their original dates even when they overlap a window boundary.
 
 ### Example response (200)
 
@@ -46,13 +46,13 @@ Invalid enum/date/ID/window inputs return 400. No pagination: the endpoint retur
   "earliestStartDate": "2026-11-08",
   "latestDueDate": "2026-11-12",
   "canEditDates": true,
-  "milestonesAvailable": false,
+  "milestonesAvailable": true,
   "tasks": [
     {"id":10,"key":"PMP-10","title":"Backend","startDate":"2026-11-08","dueDate":"2026-11-10","statusCategory":"IN_PROGRESS","statusId":2,"statusName":"In Progress","type":"TASK","assigneeId":7,"assignee":"Ada Lovelace","sprintId":4,"milestoneId":null},
     {"id":11,"key":"PMP-11","title":"Frontend","startDate":"2026-11-10","dueDate":"2026-11-12","statusCategory":"TODO","statusId":1,"statusName":"To Do","type":"TASK","assigneeId":null,"assignee":null,"sprintId":4,"milestoneId":null}
   ],
   "dependencies": [{"id":21,"blockerId":10,"blockedId":11}],
-  "milestones": [],
+  "milestones": [{"id":4,"name":"Beta release","targetDate":"2026-11-20"}],
   "conflicts": [{"type":"DEPENDENCY","taskIds":[10,11],"dependencyId":21,"milestoneId":null,"message":"PMP-11 starts before PMP-10 ends"}],
   "unscheduled": [{"id":12,"key":"PMP-12","title":"Testing","type":"TASK","statusCategory":"TODO","statusId":1,"statusName":"To Do","assigneeId":null,"assignee":null,"sprintId":null,"milestoneId":null,"blockerKeys":["PMP-11"],"blockedTaskKeys":[],"hint":"blocked by PMP-11, set dates to see it on the chart"}]
 }
@@ -68,9 +68,15 @@ Invalid enum/date/ID/window inputs return 400. No pagination: the endpoint retur
 
 `ScheduleConflicts.find(tasks, dependencies, milestones)` is a pure Java calculation using ID indexes. O(T + E + M) time and space. Inclusive boundary: a blocked task starting on the blocker's due date conflicts; starting the following day does not. Ignore a DONE blocker, regardless of the blocked task's status. Ignore unscheduled or missing endpoints. For milestones, an open scheduled task ending after (not on) its milestone's target date conflicts; DONE tasks do not. Conflicts are not stored and are recalculated on every read.
 
-## 4. PMP-46 integration (pending)
+## 4. Milestones (PMP-46)
 
-The uploaded base contains no milestone entity, association, table or API. Do not create a second milestone schema or consume V21. The response has stable placeholder fields (`milestonesAvailable: false`, empty `milestones`, null `milestoneId`). Disable milestone filter and markers while false; do not pretend real milestone conflicts are supported. Once PMP-46 lands, update `ScheduleRepository.findRows` with the actual association and a project-wide milestone projection (`id`, `title`, `targetDate`), replace the empty list in `ScheduleService`, remove the milestone filter rejection and set `milestonesAvailable: true`. The pure calculation and `ScheduleFilters` already handle non-null milestone IDs. Verify actual milestone contract (including deleted/archived milestones and frontend route) before enabling. Add integration tests with real milestone persistence and conflict recalculation. No milestone database tables in V20.
+Milestones and the task link are defined in [milestones-docs.md](./milestones-docs.md) (table `milestones` and `tasks.milestone_id`, V21).
+
+- `milestones` lists the project's **live** milestones as `{id, name, targetDate}`, in the milestone list's order (target date, then name). They are project-wide: the filters never hide a diamond. Deleted milestones never appear, and their tasks are already unlinked.
+- Each row's `milestoneId` is its task's milestone (`ScheduleRepository.findRows`, from `tasks.milestone_id`; subtasks are not rows).
+- `milestonesAvailable` is always `true` now; it stays in the response so existing clients keep working.
+- A `MILESTONE` conflict: an open scheduled task whose `dueDate` is after its milestone's `targetDate` (same day is fine), message "`KEY` ends after milestone `name`". A diamond links to the milestone page (`/projects/{projectId}/milestones/{milestoneId}`, [milestones-docs.md §7.2](./milestones-docs.md#72-milestone-page)).
+- Covered by `ScheduleIntegrationTest.milestonesAreDiamondsFilterRowsAndRaiseConflicts` (real milestones, filter, conflict, delete).
 
 ## 5. Database and performance
 
@@ -84,11 +90,11 @@ V20 adds nullable DATE columns, paired-date/inclusive-order CHECK, `(project_id,
 | --- | --- |
 | 1–5 | Date storage, history, validation, permissions and lifecycle implemented; tests added |
 | 6–10 | Rows, ordering, arrows, hints and subtask exclusion implemented; tests added |
-| 11 | Milestone retrieval/marker link pending PMP-46 |
-| 12–16 | DONE filter, range, today, row data and supported filters implemented; rendering/navigation belongs to frontend; milestone filter pending |
+| 11 | Milestones and their ids returned (27 Nov, with PMP-46); marker rendering and link belong to the frontend |
+| 12–16 | DONE filter, range, today, row data and supported filters implemented; rendering/navigation belongs to frontend; milestone filter implemented (27 Nov) |
 | 17–19, 21 | Dependency conflicts and recalculation implemented; tests added |
-| 20 | Pure milestone conflict calculation implemented and unit-tested; real data integration pending |
+| 20 | Milestone conflicts implemented on real milestones; unit and integration tests added |
 | 22–25 | Membership, read-only states and Scrum/Kanban implemented; tests added |
 | 26 | 500-row backend/HTTP test passed: 9 ms backend read, 32 ms HTTP read and JSON parse; frontend verification pending |
 
-Verification on 26 November 2026: clean Maven build succeeded (1,066 tests; 0 failures, 0 errors, 0 skipped). Flyway applied all 20 migrations on PostgreSQL 16.15. The 500-task / 499-dependency integration benchmark measured 9 ms for the backend read and 32 ms for HTTP read and JSON parsing on the local test machine. End-to-end frontend performance and real milestone integration remain to be verified. To reproduce, run `bash ./mvnw -B clean verify` with Docker running.
+Verification on 26 November 2026: clean Maven build succeeded (1,066 tests; 0 failures, 0 errors, 0 skipped). Flyway applied all 20 migrations on PostgreSQL 16.15. The 500-task / 499-dependency integration benchmark measured 9 ms for the backend read and 32 ms for HTTP read and JSON parsing on the local test machine. End-to-end frontend performance remains to be verified. Milestone integration was added on 27 November 2026 (PMP-46). To reproduce, run `bash ./mvnw -B clean verify` with Docker running.

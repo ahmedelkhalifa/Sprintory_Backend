@@ -28,9 +28,9 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
     @EntityGraph(attributePaths = {"status", "assignee"})
     Optional<Task> findByIdAndProjectId(Long id, Long projectId);
 
-    /** The filtered task list; the status column and assignee come in the same query. */
+    /** The filtered task list; the status column, assignee and milestone come in the same query. */
     @Override
-    @EntityGraph(attributePaths = {"status", "assignee"})
+    @EntityGraph(attributePaths = {"status", "assignee", "milestone"})
     Page<Task> findAll(Specification<Task> spec, Pageable pageable);
 
     /** Sprint order; the parent owns the assignment, and subtasks follow it. */

@@ -1,6 +1,7 @@
 package team.sprintory_backend.task.dto;
 
 import team.sprintory_backend.dependency.dto.DependencyTaskSummary;
+import team.sprintory_backend.milestone.dto.MilestoneSummary;
 import team.sprintory_backend.task.models.Task;
 import team.sprintory_backend.task.models.TaskPriority;
 import team.sprintory_backend.task.models.TaskType;
@@ -38,14 +39,16 @@ public record TaskResponse(
         boolean blocked,
         List<DependencyTaskSummary> openBlockers,
         LocalDate startDate,
-        LocalDate dueDate
+        LocalDate dueDate,
+        /** R12: the task's milestone, or for a subtask its parent's; null when there is none. */
+        MilestoneSummary milestone
 ) {
     public TaskResponse(Long id, Long projectId, String key, String title, TaskType type,
                         TaskPriority priority, Long statusId, String statusName, Long assigneeId,
                         Integer estimate, List<String> labels, String description, Long sprintId,
                         Instant createdAt, Instant updatedAt) {
         this(id, projectId, key, title, type, priority, statusId, statusName, assigneeId,
-                estimate, labels, description, sprintId, createdAt, updatedAt, null, null, null, 0, 0, 0, false, List.of(), null, null);
+                estimate, labels, description, sprintId, createdAt, updatedAt, null, null, null, 0, 0, 0, false, List.of(), null, null, null);
     }
 
     /** Preserve the PMP-125 16-argument constructor for existing callers. */
@@ -55,26 +58,28 @@ public record TaskResponse(
                         Instant createdAt, Instant updatedAt, WipWarning wipWarning) {
         this(id, projectId, key, title, type, priority, statusId, statusName, assigneeId,
                 estimate, labels, description, sprintId, createdAt, updatedAt, wipWarning,
-                null, null, 0, 0, 0, false, List.of(), null, null);
+                null, null, 0, 0, 0, false, List.of(), null, null, null);
     }
 
     public TaskResponse withProgress(int total, int done) {
         return new TaskResponse(id, projectId, key, title, type, priority, statusId, statusName,
                 assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt,
-                wipWarning, parentTaskId, estimateMinutes, total, done, carriedOverCount, blocked, openBlockers, startDate, dueDate);
+                wipWarning, parentTaskId, estimateMinutes, total, done, carriedOverCount, blocked, openBlockers, startDate, dueDate,
+                milestone);
     }
 
     public TaskResponse withWipWarning(WipWarning warning) {
         return new TaskResponse(id, projectId, key, title, type, priority, statusId, statusName,
                 assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt, warning,
-                parentTaskId, estimateMinutes, subtaskTotal, subtaskDone, carriedOverCount, blocked, openBlockers, startDate, dueDate);
+                parentTaskId, estimateMinutes, subtaskTotal, subtaskDone, carriedOverCount, blocked, openBlockers, startDate, dueDate,
+                milestone);
     }
 
     public TaskResponse withBlockers(List<DependencyTaskSummary> blockers) {
         return new TaskResponse(id, projectId, key, title, type, priority, statusId, statusName,
             assigneeId, estimate, labels, description, sprintId, createdAt, updatedAt,
             wipWarning, parentTaskId, estimateMinutes, subtaskTotal, subtaskDone, carriedOverCount,
-            !blockers.isEmpty(), List.copyOf(blockers), startDate, dueDate);
+            !blockers.isEmpty(), List.copyOf(blockers), startDate, dueDate, milestone);
     }
 
     /** Labels sorted for stable order; sprintId reflects the parent sprint for subtasks. */
@@ -89,7 +94,8 @@ public record TaskResponse(
                         : (task.getParent().getSprint() == null ? null : task.getParent().getSprint().getId())),
                 toInstant(task.getCreatedAt()), toInstant(task.getUpdatedAt()), null,
                 task.getParent() == null ? null : task.getParent().getId(), task.getEstimateMinutes(), 0, 0,
-                task.getParent() == null ? task.getCarryOverCount() : 0, false, List.of(), task.getStartDate(), task.getDueDate());
+                task.getParent() == null ? task.getCarryOverCount() : 0, false, List.of(), task.getStartDate(), task.getDueDate(),
+                MilestoneSummary.of(task.getParent() == null ? task.getMilestone() : task.getParent().getMilestone()));
     }
 
     /** The audit columns are local date-times written in the server's zone. */
