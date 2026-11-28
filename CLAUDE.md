@@ -162,6 +162,13 @@ Contracts: `docs/tasks-docs.md` and `docs/search-docs.md`. Damir built the contr
 - `TaskApiService` publishes `TaskCreated` and `TaskAssigned` (R27); keep publishing `TaskAssigned` only when the assignee changes to another person.
 - **Subtasks (PMP-132) are `Task` rows with a `parent`**, one level only, and they share the project's key sequence. Their estimate is `estimateMinutes`, never story points. They are created, listed and edited through `SubtaskService` (the task PATCH refuses them), but delete and restore go through `TaskApiService`. The task list, board cards and WIP counts show top-level tasks only (`parent is null`). Moving a parent into a `DONE` column while subtasks are open needs `confirmOpenSubtasks` (409 `OPEN_SUBTASKS_CONFIRMATION_REQUIRED`), whether by a task move or by deleting a column into a `DONE` column (`ProjectBoardService.delete`). A parent's delete cascades to the children that were live (`deleted_with_parent_id`), and its restore brings back exactly those. Contract: tasks-docs §11.
 
+## Time logging (R19, PMP-49 / PMP-144)
+
+Contract: `docs/time-logging-docs.md`; module `timelog/`, table `time_entry` (V23). Entries extend `BaseEntity`; author `user_id` is immutable and independent of audit fields. Only the author with `LOG_TIME` can mutate entries; task totals are derived, and non-members (including workspace admins) get 404.
+
+- **Every time-entry write path** (including future Jira worklog imports) must take the project row lock before the transaction-scoped PostgreSQL advisory lock `pg_advisory_xact_lock(hashtextextended(cast(? as text), 0))`, with key `sprintory:time:<workspaceId>:<userId>`. For inserts/updates, validate the 1440-minute daily cap under that lock across all projects in the workspace, excluding the edited entry; deletes take the same lock and only reduce usage. Use READ COMMITTED so the sum sees preceding committed writes after waiting. Do not bypass this with raw SQL imports. Entries on soft-deleted tasks still consume capacity; soft-deleted entries do not.
+- Keep lifecycle and permission checks around the project lock; read lifecycle from the database after locking rather than using a cached entity. Read endpoints use a consistent repeatable-read snapshot. Notes are plain text and never copied into public task history.
+
 ## Sprints (R14, R15: PMP-119, PMP-40, PMP-41)
 
 **`docs/sprints-docs.md` is the sprints contract** (planning, close preview, close, cancel, carry-over, capacity, Scrum board fields, errors). Change the code and that file in the same PR. Tables are in `V15__sprint_planning.sql` and `V16__sprint_close_cancel.sql`; both are merged or about to be, so a schema change is a new version.

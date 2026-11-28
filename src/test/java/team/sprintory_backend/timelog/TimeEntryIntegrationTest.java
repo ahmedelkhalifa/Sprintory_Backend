@@ -36,6 +36,7 @@ import team.sprintory_backend.task.models.TaskHistoryType;
 import team.sprintory_backend.task.services.*;
 import team.sprintory_backend.timelog.dto.*;
 import team.sprintory_backend.timelog.exceptions.TimeEntryException;
+import team.sprintory_backend.timelog.exceptions.TimeEntryConflictException;
 import team.sprintory_backend.timelog.services.TimeEntryService;
 import team.sprintory_backend.user.models.Role;
 import team.sprintory_backend.user.models.User;
@@ -148,11 +149,11 @@ class TimeEntryIntegrationTest extends AbstractIntegrationTest {
     @Test void workspaceCapAndEditingExcludesOwnEntry() {
         var a = create("A"); var b = create(pm, foreignProjectId, "B", null);
         var first = time.create(dev, a.id(), request(1200));
-        assertEquals(ErrorCode.TIME_DAILY_LIMIT_EXCEEDED, assertThrows(TimeEntryException.class,
+        assertEquals(ErrorCode.TIME_DAILY_LIMIT_EXCEEDED, assertThrows(TimeEntryConflictException.class,
                 () -> time.create(dev, b.id(), request(300))).getCode());
         var second = time.create(dev, b.id(), request(240));
         time.update(dev, second.id(), request(240));
-        assertThrows(TimeEntryException.class, () -> time.update(dev, second.id(), request(241)));
+        assertThrows(TimeEntryConflictException.class, () -> time.update(dev, second.id(), request(241)));
         time.update(dev, second.id(), new TimeEntryRequest(date().minusDays(1), 300, null));
         time.update(dev, first.id(), request(1440));
         time.delete(dev, first.id());
@@ -173,7 +174,7 @@ class TimeEntryIntegrationTest extends AbstractIntegrationTest {
         assertEquals(120, time.summary(pm, parent.id()).totalMinutes());
         assertThrows(ResourceNotFoundException.class, () -> time.create(dev, child.id(), request(1)));
         assertThrows(ResourceNotFoundException.class, () -> time.delete(dev, childEntry.id()));
-        assertThrows(TimeEntryException.class, () -> time.create(dev, parent.id(), request(1231)));
+        assertThrows(TimeEntryConflictException.class, () -> time.create(dev, parent.id(), request(1231)));
         tasks.restore(pm, projectId, child.id());
         assertEquals(210, time.summary(pm, parent.id()).totalMinutes());
         assertEquals(childEntry.id(), time.mine(dev, child.id(), true).get(0).id());
@@ -197,9 +198,9 @@ class TimeEntryIntegrationTest extends AbstractIntegrationTest {
             jdbc.update("update projects set lifecycle_status=? where id=?", state, projectId);
             assertEquals(60, time.summary(viewer, task.id()).totalMinutes());
             assertFalse(time.summary(dev, task.id()).canLog());
-            assertThrows(TimeEntryException.class, () -> time.create(dev, task.id(), request(1)));
-            assertThrows(TimeEntryException.class, () -> time.update(dev, entry.id(), request(1)));
-            assertThrows(TimeEntryException.class, () -> time.delete(dev, entry.id()));
+            assertThrows(TimeEntryConflictException.class, () -> time.create(dev, task.id(), request(1)));
+            assertThrows(TimeEntryConflictException.class, () -> time.update(dev, entry.id(), request(1)));
+            assertThrows(TimeEntryConflictException.class, () -> time.delete(dev, entry.id()));
         }
         jdbc.update("update projects set lifecycle_status='ACTIVE' where id=?", projectId);
         jdbc.update("update workspaces set archived_at=now() where id=?", workspaceId);
@@ -233,7 +234,7 @@ class TimeEntryIntegrationTest extends AbstractIntegrationTest {
     private boolean race(Long taskId, CountDownLatch ready, CountDownLatch start) throws InterruptedException {
         ready.countDown(); start.await();
         try { time.create(dev, taskId, request(800)); return true; }
-        catch (TimeEntryException e) { assertEquals(ErrorCode.TIME_DAILY_LIMIT_EXCEEDED, e.getCode()); return false; }
+        catch (TimeEntryConflictException e) { assertEquals(ErrorCode.TIME_DAILY_LIMIT_EXCEEDED, e.getCode()); return false; }
     }
 
     @Test void validationServerDateGraceAndDoneTask() {
@@ -256,11 +257,30 @@ class TimeEntryIntegrationTest extends AbstractIntegrationTest {
         assertEquals(403, http(pm, HttpMethod.DELETE, edit, null).status());
         assertEquals(404, http(admin, HttpMethod.GET, path + "/time-summary", null).status());
         assertEquals(403, http(viewer, HttpMethod.POST, path + "/time-entries", "{\"minutes\":1}").status());
-        for (String invalid : List.of("1.5", "\"90\"", "0", "1441", "null"))
-            assertEquals(400, http(dev, HttpMethod.POST, path + "/time-entries", "{\"minutes\":" + invalid + "}").status());
+        for (String invalid : List.of("1.5", "\"90\""))
+            assertError(400, "BAD_REQUEST", http(dev, HttpMethod.POST, path + "/time-entries", "{\"minutes\":" + invalid + "}"));
+        for (String invalid : List.of("0", "1441", "null"))
+            assertError(400, "INVALID_TIME_ENTRY", http(dev, HttpMethod.POST, path + "/time-entries", "{\"minutes\":" + invalid + "}"));
+        assertError(400, "INVALID_TIME_ENTRY", http(dev, HttpMethod.POST, path + "/time-entries", "{}"));
+        assertError(400, "INVALID_TIME_ENTRY", http(dev, HttpMethod.POST, path + "/time-entries",
+                "{\"minutes\":1,\"note\":\"" + "x".repeat(501) + "\"}"));
+        assertError(400, "INVALID_TIME_ENTRY", http(dev, HttpMethod.PUT, edit, "{\"minutes\":1}"));
+        assertError(400, "INVALID_TIME_ENTRY", http(dev, HttpMethod.POST, path + "/time-entries",
+                "{\"minutes\":1,\"workDate\":\"" + LocalDate.now().plusDays(2) + "\"}"));
+        assertError(409, "TIME_DAILY_LIMIT_EXCEEDED", http(dev, HttpMethod.POST, path + "/time-entries", "{\"minutes\":1351}"));
+        assertTrue(created.body().get("createdAt").isString());
+        assertTrue(created.body().get("updatedAt").isString());
+        assertEquals(dev.getEmail(), jdbc.queryForObject("select created_by from time_entry where id=?", String.class, id));
+        assertEquals(dev.getEmail(), jdbc.queryForObject("select updated_by from time_entry where id=?", String.class, id));
         assertEquals(0, http(pm, HttpMethod.GET, path + "/time-entries?mine=true", null).body().size());
         assertEquals(90, http(viewer, HttpMethod.GET, path + "/time-summary", null).body().get("totalMinutes").asLong());
         assertEquals(200, http(dev, HttpMethod.PUT, edit, "{\"minutes\":120,\"workDate\":\"" + date() + "\"}").status());
+        var other = http(dev, HttpMethod.POST, path + "/time-entries",
+                "{\"minutes\":1320,\"workDate\":\"" + date() + "\"}");
+        assertEquals(201, other.status());
+        assertError(409, "TIME_DAILY_LIMIT_EXCEEDED", http(dev, HttpMethod.PUT, edit,
+                "{\"minutes\":121,\"workDate\":\"" + date() + "\"}"));
+        assertEquals(204, http(dev, HttpMethod.DELETE, "/api/v1/time-entries/" + other.body().get("id").asLong(), null).status());
         assertEquals(204, http(dev, HttpMethod.DELETE, edit, null).status());
         assertEquals(0, http(dev, HttpMethod.GET, path + "/time-entries", null).body().size());
     }
@@ -276,6 +296,11 @@ class TimeEntryIntegrationTest extends AbstractIntegrationTest {
         sprints.complete(dev, sprint.id(), new CompleteSprintRequest(null, false, SprintGoalAchieved.YES, null, true));
         assertEquals(sprint.id(), tasks.get(pm, projectId, task.id()).sprintId());
         assertEquals(45, time.create(dev, task.id(), request(45)).minutes());
+    }
+
+    private static void assertError(int status, String code, HttpResult result) {
+        assertEquals(status, result.status());
+        assertEquals(code, result.body().get("code").asText());
     }
 
     private record HttpResult(int status, JsonNode body) { }

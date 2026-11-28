@@ -7,7 +7,6 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
-import team.sprintory_backend.exceptionHandler.ErrorCode;
 import team.sprintory_backend.exceptionHandler.ResourceNotFoundException;
 import team.sprintory_backend.project.models.ProjectLifecycleState;
 import team.sprintory_backend.project.models.ProjectPermission;
@@ -21,6 +20,8 @@ import team.sprintory_backend.timelog.dto.TimeEntryRequest;
 import team.sprintory_backend.timelog.dto.TimeEntryResponse;
 import team.sprintory_backend.timelog.dto.TimeSummaryResponse;
 import team.sprintory_backend.timelog.exceptions.TimeEntryException;
+import team.sprintory_backend.timelog.exceptions.TimeEntryConflictException;
+import team.sprintory_backend.workspace.services.WorkspaceAccess;
 import team.sprintory_backend.timelog.models.TimeEntry;
 import team.sprintory_backend.timelog.repositories.TimeEntryRepository;
 import team.sprintory_backend.user.models.User;
@@ -50,10 +51,9 @@ public class TimeEntryService {
         TimeEntryRules.validate(request.minutes(), date, request.note(), today);
         lockAuthor(workspaceId, actor.getId());
         requireCapacity(workspaceId, actor.getId(), date, request.minutes(), null);
-        Instant now = Instant.now();
-        TimeEntry entry = entries.save(TimeEntry.builder().workspaceId(workspaceId).projectId(projectId)
+        TimeEntry entry = entries.saveAndFlush(TimeEntry.builder().workspaceId(workspaceId).projectId(projectId)
                 .taskId(taskId).userId(actor.getId()).workDate(date).minutes(request.minutes())
-                .note(request.note()).createdAt(now).updatedAt(now).build());
+                .note(request.note()).build());
         history.recordTimeEntryAdded(task, entry.getId(), snapshot(entry), actor);
         return TimeEntryResponse.from(entry);
     }
@@ -72,7 +72,7 @@ public class TimeEntryService {
         entry.setMinutes(request.minutes());
         entry.setWorkDate(request.workDate());
         entry.setNote(request.note());
-        entry.setUpdatedAt(Instant.now());
+        entries.flush(); // JPA auditing updates updatedAt before the response is built.
         history.recordTimeEntryChanged(task, entryId, before, snapshot(entry), noteChanged, actor);
         return TimeEntryResponse.from(entry);
     }
@@ -82,16 +82,14 @@ public class TimeEntryService {
         Task task = writableEntryTask(actor, entryId);
         lockAuthor(task.getProject().getWorkspace().getId(), actor.getId());
         TimeEntry entry = ownedEntry(actor, entryId, task.getId());
-        Instant now = Instant.now();
-        entry.setDeletedAt(now);
-        entry.setUpdatedAt(now);
+        entry.setDeletedAt(Instant.now());
         history.recordTimeEntryDeleted(task, entryId, snapshot(entry), actor);
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public List<TimeEntryResponse> mine(User actor, Long taskId, boolean mine) {
         visible(actor, projectId(taskId));
-        if (!mine) throw new TimeEntryException(ErrorCode.INVALID_TIME_ENTRY, "Only your own time entries are available.");
+        if (!mine) throw new TimeEntryException("Only your own time entries are available.");
         return entries.findByTaskIdAndUserIdOrderByWorkDateDescIdDesc(taskId, actor.getId()).stream()
                 .map(TimeEntryResponse::from).toList();
     }
@@ -109,17 +107,22 @@ public class TimeEntryService {
 
     private Task writableTask(User actor, Long taskId) {
         Long projectId = projectId(taskId);
-        visible(actor, projectId); // Mask non-members, including workspace admins, before writes.
-        access.requireActive(projectId, actor, ProjectPermission.LOG_TIME);
+        requireWritableAccess(actor, projectId);
         projects.lockById(projectId).orElseThrow(TimeEntryService::missingTask);
         // Recheck access after the lock; task deletion also takes this lock.
-        visible(actor, projectId);
-        access.requireActive(projectId, actor, ProjectPermission.LOG_TIME);
+        requireWritableAccess(actor, projectId);
         // Read current database state rather than an entity cached before acquiring the lock.
         String lifecycle = jdbc.queryForObject("select lifecycle_status from projects where id = ?", String.class, projectId);
         if (!ProjectLifecycleState.ACTIVE.name().equals(lifecycle))
-            throw new TimeEntryException(ErrorCode.CONFLICT, "Time entries are read-only when the project is completed or archived.");
+            throw TimeEntryConflictException.readOnlyProject();
         return tasks.findByIdAndProjectId(taskId, projectId).orElseThrow(TimeEntryService::missingTask);
+    }
+
+    private void requireWritableAccess(User actor, Long projectId) {
+        ProjectAccessResult checked = visible(actor, projectId);
+        if (!checked.can(ProjectPermission.LOG_TIME))
+            throw new AccessDeniedException("Project permission required: LOG_TIME");
+        WorkspaceAccess.requireNotArchived(checked.workspaceMember());
     }
 
     private ProjectAccessResult visible(User actor, Long projectId) {

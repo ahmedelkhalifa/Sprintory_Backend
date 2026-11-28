@@ -1,6 +1,5 @@
 package team.sprintory_backend.timelog.controllers;
 
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,13 +20,13 @@ public class TimeEntryController {
 
     @PostMapping("/tasks/{taskId}/time-entries")
     public ResponseEntity<TimeEntryResponse> create(@AuthenticationPrincipal AppUserDetails principal,
-            @PathVariable Long taskId, @Valid @RequestBody TimeEntryRequest request) {
+            @PathVariable Long taskId, @RequestBody TimeEntryRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(time.create(principal.getUser(), taskId, request));
     }
 
     @PutMapping("/time-entries/{entryId}")
     public TimeEntryResponse update(@AuthenticationPrincipal AppUserDetails principal,
-            @PathVariable Long entryId, @Valid @RequestBody TimeEntryRequest request) {
+            @PathVariable Long entryId, @RequestBody TimeEntryRequest request) {
         return time.update(principal.getUser(), entryId, request);
     }
 

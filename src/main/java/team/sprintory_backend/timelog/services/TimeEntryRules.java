@@ -1,6 +1,6 @@
 package team.sprintory_backend.timelog.services;
 
-import team.sprintory_backend.exceptionHandler.ErrorCode;
+import team.sprintory_backend.timelog.exceptions.TimeEntryConflictException;
 import team.sprintory_backend.timelog.exceptions.TimeEntryException;
 import java.time.LocalDate;
 
@@ -20,8 +20,7 @@ public final class TimeEntryRules {
 
     public static void requireCapacity(long existingMinutes, int minutes) {
         if (existingMinutes > DAILY_LIMIT - minutes)
-            throw new TimeEntryException(ErrorCode.TIME_DAILY_LIMIT_EXCEEDED,
-                    "Total for this day would exceed 24 hours.");
+            throw TimeEntryConflictException.dailyLimitExceeded();
     }
 
     public static String snapshot(int minutes, LocalDate date) {
@@ -31,6 +30,6 @@ public final class TimeEntryRules {
     }
 
     private static TimeEntryException invalid(String message) {
-        return new TimeEntryException(ErrorCode.INVALID_TIME_ENTRY, message);
+        return new TimeEntryException(message);
     }
 }

@@ -1,6 +1,6 @@
 # Sprintory — Time logging API (R19, PMP-49 / PMP-144)
 
-**Frontend handoff:** PMP-145 (Mobeen). Backend branch `features/time-logging-pmp-49`, base `8ee89a1`. Migration **V23**, V22 reserved for Ahmed. This story implements personal work logs and task totals, not PMP-50 reporting.
+**Frontend handoff:** PMP-145 (Mobeen). Backend PR #35 (`features/time-logging-pmp-49`). Migration **V23** follows V22, which is already merged into main. This story implements personal work logs and task totals, not PMP-50 reporting.
 
 ## 1. Endpoints
 
@@ -76,7 +76,7 @@ All totals include all authors, even departed members, but exclude deleted entri
 
 ## 2. Permissions and lifecycle
 
-The existing permission enum is `LOG_TIME`, not a new `TIME_LOG` permission. Existing role matrix remains unchanged. All project members including Viewers may see the summary and their own entries. Only non-Viewers with `LOG_TIME` can create. Edit/delete requires the same permission **and** ownership, including Project Managers and workspace admins. A workspace admin without project membership gets 404. Non-members and missing/deleted tasks also get 404; missing/deleted/inaccessible entry IDs give the same entry 404.
+The existing permission enum is `LOG_TIME`, not a new `TIME_LOG` permission. Existing role matrix remains unchanged. All project members including Viewers may see the summary and their own entries. Only non-Viewers with `LOG_TIME` can create. Edit/delete requires the same permission **and** ownership, including Project Managers and workspace admins. Decision: a workspace admin without project membership gets 404, deliberately stricter than the ordinary task endpoints (403), following PMP-49’s non-member rule. Non-members and missing/deleted tasks also get 404; missing/deleted/inaccessible entry IDs give the same entry 404.
 
 COMPLETED or ARCHIVED project and archived workspace: read-only. No create/edit/delete, but summary and own list remain readable. A DONE task, backlog task, active sprint task or ended sprint task in an active project may receive time logs. Scrum and Kanban both supported. Reassigning a task never changes authorship. Membership removal does not delete entries.
 
@@ -86,14 +86,13 @@ The UI converts supported strings to minutes: `1h 30m`, `90m`, `2h`, `1.5h`. Rej
 
 Use the user's local calendar date to initialize and constrain date picker; don't use `toISOString().slice(0,10)` as a local date. The backend follows the technical notes: accepts server today, past dates and server tomorrow (time-zone grace), refuses later dates. Work date and duration are independent of task scheduling dates or sprint dates.
 
-The daily cap is 1440 minutes per author, per work date, **per workspace**, across all its projects. The edited entry is excluded from the destination date sum. A soft-deleted task's non-deleted entries still count toward the cap, so deletion/restoration cannot bypass it. Deleted entries do not count. There is no separate daily-balance endpoint; handle the 400 returned by mutation.
+The daily cap is 1440 minutes per author, per work date, **per workspace**, across all its projects. The edited entry is excluded from the destination date sum. A soft-deleted task's non-deleted entries still count toward the cap, so deletion/restoration cannot bypass it. Deleted entries do not count. There is no separate daily-balance endpoint; handle the 409 returned by mutation.
 
 | HTTP | Code | Meaning |
 | --- | --- | --- |
-| 400 | `VALIDATION_ERROR` | DTO field violations (`fieldErrors`) |
 | 400 | `BAD_REQUEST` | Malformed JSON / non-integer minutes / malformed date |
-| 400 | `INVALID_TIME_ENTRY` | Invalid time-entry business input, missing edit date, unsupported `mine=false` |
-| 400 | `TIME_DAILY_LIMIT_EXCEEDED` | `Total for this day would exceed 24 hours.` |
+| 400 | `INVALID_TIME_ENTRY` | Missing/out-of-range duration, overlong note, invalid work date (including missing edit date), unsupported `mine=false` |
+| 409 | `TIME_DAILY_LIMIT_EXCEEDED` | `Total for this day would exceed 24 hours.` |
 | 401 | `AUTHENTICATION_ERROR` | Unauthenticated |
 | 403 | `ACCESS_DENIED` | Role or ownership does not permit mutation |
 | 404 | `RESOURCE_NOT_FOUND` | Missing/deleted/inaccessible task or entry |
@@ -105,14 +104,14 @@ Daily-limit example:
 ```json
 {
   "timestamp": "2026-11-28T08:00:00Z",
-  "status": 400,
+  "status": 409,
   "code": "TIME_DAILY_LIMIT_EXCEEDED",
   "message": "Total for this day would exceed 24 hours.",
   "path": "/api/v1/tasks/42/time-entries"
 }
 ```
 
-Show the backend message or field errors in the dialog. Preserve the user's unsaved input on failure. Do not optimistically increase totals when a request fails.
+TimeEntryRules is the single source for business input validation; malformed JSON or wrong numeric types are rejected during decoding. Show the backend message in the dialog. Preserve the user's unsaved input on failure. Do not optimistically increase totals when a request fails.
 
 ## 4. Frontend integration
 
@@ -136,12 +135,12 @@ If only a note changes the duration/date stays the same, with the ` (note change
 
 ## 6. Backend details / PMP-50 handoff
 
-`time_entry` stores id, workspace_id, project_id, task_id, user_id, work_date, minutes, note, created_at, updated_at, deleted_at. All ids are derived server-side. V23 creates the table with a database range check, live indexes for the daily cap and task totals, project/workspace indexes, and extends the existing history type constraint without discarding prior values. Physical project/workspace/task deletion cascades; normal task deletion is soft. Author ID deliberately has no foreign key so attribution survives account deletion; report code must handle missing user records. The feature does not store derived totals or counters.
+`time_entry` stores id, workspace_id, project_id, task_id, user_id, work_date, minutes, note, created_at, updated_at, created_by, updated_by, deleted_at. The four audit columns are supplied by `BaseEntity`; the API still exposes timestamps as UTC instants and does not expose auditor fields. All ids are derived server-side. V23 creates the table with a database range check, live indexes for the daily cap and task totals, project/workspace indexes, and extends the existing history type constraint without discarding prior values. Physical project/workspace/task deletion cascades; normal task deletion is soft. Author ID deliberately has no foreign key so attribution survives account deletion; report code must handle missing user records. The feature does not store derived totals or counters.
 
-Concurrency: project row lock coordinates writes with task deletion/restoration. Then a PostgreSQL transaction-scoped advisory lock keyed by workspace and author serializes time-entry writes across all dates/projects for that author. Under READ COMMITTED, the sum after waiting observes the prior committed mutation. The lock releases automatically at commit/rollback; different authors/workspaces use different keys (hash collisions only reduce concurrency). All future write paths for this table must acquire the same lock and validate the cap; raw SQL imports would otherwise bypass it. The sum excludes the edited entry by id, and the total breakdown is one aggregate query over live tasks/entries. Read endpoints use a repeatable-read transaction for a consistent snapshot.
+Concurrency: project row lock coordinates writes with task deletion/restoration. Then a PostgreSQL transaction-scoped advisory lock keyed by workspace and author serializes time-entry writes across all dates/projects for that author. Under READ COMMITTED, the sum after waiting observes the prior committed mutation. The lock releases automatically at commit/rollback; different authors/workspaces use different keys (hash collisions only reduce concurrency). All future write paths for this table must acquire the same lock and validate the cap; raw SQL imports would otherwise bypass it. The sum excludes the edited entry by id, and the total breakdown is one aggregate query over live tasks/entries. Read endpoints use a repeatable-read transaction for a consistent authorization/data snapshot. Access is checked before and after the project lock; the lifecycle is read from the database after locking to avoid relying on a cached project entity.
 
 ## 7. Verification and migration order
 
-Java 17 syntax and standalone pure-rule checks passed in the patch preparation environment. Added JUnit and PostgreSQL integration tests covering dates, integer validation, notes, API, own-entry privacy, roles/ownership, history, daily limit, cross-project concurrent writes, parent/subtask totals, deletion/restoration, former membership, reassignment, lifecycle, Scrum/Kanban and ended sprints. Full Maven/Docker verification must run locally/CI before merge. Browser rendering and duration parsing are verified in the frontend story.
+The review of the original implementation merged with current main reported `clean verify` passing all 1,151 tests, including nine time-entry integration tests and three rules tests. The review follow-up updates those tests to assert precise error codes, HTTP 409 for the daily cap, and audit fields. Re-run verification on the revised branch before merge. Browser rendering and duration parsing belong to the frontend story.
 
-V22 is reserved for another feature and is absent from this base snapshot. Local fresh databases can apply V23 with a gap, but **coordinate merge/deployment so V22 is applied before V23 in production**. Do not silently enable Flyway out-of-order migrations to work around a production version mismatch.
+V22 is merged. Apply V23 after V22; do not enable Flyway out-of-order migrations. V23 was revised before merge to add the standard audit columns. If an earlier V23 was applied to a disposable development database, recreate that database before testing; do not repair or modify a shared/production schema blindly.

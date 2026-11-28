@@ -3,6 +3,7 @@ package team.sprintory_backend.timelog;
 import org.junit.jupiter.api.Test;
 import team.sprintory_backend.exceptionHandler.ErrorCode;
 import team.sprintory_backend.timelog.exceptions.TimeEntryException;
+import team.sprintory_backend.timelog.exceptions.TimeEntryConflictException;
 import team.sprintory_backend.timelog.services.TimeEntryRules;
 import java.time.LocalDate;
 import static org.junit.jupiter.api.Assertions.*;
@@ -25,7 +26,7 @@ class TimeEntryRulesTest {
     }
     @Test void inclusiveDailyLimitAndSnapshots() {
         TimeEntryRules.requireCapacity(1200, 240);
-        assertEquals(ErrorCode.TIME_DAILY_LIMIT_EXCEEDED, assertThrows(TimeEntryException.class,
+        assertEquals(ErrorCode.TIME_DAILY_LIMIT_EXCEEDED, assertThrows(TimeEntryConflictException.class,
                 () -> TimeEntryRules.requireCapacity(1200, 241)).getCode());
         assertEquals("1h 30m on 2026-11-28", TimeEntryRules.snapshot(90, today));
         assertEquals("1m on 2026-11-28", TimeEntryRules.snapshot(1, today));

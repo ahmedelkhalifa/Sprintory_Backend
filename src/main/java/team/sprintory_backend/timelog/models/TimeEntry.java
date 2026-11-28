@@ -3,6 +3,7 @@ package team.sprintory_backend.timelog.models;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.SQLRestriction;
+import team.sprintory_backend.audit.BaseEntity;
 import java.time.Instant;
 import java.time.LocalDate;
 
@@ -15,7 +16,7 @@ import java.time.LocalDate;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class TimeEntry {
+public class TimeEntry extends BaseEntity {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     @Column(nullable = false, updatable = false) private Long workspaceId;
@@ -25,7 +26,5 @@ public class TimeEntry {
     @Column(nullable = false) private LocalDate workDate;
     @Column(nullable = false) private int minutes;
     @Column(length = 500) private String note;
-    @Column(nullable = false, updatable = false) private Instant createdAt;
-    @Column(nullable = false) private Instant updatedAt;
     private Instant deletedAt;
 }
