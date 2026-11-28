@@ -3,6 +3,7 @@ package team.sprintory_backend.sprint.services;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.PageRequest;
 import team.sprintory_backend.notification.events.SprintCompleted;
 import team.sprintory_backend.notification.events.SprintStarted;
 import team.sprintory_backend.project.models.BoardColumnCategory;
@@ -60,6 +61,7 @@ class SprintServiceTest {
     private TaskStatusHistoryService taskHistory;
     private AuditLogService audit;
     private RetrospectiveRepository retros;
+    private SprintSnapshotWriter snapshotWriter;
     private SprintService service;
     private Project project;
     private Sprint sprint;
@@ -85,9 +87,21 @@ class SprintServiceTest {
         sprint.setId(20L);
         actor = User.builder().id(2L).firstName("Sam").lastName("Master").email("sam@test.invalid").build();
         retros = mock(RetrospectiveRepository.class);
+        snapshotWriter = mock(SprintSnapshotWriter.class);
         service = new SprintService(repository, availability, commitments, changes, access, projects,
                 members, users, tasks, events, mock(ProjectService.class), mock(SprintScopeHistoryWriter.class),
-                outcomes, taskHistory, audit, retros);
+                outcomes, taskHistory, audit, retros, snapshotWriter, mock(SprintDailySnapshotRepository.class));
+    }
+
+    // --- PMP-42: burndown ---
+
+    @Test void aPlannedSprintHasNoBurndown() {
+        readableAsMember();
+        when(repository.findById(20L)).thenReturn(Optional.of(sprint));
+
+        SprintConflictException e = assertThrows(SprintConflictException.class,
+                () -> service.burndown(actor, 20L, BurndownUnit.POINTS, BurndownDays.WORKING));
+        assertEquals("Sprint has not started.", e.getMessage());
     }
 
     // --- PMP-44: hasRetro / retroId ---
@@ -183,6 +197,7 @@ class SprintServiceTest {
         assertEquals(SprintStatus.ACTIVE, result.status());
         assertEquals(8, result.committedPoints());
         verify(commitments).saveAll(any());
+        verify(snapshotWriter).record(sprint, LocalDate.now(ZoneOffset.UTC));
         verify(events).publishEvent(isA(SprintStarted.class));
     }
 
@@ -276,11 +291,50 @@ class SprintServiceTest {
 
     @Test void velocityReadsCompletedSprintsOnlySoCancelledOnesAreExcluded() {
         when(repository.findById(20L)).thenReturn(Optional.of(sprint));
-        when(access.require(10L, actor, ProjectPermission.VIEW_WORK))
-                .thenReturn(new ProjectAccessResult(project, null, null, Set.of(ProjectPermission.VIEW_WORK)));
+        readableAsMember();
         service.suggestion(actor, 20L);
-        verify(repository).findTop3ByProjectIdAndStatusOrderByCompletedAtDescIdDesc(10L, SprintStatus.COMPLETED);
-        verify(repository, never()).findTop3ByProjectIdAndStatusOrderByCompletedAtDescIdDesc(10L, SprintStatus.CANCELLED);
+        verify(repository).findByProjectIdAndStatusAndCompletedPointsNotNullOrderByCompletedAtDescIdDesc(
+                10L, SprintStatus.COMPLETED, PageRequest.of(0, 3));
+    }
+
+    // --- PMP-42: velocity chart ---
+
+    @Test void velocityShowsTheLastSprintsOldestFirstAndAveragesTheLastThree() {
+        readableAsMember();
+        when(repository.findByProjectIdAndStatusAndCompletedPointsNotNullOrderByCompletedAtDescIdDesc(
+                10L, SprintStatus.COMPLETED, PageRequest.of(0, 3)))
+                .thenReturn(List.of(completed("Sprint 3", 32), completed("Sprint 2", 30), completed("Sprint 1", 28)));
+
+        // A limit below 3 still averages the last three (AC21: 28, 30, 32 → 30).
+        VelocityResponse response = service.velocity(actor, 10L, 2);
+
+        assertEquals(List.of("Sprint 2", "Sprint 3"),
+                response.sprints().stream().map(VelocityResponse.SprintPoints::name).toList());
+        assertEquals(30.0, response.averageVelocity());
+        assertEquals(3, response.averageOf());
+    }
+
+    @Test void velocityWithoutCompletedSprintsIsEmpty() {
+        readableAsMember();
+
+        VelocityResponse response = service.velocity(actor, 10L, 6);
+
+        assertTrue(response.sprints().isEmpty());
+        assertNull(response.averageVelocity());
+        assertEquals(0, response.averageOf());
+    }
+
+    @Test void velocityLimitMustBeBetweenOneAndTwenty() {
+        BadRequestException e = assertThrows(BadRequestException.class, () -> service.velocity(actor, 10L, 21));
+        assertEquals("'limit' must be between 1 and 20.", e.getMessage());
+    }
+
+    private Sprint completed(String name, int points) {
+        Sprint done = new Sprint(project, 1, name, "Goal", null, null, null);
+        done.setStatus(SprintStatus.COMPLETED);
+        done.setCommittedPoints(30);
+        done.setCompletedPoints(points);
+        return done;
     }
 
     // --- PMP-41: close preview ---
@@ -365,6 +419,7 @@ class SprintServiceTest {
     private void nothingWritten() {
         assertEquals(SprintStatus.ACTIVE, sprint.getStatus());
         verify(outcomes, never()).saveAll(any());
+        verify(snapshotWriter, never()).record(any(), any());
         verify(taskHistory, never()).recordCarriedOver(any(), any(), any(), any(), any());
         verify(audit, never()).record(any(), any(), any(), any(), any(), any(AuditChange[].class));
         verify(events, never()).publishEvent(any());
@@ -447,7 +502,10 @@ class SprintServiceTest {
         assertEquals(1, first.getCarryOverCount());
         assertEquals(2, second.getCarryOverCount(), "Carried over ×2");
         assertEquals(0, finished.getCarryOverCount());
-        verify(taskHistory).recordCarriedOver(first, "SPR Sprint 1", null, actor, 20L);
+        // The burndown's last day is saved while the unfinished work is still in the sprint.
+        var order = inOrder(snapshotWriter, taskHistory);
+        order.verify(snapshotWriter).record(sprint, LocalDate.now(ZoneOffset.UTC));
+        order.verify(taskHistory).recordCarriedOver(first, "SPR Sprint 1", null, actor, 20L);
         verify(taskHistory).recordCarriedOver(second, "SPR Sprint 1", null, actor, 20L);
         verify(taskHistory, never()).recordCarriedOver(eq(finished), any(), any(), any(), any());
 
@@ -531,6 +589,7 @@ class SprintServiceTest {
         assertEquals(-1_000_000L, open.getBacklogRank(), "top of an empty backlog");
         assertSame(sprint, finished.getSprint(), "done items stay linked");
         assertEquals(1, open.getCarryOverCount());
+        verify(snapshotWriter).record(sprint, LocalDate.now(ZoneOffset.UTC));
         verify(taskHistory).recordCarriedOver(open, "SPR Sprint 1", null, actor, 20L);
         verify(outcomes).saveAll(any());
         verify(audit).record(same(project.getWorkspace()), same(actor), eq(AuditAction.SPRINT_CANCELLED),
