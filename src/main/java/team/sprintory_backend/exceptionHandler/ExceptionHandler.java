@@ -2,6 +2,7 @@ package team.sprintory_backend.exceptionHandler;
 
 import team.sprintory_backend.dependency.exceptions.DependencyConflict;
 import jakarta.servlet.http.HttpServletRequest;
+import team.sprintory_backend.timelog.exceptions.TimeEntryException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -126,6 +127,12 @@ public class ExceptionHandler {
     public ResponseEntity<ErrorResponse> handleMilestoneConflict(MilestoneConflictException e,
                                                                  HttpServletRequest request) {
         return body(HttpStatus.CONFLICT.value(), e.getCode(), e.getMessage(), request);
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(TimeEntryException.class)
+    public ResponseEntity<ErrorResponse> handleTimeEntry(TimeEntryException e, HttpServletRequest request) {
+        int status = e.getCode() == ErrorCode.CONFLICT ? 409 : 400;
+        return body(status, e.getCode(), e.getMessage(), request);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(BadRequestException.class)
