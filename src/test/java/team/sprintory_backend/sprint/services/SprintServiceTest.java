@@ -89,7 +89,18 @@ class SprintServiceTest {
         snapshotWriter = mock(SprintSnapshotWriter.class);
         service = new SprintService(repository, availability, commitments, changes, access, projects,
                 members, users, tasks, events, mock(ProjectService.class), mock(SprintScopeHistoryWriter.class),
-                outcomes, taskHistory, audit, retros, snapshotWriter);
+                outcomes, taskHistory, audit, retros, snapshotWriter, mock(SprintDailySnapshotRepository.class));
+    }
+
+    // --- PMP-42: burndown ---
+
+    @Test void aPlannedSprintHasNoBurndown() {
+        readableAsMember();
+        when(repository.findById(20L)).thenReturn(Optional.of(sprint));
+
+        SprintConflictException e = assertThrows(SprintConflictException.class,
+                () -> service.burndown(actor, 20L, BurndownUnit.POINTS, BurndownDays.WORKING));
+        assertEquals("Sprint has not started.", e.getMessage());
     }
 
     // --- PMP-44: hasRetro / retroId ---

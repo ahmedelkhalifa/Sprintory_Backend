@@ -69,6 +69,7 @@ public class SprintService {
     private final AuditLogService audit;
     private final RetrospectiveRepository retros;
     private final SprintSnapshotWriter snapshots;
+    private final SprintDailySnapshotRepository dailySnapshots;
 
     @Transactional(readOnly = true)
     public int projectSprintLength(User actor, Long projectId) {
@@ -510,6 +511,25 @@ public class SprintService {
         value.setAvailableDays(request.availableDays());
         availability.saveAndFlush(value);
         return suggestion(actor, sprintId);
+    }
+
+    /** PMP-42: the burndown of a started sprint (docs/burndown-docs.md §3). */
+    @Transactional(readOnly = true)
+    public BurndownResponse burndown(User actor, Long sprintId, BurndownUnit unit, BurndownDays days) {
+        Sprint sprint = find(sprintId);
+        readable(actor, sprint.getProject().getId());
+        if (sprint.getStatus() == SprintStatus.PLANNED) throw new SprintConflictException("Sprint has not started.");
+        Map<LocalDate, SprintTotals> saved = new HashMap<>();
+        dailySnapshots.findBySprintIdOrderBySnapshotDateAsc(sprintId)
+                .forEach(snapshot -> saved.put(snapshot.getSnapshotDate(), snapshot.totals()));
+        // Today of an active sprint is read live, not from its snapshot.
+        SprintTotals live = sprint.getStatus() == SprintStatus.ACTIVE
+                ? tasks.sprintTotals(sprintId, BoardColumnCategory.DONE) : null;
+        // No committed points: the sprint was not started in Sprintory (Jira import), so no ideal line.
+        Long committed = sprint.getCommittedPoints() == null ? null
+                : unit == BurndownUnit.POINTS ? sprint.getCommittedPoints().longValue()
+                : commitments.countBySprintId(sprintId);
+        return BurndownCalculator.calculate(sprint, committed, saved, live, LocalDate.now(ZoneOffset.UTC), unit, days);
     }
 
     @Transactional(readOnly = true)

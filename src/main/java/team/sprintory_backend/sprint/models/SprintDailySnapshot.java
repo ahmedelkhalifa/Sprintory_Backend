@@ -39,4 +39,8 @@ public class SprintDailySnapshot {
     private int unestimatedTasks;
     @Column(name = "recorded_at", nullable = false)
     private Instant recordedAt;
+
+    public SprintTotals totals() {
+        return new SprintTotals(totalPoints, remainingPoints, totalTasks, remainingTasks, unestimatedTasks);
+    }
 }
