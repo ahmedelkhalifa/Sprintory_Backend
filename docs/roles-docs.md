@@ -63,7 +63,7 @@ The creator of a workspace is its first admin; people who accept an invitation j
 | `MODERATE_COMMENTS` | Delete anyone's comment, chat message or attachment (never edit it) | R10 / PMP-133, R25 / PMP-141 | ✓ | | | | | |
 | `EDIT_CHARTER` | Edit charter goals, scope and stakeholders | R08 / PMP-116 | ✓ | ✓ | | | | |
 | `DEPENDENCY_MANAGE` | Add/remove task dependencies | PMP-45 | ✓ | ✓ | ✓ | ✓ | | |
-| `LOG_TIME` | Log time on tasks | R19 | ✓ | ✓ | ✓ | ✓ | | |
+| `LOG_TIME` | Log time and edit/delete only own entries (PMP-49) | R19 | ✓ | ✓ | ✓ | ✓ | | |
 | `RETRO_MANAGE` | Open a sprint retrospective, add action items, close it, delete anyone's card | R31 / PMP-44 | ✓ | ✓ | ✓ | | | |
 | `RETRO_CONTRIBUTE` | Add, edit and delete own retrospective cards; vote | R31 / PMP-44 | ✓ | ✓ | ✓ | ✓ | | |
 | `MILESTONE_MANAGE` | Create, edit, delete and restore milestones | R12 / PMP-46 | ✓ | ✓ | | | | |

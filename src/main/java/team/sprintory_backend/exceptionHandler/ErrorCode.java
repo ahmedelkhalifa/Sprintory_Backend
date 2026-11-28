@@ -2,6 +2,8 @@ package team.sprintory_backend.exceptionHandler;
 
 public enum ErrorCode {
     VALIDATION_ERROR,
+    INVALID_TIME_ENTRY,
+    TIME_DAILY_LIMIT_EXCEEDED,
     BAD_REQUEST,
     AUTHENTICATION_ERROR,
     ACCESS_DENIED,
