@@ -21,6 +21,10 @@ public interface SprintRepository extends JpaRepository<Sprint, Long> {
     @Query("select s.id from Sprint s where s.status = team.sprintory_backend.sprint.models.SprintStatus.ACTIVE "
             + "and s.endDate < :today order by s.id")
     List<Long> findOverdueActiveIds(@Param("today") java.time.LocalDate today);
+    /** Every active sprint, for the nightly burndown snapshot (PMP-42). */
+    @Query("select s.id from Sprint s where s.status = team.sprintory_backend.sprint.models.SprintStatus.ACTIVE "
+            + "order by s.id")
+    List<Long> findActiveIds();
     @Query("select coalesce(max(s.number), 0) from Sprint s where s.project.id = :projectId")
     int maxNumber(@Param("projectId") Long projectId);
 }

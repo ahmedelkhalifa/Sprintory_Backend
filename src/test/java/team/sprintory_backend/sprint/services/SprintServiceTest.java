@@ -60,6 +60,7 @@ class SprintServiceTest {
     private TaskStatusHistoryService taskHistory;
     private AuditLogService audit;
     private RetrospectiveRepository retros;
+    private SprintSnapshotWriter snapshotWriter;
     private SprintService service;
     private Project project;
     private Sprint sprint;
@@ -85,9 +86,10 @@ class SprintServiceTest {
         sprint.setId(20L);
         actor = User.builder().id(2L).firstName("Sam").lastName("Master").email("sam@test.invalid").build();
         retros = mock(RetrospectiveRepository.class);
+        snapshotWriter = mock(SprintSnapshotWriter.class);
         service = new SprintService(repository, availability, commitments, changes, access, projects,
                 members, users, tasks, events, mock(ProjectService.class), mock(SprintScopeHistoryWriter.class),
-                outcomes, taskHistory, audit, retros);
+                outcomes, taskHistory, audit, retros, snapshotWriter);
     }
 
     // --- PMP-44: hasRetro / retroId ---
@@ -183,6 +185,7 @@ class SprintServiceTest {
         assertEquals(SprintStatus.ACTIVE, result.status());
         assertEquals(8, result.committedPoints());
         verify(commitments).saveAll(any());
+        verify(snapshotWriter).record(sprint, LocalDate.now(ZoneOffset.UTC));
         verify(events).publishEvent(isA(SprintStarted.class));
     }
 
@@ -365,6 +368,7 @@ class SprintServiceTest {
     private void nothingWritten() {
         assertEquals(SprintStatus.ACTIVE, sprint.getStatus());
         verify(outcomes, never()).saveAll(any());
+        verify(snapshotWriter, never()).record(any(), any());
         verify(taskHistory, never()).recordCarriedOver(any(), any(), any(), any(), any());
         verify(audit, never()).record(any(), any(), any(), any(), any(), any(AuditChange[].class));
         verify(events, never()).publishEvent(any());
@@ -447,7 +451,10 @@ class SprintServiceTest {
         assertEquals(1, first.getCarryOverCount());
         assertEquals(2, second.getCarryOverCount(), "Carried over ×2");
         assertEquals(0, finished.getCarryOverCount());
-        verify(taskHistory).recordCarriedOver(first, "SPR Sprint 1", null, actor, 20L);
+        // The burndown's last day is saved while the unfinished work is still in the sprint.
+        var order = inOrder(snapshotWriter, taskHistory);
+        order.verify(snapshotWriter).record(sprint, LocalDate.now(ZoneOffset.UTC));
+        order.verify(taskHistory).recordCarriedOver(first, "SPR Sprint 1", null, actor, 20L);
         verify(taskHistory).recordCarriedOver(second, "SPR Sprint 1", null, actor, 20L);
         verify(taskHistory, never()).recordCarriedOver(eq(finished), any(), any(), any(), any());
 
@@ -531,6 +538,7 @@ class SprintServiceTest {
         assertEquals(-1_000_000L, open.getBacklogRank(), "top of an empty backlog");
         assertSame(sprint, finished.getSprint(), "done items stay linked");
         assertEquals(1, open.getCarryOverCount());
+        verify(snapshotWriter).record(sprint, LocalDate.now(ZoneOffset.UTC));
         verify(taskHistory).recordCarriedOver(open, "SPR Sprint 1", null, actor, 20L);
         verify(outcomes).saveAll(any());
         verify(audit).record(same(project.getWorkspace()), same(actor), eq(AuditAction.SPRINT_CANCELLED),

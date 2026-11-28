@@ -68,6 +68,7 @@ public class SprintService {
     private final TaskStatusHistoryService taskHistory;
     private final AuditLogService audit;
     private final RetrospectiveRepository retros;
+    private final SprintSnapshotWriter snapshots;
 
     @Transactional(readOnly = true)
     public int projectSprintLength(User actor, Long projectId) {
@@ -199,6 +200,7 @@ public class SprintService {
             snapshot.add(new SprintCommitment(saved, task.getId(), task.getKey(), task.getEstimate(), i));
         }
         commitments.saveAll(snapshot);
+        snapshots.record(saved, LocalDate.now(ZoneOffset.UTC));
         events.publishEvent(new SprintStarted(project, actor, sprint.getName()));
         return response(saved);
     }
@@ -301,6 +303,7 @@ public class SprintService {
             next = sprints.saveAndFlush(new Sprint(project, number, project.getKey() + " Sprint " + number,
                     "", null, dates[0], dates[1]));
         }
+        recordFinalSnapshot(sprint);
         carryOver(sprint, split, next, actor);
         sprints.saveAndFlush(sprint);
         tasks.flush();
@@ -333,6 +336,7 @@ public class SprintService {
         Split split = split(sprintId);
         end(sprint, SprintStatus.CANCELLED, split);
         sprint.setCancelReason(reason);
+        recordFinalSnapshot(sprint);
         carryOver(sprint, split, null, actor);
         sprints.saveAndFlush(sprint);
         tasks.flush();
@@ -352,6 +356,14 @@ public class SprintService {
         sprint.setCompletedAt(Instant.now());
         sprint.setCompletedPoints(split.donePoints());
         sprint.setUnfinishedPoints(split.unfinishedPoints());
+    }
+
+    /**
+     * The burndown's last day (PMP-42), dated the day the sprint ended. Must run before
+     * {@link #carryOver}: once unfinished work has left the sprint, its totals would show nothing left.
+     */
+    private void recordFinalSnapshot(Sprint sprint) {
+        snapshots.record(sprint, LocalDate.ofInstant(sprint.getCompletedAt(), ZoneOffset.UTC));
     }
 
     /**
