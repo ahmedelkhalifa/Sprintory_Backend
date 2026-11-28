@@ -151,6 +151,24 @@ public class TaskStatusHistoryService {
                 null, "Blocked by " + blockerKey, null, blockerId, actor);
     }
 
+    /** Work logs retain public duration/date snapshots, never private note text. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordTimeEntryAdded(Task task, Long entryId, String value, User actor) {
+        save(task, TaskHistoryType.TIME_ENTRY_ADDED, null, null, value, entryId, actor);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordTimeEntryChanged(Task task, Long entryId, String before, String after,
+                                       boolean noteChanged, User actor) {
+        save(task, TaskHistoryType.TIME_ENTRY_CHANGED, null, before,
+                noteChanged ? after + " (note changed)" : after, entryId, actor);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordTimeEntryDeleted(Task task, Long entryId, String value, User actor) {
+        save(task, TaskHistoryType.TIME_ENTRY_DELETED, null, value, null, entryId, actor);
+    }
+
     /** A sprint membership change; null from/to means product backlog. */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordSprintScopeChanged(Task task, String from, String to, User actor, Long sprintId) {
