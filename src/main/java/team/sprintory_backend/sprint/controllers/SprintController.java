@@ -11,6 +11,8 @@ import team.sprintory_backend.common.Pageables;
 import team.sprintory_backend.common.dto.PageResponse;
 import team.sprintory_backend.security.userdetails.AppUserDetails;
 import team.sprintory_backend.sprint.dto.*;
+import team.sprintory_backend.sprint.models.BurndownDays;
+import team.sprintory_backend.sprint.models.BurndownUnit;
 import team.sprintory_backend.sprint.services.SprintService;
 import java.util.List;
 
@@ -112,6 +114,18 @@ public class SprintController {
     public List<SprintCommitmentResponse> commitment(@AuthenticationPrincipal AppUserDetails principal,
             @PathVariable Long sprintId) {
         return sprints.committedItems(principal.getUser(), sprintId);
+    }
+
+    @GetMapping("/sprints/{sprintId}/burndown")
+    public BurndownResponse burndown(@AuthenticationPrincipal AppUserDetails principal, @PathVariable Long sprintId,
+            @RequestParam(required = false) String unit, @RequestParam(required = false) String days) {
+        return sprints.burndown(principal.getUser(), sprintId, BurndownUnit.fromQuery(unit), BurndownDays.fromQuery(days));
+    }
+
+    @GetMapping("/projects/{projectId}/velocity")
+    public VelocityResponse velocity(@AuthenticationPrincipal AppUserDetails principal, @PathVariable Long projectId,
+            @RequestParam(defaultValue = "6") int limit) {
+        return sprints.velocity(principal.getUser(), projectId, limit);
     }
 
     @GetMapping("/sprints/{sprintId}/scope-history")

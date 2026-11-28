@@ -6,4 +6,6 @@ import java.util.List;
 
 public interface SprintCommitmentRepository extends JpaRepository<SprintCommitment, Long> {
     List<SprintCommitment> findBySprintIdOrderByPositionAsc(Long sprintId);
+    /** The committed task count of the burndown's tasks mode (PMP-42). */
+    long countBySprintId(Long sprintId);
 }

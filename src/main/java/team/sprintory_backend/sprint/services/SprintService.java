@@ -3,6 +3,7 @@ package team.sprintory_backend.sprint.services;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +45,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,6 +70,11 @@ public class SprintService {
     private final TaskStatusHistoryService taskHistory;
     private final AuditLogService audit;
     private final RetrospectiveRepository retros;
+    private final SprintSnapshotWriter snapshots;
+    private final SprintDailySnapshotRepository dailySnapshots;
+
+    /** The average velocity is the mean of this many last completed sprints. */
+    private static final int AVERAGE_OF = 3;
 
     @Transactional(readOnly = true)
     public int projectSprintLength(User actor, Long projectId) {
@@ -199,6 +206,7 @@ public class SprintService {
             snapshot.add(new SprintCommitment(saved, task.getId(), task.getKey(), task.getEstimate(), i));
         }
         commitments.saveAll(snapshot);
+        snapshots.record(saved, LocalDate.now(ZoneOffset.UTC));
         events.publishEvent(new SprintStarted(project, actor, sprint.getName()));
         return response(saved);
     }
@@ -301,6 +309,7 @@ public class SprintService {
             next = sprints.saveAndFlush(new Sprint(project, number, project.getKey() + " Sprint " + number,
                     "", null, dates[0], dates[1]));
         }
+        recordFinalSnapshot(sprint);
         carryOver(sprint, split, next, actor);
         sprints.saveAndFlush(sprint);
         tasks.flush();
@@ -333,6 +342,7 @@ public class SprintService {
         Split split = split(sprintId);
         end(sprint, SprintStatus.CANCELLED, split);
         sprint.setCancelReason(reason);
+        recordFinalSnapshot(sprint);
         carryOver(sprint, split, null, actor);
         sprints.saveAndFlush(sprint);
         tasks.flush();
@@ -352,6 +362,14 @@ public class SprintService {
         sprint.setCompletedAt(Instant.now());
         sprint.setCompletedPoints(split.donePoints());
         sprint.setUnfinishedPoints(split.unfinishedPoints());
+    }
+
+    /**
+     * The burndown's last day (PMP-42), dated the day the sprint ended. Must run before
+     * {@link #carryOver}: once unfinished work has left the sprint, its totals would show nothing left.
+     */
+    private void recordFinalSnapshot(Sprint sprint) {
+        snapshots.record(sprint, LocalDate.ofInstant(sprint.getCompletedAt(), ZoneOffset.UTC));
     }
 
     /**
@@ -474,12 +492,35 @@ public class SprintService {
                 .toList();
         int actual = memberDays.stream().mapToInt(CapacitySuggestionResponse.MemberAvailability::availableDays).sum();
         int normal = days * ids.size();
-        List<Integer> lastThree = sprints.findTop3ByProjectIdAndStatusOrderByCompletedAtDescIdDesc(
-                sprint.getProject().getId(), SprintStatus.COMPLETED).stream()
-                .map(Sprint::getCompletedPoints).filter(Objects::nonNull).toList();
+        List<Integer> lastThree = averaged(lastCompleted(sprint.getProject().getId(), AVERAGE_OF));
         Integer suggested = SprintCapacityCalculator.suggest(lastThree, actual, normal);
-        Double average = lastThree.isEmpty() ? null : lastThree.stream().mapToInt(Integer::intValue).average().orElse(0);
-        return new CapacitySuggestionResponse(suggested, average, normal, actual, days, memberDays);
+        return new CapacitySuggestionResponse(suggested, SprintCapacityCalculator.average(lastThree),
+                normal, actual, days, memberDays);
+    }
+
+    /** PMP-42: points of the last completed sprints (docs/burndown-docs.md §4). */
+    @Transactional(readOnly = true)
+    public VelocityResponse velocity(User actor, Long projectId, int limit) {
+        if (limit < 1 || limit > 20) throw new BadRequestException("'limit' must be between 1 and 20.");
+        readable(actor, projectId);
+        // Read at least AVERAGE_OF sprints, so a small limit does not change the average.
+        List<Sprint> newestFirst = lastCompleted(projectId, Math.max(limit, AVERAGE_OF));
+        List<Integer> lastThree = averaged(newestFirst);
+        List<VelocityResponse.SprintPoints> bars = new ArrayList<>(newestFirst.stream().limit(limit)
+                .map(VelocityResponse.SprintPoints::of).toList());
+        Collections.reverse(bars);
+        return new VelocityResponse(bars, SprintCapacityCalculator.average(lastThree), lastThree.size());
+    }
+
+    /** Completed sprints with points, newest first: the velocity chart and the capacity suggestion read the same. */
+    private List<Sprint> lastCompleted(Long projectId, int count) {
+        return sprints.findByProjectIdAndStatusAndCompletedPointsNotNullOrderByCompletedAtDescIdDesc(
+                projectId, SprintStatus.COMPLETED, PageRequest.of(0, count));
+    }
+
+    /** The completed points the average velocity uses: the newest {@link #AVERAGE_OF} sprints. */
+    private static List<Integer> averaged(List<Sprint> newestFirst) {
+        return newestFirst.stream().limit(AVERAGE_OF).map(Sprint::getCompletedPoints).toList();
     }
 
     @Transactional
@@ -498,6 +539,25 @@ public class SprintService {
         value.setAvailableDays(request.availableDays());
         availability.saveAndFlush(value);
         return suggestion(actor, sprintId);
+    }
+
+    /** PMP-42: the burndown of a started sprint (docs/burndown-docs.md §3). */
+    @Transactional(readOnly = true)
+    public BurndownResponse burndown(User actor, Long sprintId, BurndownUnit unit, BurndownDays days) {
+        Sprint sprint = find(sprintId);
+        readable(actor, sprint.getProject().getId());
+        if (sprint.getStatus() == SprintStatus.PLANNED) throw new SprintConflictException("Sprint has not started.");
+        Map<LocalDate, SprintTotals> saved = new HashMap<>();
+        dailySnapshots.findBySprintIdOrderBySnapshotDateAsc(sprintId)
+                .forEach(snapshot -> saved.put(snapshot.getSnapshotDate(), snapshot.totals()));
+        // Today of an active sprint is read live, not from its snapshot.
+        SprintTotals live = sprint.getStatus() == SprintStatus.ACTIVE
+                ? tasks.sprintTotals(sprintId, BoardColumnCategory.DONE) : null;
+        // No committed points: the sprint was not started in Sprintory (Jira import), so no ideal line.
+        Long committed = sprint.getCommittedPoints() == null ? null
+                : unit == BurndownUnit.POINTS ? sprint.getCommittedPoints().longValue()
+                : commitments.countBySprintId(sprintId);
+        return BurndownCalculator.calculate(sprint, committed, saved, live, LocalDate.now(ZoneOffset.UTC), unit, days);
     }
 
     @Transactional(readOnly = true)

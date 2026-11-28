@@ -2,7 +2,7 @@
 
 **Status:** PMP-119 (planning), PMP-41 (close, cancel, carry-over, overdue reminder) and PMP-40 (Scrum board) backend implemented; the Testcontainers suite must pass (`clean verify`) before merge (see §7).  
 **Applies to:** `/api/v1/projects/{projectId}/sprints`, `/api/v1/sprints/{sprintId}` (including `/close-preview`, `/complete`, `/cancel`), task-list sprint filtering, the Scrum board fields of `GET /projects/{projectId}/board`, and Scrum project settings.  
-**Related:** [Tasks](./tasks-docs.md), [Task history](./task-history-docs.md), [Projects](./projects-docs.md), [Board](./board-docs.md), [Notifications](./notifications-docs.md), [Roles](./roles-docs.md), [API conventions](./api-conventions.md).
+**Related:** [Burndown and velocity](./burndown-docs.md), [Tasks](./tasks-docs.md), [Task history](./task-history-docs.md), [Projects](./projects-docs.md), [Board](./board-docs.md), [Notifications](./notifications-docs.md), [Roles](./roles-docs.md), [API conventions](./api-conventions.md).
 
 ## 1. Rules and access
 
@@ -88,7 +88,7 @@ These filters can be combined with existing `q`, `type`, `priority`, `statusId`,
 
 `CapacitySuggestionResponse` fields: `suggestedCapacity` (integer or null), `averageVelocity` (number or null), `normalPersonDays`, `availablePersonDays`, `workingDays`, and `members:[{userId,availableDays}]`.
 
-- Velocity: average frozen `completedPoints` of the last **up to three completed** sprints. **Cancelled sprints are excluded.** None completed → no suggestion (`null`).
+- Velocity: average frozen `completedPoints` of the last **up to three completed** sprints **that have points**. **Cancelled sprints are excluded**, and so are Jira-imported sprints, which have no points. None → no suggestion (`null`). The velocity chart's average is the same calculation ([burndown-docs.md §4](./burndown-docs.md#4-velocity), PMP-42).
 - Available days: Monday–Friday working days inclusive; no holidays calendar yet. A member defaults to all workdays until overridden by a value from 0 to workingDays.
 - **Only project members who have at least one role other than `VIEWER` count** toward normal/available person-days and appear in the suggestion `members` list. Viewer-only members are excluded even if they belong to the project. `PUT /availability/{viewerId}` returns **400**.
 - Formula: `round(averageVelocity × availablePersonDays / normalPersonDays)`. Example: `(28+30+32)/3 = 30`; 5 eligible members × 10 days = 50, one absent 5 → 45, suggestion **27**.
@@ -139,12 +139,14 @@ All errors have the common `{status,code,message,path,timestamp}` shape (and opt
 | Daily overdue reminder to the Scrum Masters (`SPRINT_OVERDUE`) | Implemented (PMP-41) |
 | Scrum board: `activeSprint` summary and per-column sprint counts | Implemented (PMP-40) |
 | `hasRetro` / `retroId` on every `SprintResponse`; retro reminder on close and cancel | Implemented (PMP-44) |
+| Daily snapshots at start, close, cancel and nightly; burndown and velocity endpoints; capacity average skips sprints without points | Done (PMP-42, [burndown-docs.md](./burndown-docs.md)) |
 | Frontend wiring and acceptance validation | Separate (PMP-120 / PMP-121, PMP-123 / PMP-124) |
 
 **Migrations:**
 - `V15__sprint_planning.sql` (requires V14 attachments) creates sprint and history tables, assigns nullable task sprint IDs, installs cascade/SET NULL FKs, sets project default 14 and range 2–90, and extends `ck_task_history_type` with `SPRINT_SCOPE_CHANGED`.
 - `V16__sprint_close_cancel.sql` adds `CANCELLED` to `ck_sprint_status`; `unfinished_points`, `goal_achieved`, `outcome_note`, `cancel_reason` on `sprints`; `tasks.carry_over_count` (default 0); the `sprint_outcomes` table; and extends `ck_task_history_type` (`CARRIED_OVER`), `ck_audit_log_entries_action` (`SPRINT_COMPLETED`, `SPRINT_CANCELLED`), `ck_audit_log_entries_target_type` (`SPRINT`) and `ck_notifications_type` (`SPRINT_OVERDUE`).
 - `V18__retrospectives.sql` (PMP-44) adds the retro tables, which cascade from `sprints`, and `notifications.sprint_id` / `sprint_name`.
+- `V22__sprint_daily_snapshots.sql` (PMP-42) adds `sprint_daily_snapshots`, one row per sprint and day, unique on `(sprint_id, snapshot_date)`, cascading from `sprints` ([burndown-docs.md §8](./burndown-docs.md#8-data-model)).
 
 The entity DDL annotations mirror these constraints for dev/test databases built by `ddl-auto`.
 
