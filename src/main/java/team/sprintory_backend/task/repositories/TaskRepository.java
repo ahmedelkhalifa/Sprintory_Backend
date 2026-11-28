@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import team.sprintory_backend.sprint.models.SprintTotals;
 import team.sprintory_backend.task.models.Task;
 
 import java.util.Collection;
@@ -88,6 +89,19 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
             group by t.milestone.id""")
     List<Object[]> countByMilestone(@Param("milestoneIds") Collection<Long> milestoneIds,
                                     @Param("done") BoardColumnCategory done);
+
+    /** A sprint's live top-level tasks now, for its burndown snapshot (docs/burndown-docs.md §3.5). */
+    @Query("""
+            select new team.sprintory_backend.sprint.models.SprintTotals(
+                coalesce(sum(t.estimate), 0),
+                coalesce(sum(case when t.status.category <> :done then t.estimate else 0 end), 0),
+                count(t),
+                coalesce(sum(case when t.status.category <> :done then 1 else 0 end), 0),
+                coalesce(sum(case when t.estimate is null then 1 else 0 end), 0))
+            from Task t
+            where t.sprint.id = :sprintId and t.parent is null""")
+    SprintTotals sprintTotals(@Param("sprintId") Long sprintId,
+                              @Param("done") BoardColumnCategory done);
 
     /** The project of a live task, without loading it: linking locks the project before loading the task. */
     @Query("select t.project.id from Task t where t.id = :id")
