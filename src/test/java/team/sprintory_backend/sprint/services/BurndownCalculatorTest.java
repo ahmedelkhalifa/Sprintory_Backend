@@ -84,6 +84,19 @@ class BurndownCalculatorTest {
     }
 
     @Test
+    void sprintStartedBeforeItsStartDateBeginsOnTheDayItStarted() {
+        LocalDate saturday = MON.minusDays(2);
+
+        BurndownResponse r = BurndownCalculator.calculate(sprint(SprintStatus.ACTIVE), 30L, Map.of(),
+                points(30, 30), saturday, BurndownUnit.POINTS, BurndownDays.WORKING);
+
+        assertEquals(saturday, r.dates().get(0));
+        assertEquals(List.of(30.0, 30.0, 30.0, 27.0), r.ideal().subList(0, 4));   // flat until Monday
+        assertEquals(Arrays.asList(30L, 30L, null), r.actual().subList(0, 3));
+        assertEquals(BurndownStatus.ON_TRACK, r.status());
+    }
+
+    @Test
     void queryOptionsDefaultAndRefuseUnknownValues() {
         assertEquals(BurndownUnit.POINTS, BurndownUnit.fromQuery(null));
         assertEquals(BurndownDays.CALENDAR, BurndownDays.fromQuery("Calendar"));

@@ -198,6 +198,15 @@ Contracts: `docs/tasks-docs.md` and `docs/search-docs.md`. Damir built the contr
 - Every link change goes through the private `link(task, milestone, actor)`, which writes `TaskStatusHistoryService.recordChange(..., MILESTONE, oldName, newName, ...)` only on a real change. Linking writes no audit entry; create, edit, delete and restore do.
 - New 409 codes come from `milestone/exceptions/MilestoneConflictException`. The Gantt (`schedule/`, PMP-48, `docs/schedule-docs.md` §4) reads `milestones` and `tasks.milestone_id` through its own projections in `ScheduleRepository`; change them together with the milestone model.
 
+## Burndown and velocity (R17, PMP-42)
+
+**`docs/burndown-docs.md` is the burndown and velocity contract** (endpoints, every response field, calculation rules, snapshots, frontend flows, decisions). It was written before the code for the frontend (Amir, Aliaksandr); change the code and that file in the same PR. Table in `V22__sprint_daily_snapshots.sql`. Everything lives in `sprint/`; both reads are in `SprintService` and need only `VIEW_WORK`.
+
+- **Snapshots** (`sprint_daily_snapshots`, one row per sprint and UTC day) are written only by `SprintSnapshotWriter.record` (`MANDATORY`), through a native upsert, at start, at close/cancel and by `SprintSnapshotJob` (23:55 UTC, one transaction per sprint). **The close/cancel snapshot must run before `carryOver`**, which moves unfinished tasks out of the sprint; keep `recordFinalSnapshot` there. Ended sprints are never written again.
+- The totals come from one JPQL aggregate, `TaskRepository.sprintTotals` (live top-level tasks; done = `DONE` category). Today of an active sprint is always computed live, never read from its snapshot.
+- **`BurndownCalculator` is pure** (no repositories, today passed in) and builds the whole `BurndownResponse`; test rule changes there. The 10 % status threshold is its one constant. A missing day repeats the previous one; the axis starts at the Start point and runs to the later of `endDate` and the last actual day.
+- **Velocity and the capacity suggestion share one query and one average** (`SprintService.lastCompleted` / `averaged`, `AVERAGE_OF = 3`, `SprintCapacityCalculator.average`): COMPLETED sprints with points only, so cancelled and Jira-imported sprints never count. Change them together.
+
 ## Comments, mentions and task history (R10, R26)
 
 Contracts: `docs/comments-docs.md`, `docs/mentions-docs.md` (also the rich-text format) and `docs/task-history-docs.md`. Change the code and the matching file in the same PR. Both tables are in `V11__task_history.sql`.

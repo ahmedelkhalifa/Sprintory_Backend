@@ -22,7 +22,12 @@ public final class SprintCapacityCalculator {
     /** A null recommendation means no historical velocity; round to nearest whole point. */
     public static Integer suggest(List<Integer> completedVelocities, int availablePersonDays, int normalPersonDays) {
         if (completedVelocities.isEmpty() || normalPersonDays == 0) return null;
-        double mean = completedVelocities.stream().mapToInt(Integer::intValue).average().orElse(0);
-        return (int) Math.round(mean * availablePersonDays / normalPersonDays);
+        return (int) Math.round(average(completedVelocities) * availablePersonDays / normalPersonDays);
+    }
+
+    /** The average velocity, shared by the capacity suggestion and the velocity chart; null without sprints. */
+    public static Double average(List<Integer> completedVelocities) {
+        return completedVelocities.isEmpty() ? null
+                : completedVelocities.stream().mapToInt(Integer::intValue).average().orElseThrow();
     }
 }

@@ -139,7 +139,7 @@ All errors have the common `{status,code,message,path,timestamp}` shape (and opt
 | Daily overdue reminder to the Scrum Masters (`SPRINT_OVERDUE`) | Implemented (PMP-41) |
 | Scrum board: `activeSprint` summary and per-column sprint counts | Implemented (PMP-40) |
 | `hasRetro` / `retroId` on every `SprintResponse`; retro reminder on close and cancel | Implemented (PMP-44) |
-| Daily snapshots at start, close, cancel and nightly; burndown and velocity endpoints; capacity average skips sprints without points | Contract written, code in progress (PMP-42, [burndown-docs.md](./burndown-docs.md)) |
+| Daily snapshots at start, close, cancel and nightly; burndown and velocity endpoints; capacity average skips sprints without points | Done (PMP-42, [burndown-docs.md](./burndown-docs.md)) |
 | Frontend wiring and acceptance validation | Separate (PMP-120 / PMP-121, PMP-123 / PMP-124) |
 
 **Migrations:**

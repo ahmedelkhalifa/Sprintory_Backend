@@ -1,6 +1,6 @@
 # Sprintory — Burndown chart and velocity API contract (R17, PMP-42)
 
-**Status:** contract written before the code (28 Nov 2026) for the frontend: burndown chart (PMP-157, Amir) and velocity chart (PMP-165, Aliaksandr). Backend: PMP-156, branch `features/burndown-velocity`, not built yet. Acceptance testing: PMP-158 (Mobeen). See [§11 Implementation status](#11-implementation-status).
+**Status:** contract written before the code (28 Nov 2026) for the frontend: burndown chart (PMP-157, Amir) and velocity chart (PMP-165, Aliaksandr). Backend: PMP-156, branch `features/burndown-velocity`, built and tested 28 Nov 2026. Acceptance testing: PMP-158 (Mobeen). See [§11 Implementation status](#11-implementation-status).
 **Applies to:** backend `GET /api/v1/sprints/{sprintId}/burndown`, `GET /api/v1/projects/{projectId}/velocity`, the daily sprint snapshots, and the velocity average of the capacity suggestion (`GET /api/v1/sprints/{sprintId}/capacity-suggestion`).
 **Related:** [Sprints](./sprints-docs.md), [Board](./board-docs.md) (column categories, `activeSprint`), [Roles and permissions](./roles-docs.md), [API and Git Conventions](./api-conventions.md) (error shape §4, private projects §5), [Requirements](./requirements.md) R17.
 
@@ -109,7 +109,7 @@ Wednesday: remaining 26, ideal 21. The difference, 5, is more than 10 % of the c
 | `unit` | `POINTS` or `TASKS` | The unit of every number below. |
 | `days` | `WORKING` or `CALENDAR` | The day mode the ideal line and `daysLeft` use. |
 | `hasDailyData` | boolean | `false` for a sprint that ended before this feature existed: show "No daily data for this sprint" instead of the chart. `actual` and `scopeChanges` are then all `null`. |
-| `dates` | date[] | The x-axis. **Index 0 is the Start point** (its date is `startDate`; label it "Start"). Then one entry per day from `startDate` to the last day of the axis ([§3.3](#33-the-axis)). All four arrays have the same length. |
+| `dates` | date[] | The x-axis. **Index 0 is the Start point** (its date is the first day of the axis, normally `startDate`; label it "Start"). Then one entry per day from the first to the last day of the axis ([§3.3](#33-the-axis)). All four arrays have the same length. |
 | `ideal` | number[] | The ideal remaining work at the **end** of each day. Can have decimals (rounded to 2). All `null` when the sprint has no committed amount ([§3.4](#34-the-ideal-line)). |
 | `actual` | (integer or `null`)[] | The actual remaining work at the **end** of each day. `null` means no value: a day after today, a day after the sprint ended, or a day before the first data. Draw a gap (or connect the points), never a 0. |
 | `scopeChanges` | (integer or `null`)[] | The net change of the total that day, for the tooltip: `3` → "+3 pts", `-2` → "−2 pts", in tasks mode "+1 task". `null` where `actual` is `null` and at the Start point. `0` means no change. |
@@ -133,7 +133,7 @@ Wednesday: remaining 26, ideal 21. The difference, 5, is more than 10 % of the c
 ### 3.3 The axis
 
 - Index 0, the **Start** point, is the moment the sprint started: ideal and actual are both the committed amount.
-- Then one entry per calendar day, **including weekends in both modes**, from `startDate` to the later of `endDate` and the last actual day. The last actual day is today for an `ACTIVE` sprint and `endedOn` for an ended one. So an overdue sprint, or one closed after its end date, extends the axis; after `endDate` the ideal line stays at 0.
+- Then one entry per calendar day, **including weekends in both modes**, from `startDate` to the later of `endDate` and the last actual day. A sprint **started before its `startDate`** begins on the day it was started instead, and the ideal line stays at the committed amount until `startDate`. The last actual day is today for an `ACTIVE` sprint and `endedOn` for an ended one. So an overdue sprint, or one closed after its end date, extends the axis; after `endDate` the ideal line stays at 0.
 - In working-days mode, Saturdays and Sundays are still on the axis (the ideal line is flat there). The frontend can shade them: a date's weekday is `new Date(date + "T00:00:00Z").getUTCDay()` (0 Sunday, 6 Saturday).
 
 ### 3.4 The ideal line
@@ -320,12 +320,12 @@ As of 28 Nov 2026:
 | Part | Status |
 | --- | --- |
 | This contract | Written before the code, agreed with the backend owner |
-| `V22__sprint_daily_snapshots.sql`, entity, repository | Not started |
-| Snapshots at start, close, cancel, and the nightly job | Not started |
-| Burndown calculation (ideal, actual, scope changes, status, summary) | Not started |
-| `GET /sprints/{id}/burndown` | Not started |
-| `GET /projects/{id}/velocity`, shared average with the capacity suggestion | Not started |
-| Integration test on PostgreSQL | Not started |
+| `V22__sprint_daily_snapshots.sql`, entity, repository | Done |
+| Snapshots at start, close, cancel, and the nightly job | Done (`SprintSnapshotWriter`, `SprintSnapshotJob`) |
+| Burndown calculation (ideal, actual, scope changes, status, summary) | Done (`BurndownCalculator`, unit-tested) |
+| `GET /sprints/{id}/burndown` | Done |
+| `GET /projects/{id}/velocity`, shared average with the capacity suggestion | Done |
+| Integration test on PostgreSQL | Done (`BurndownVelocityIntegrationTest`) |
 | Frontend burndown (PMP-157), velocity (PMP-165), acceptance test (PMP-158) | Not started |
 
 ---
@@ -341,3 +341,4 @@ As of 28 Nov 2026:
 | 28 Nov 2026 | Kanban answers `400` "Sprints are only available in Scrum projects.", like every sprint endpoint, not the story's `404`. |
 | 28 Nov 2026 | All dates are UTC, like the sprint rules. The nightly snapshot runs at 23:55 UTC. |
 | 28 Nov 2026 | Snapshots are taken at start, nightly and at close/cancel; today is always live. No snapshot on every task change. |
+| 28 Nov 2026 | A sprint started before its `startDate` begins its axis on the day it was started (found while testing), so an early start never shows "No daily data". |

@@ -3,6 +3,7 @@ package team.sprintory_backend.sprint.services;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +45,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,6 +72,9 @@ public class SprintService {
     private final RetrospectiveRepository retros;
     private final SprintSnapshotWriter snapshots;
     private final SprintDailySnapshotRepository dailySnapshots;
+
+    /** The average velocity is the mean of this many last completed sprints. */
+    private static final int AVERAGE_OF = 3;
 
     @Transactional(readOnly = true)
     public int projectSprintLength(User actor, Long projectId) {
@@ -487,12 +492,35 @@ public class SprintService {
                 .toList();
         int actual = memberDays.stream().mapToInt(CapacitySuggestionResponse.MemberAvailability::availableDays).sum();
         int normal = days * ids.size();
-        List<Integer> lastThree = sprints.findTop3ByProjectIdAndStatusOrderByCompletedAtDescIdDesc(
-                sprint.getProject().getId(), SprintStatus.COMPLETED).stream()
-                .map(Sprint::getCompletedPoints).filter(Objects::nonNull).toList();
+        List<Integer> lastThree = averaged(lastCompleted(sprint.getProject().getId(), AVERAGE_OF));
         Integer suggested = SprintCapacityCalculator.suggest(lastThree, actual, normal);
-        Double average = lastThree.isEmpty() ? null : lastThree.stream().mapToInt(Integer::intValue).average().orElse(0);
-        return new CapacitySuggestionResponse(suggested, average, normal, actual, days, memberDays);
+        return new CapacitySuggestionResponse(suggested, SprintCapacityCalculator.average(lastThree),
+                normal, actual, days, memberDays);
+    }
+
+    /** PMP-42: points of the last completed sprints (docs/burndown-docs.md §4). */
+    @Transactional(readOnly = true)
+    public VelocityResponse velocity(User actor, Long projectId, int limit) {
+        if (limit < 1 || limit > 20) throw new BadRequestException("'limit' must be between 1 and 20.");
+        readable(actor, projectId);
+        // Read at least AVERAGE_OF sprints, so a small limit does not change the average.
+        List<Sprint> newestFirst = lastCompleted(projectId, Math.max(limit, AVERAGE_OF));
+        List<Integer> lastThree = averaged(newestFirst);
+        List<VelocityResponse.SprintPoints> bars = new ArrayList<>(newestFirst.stream().limit(limit)
+                .map(VelocityResponse.SprintPoints::of).toList());
+        Collections.reverse(bars);
+        return new VelocityResponse(bars, SprintCapacityCalculator.average(lastThree), lastThree.size());
+    }
+
+    /** Completed sprints with points, newest first: the velocity chart and the capacity suggestion read the same. */
+    private List<Sprint> lastCompleted(Long projectId, int count) {
+        return sprints.findByProjectIdAndStatusAndCompletedPointsNotNullOrderByCompletedAtDescIdDesc(
+                projectId, SprintStatus.COMPLETED, PageRequest.of(0, count));
+    }
+
+    /** The completed points the average velocity uses: the newest {@link #AVERAGE_OF} sprints. */
+    private static List<Integer> averaged(List<Sprint> newestFirst) {
+        return newestFirst.stream().limit(AVERAGE_OF).map(Sprint::getCompletedPoints).toList();
     }
 
     @Transactional

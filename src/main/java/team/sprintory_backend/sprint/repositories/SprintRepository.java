@@ -1,5 +1,6 @@
 package team.sprintory_backend.sprint.repositories;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,7 +16,9 @@ public interface SprintRepository extends JpaRepository<Sprint, Long> {
     Optional<Long> findProjectId(@Param("sprintId") Long sprintId);
     List<Sprint> findByProjectIdAndStatusInOrderByNumberAsc(Long projectId, Collection<SprintStatus> statuses);
     List<Sprint> findByProjectIdOrderByNumberAsc(Long projectId);
-    List<Sprint> findTop3ByProjectIdAndStatusOrderByCompletedAtDescIdDesc(Long projectId, SprintStatus status);
+    /** Newest first; sprints without points (Jira import) are skipped. Velocity and capacity suggestion (PMP-42). */
+    List<Sprint> findByProjectIdAndStatusAndCompletedPointsNotNullOrderByCompletedAtDescIdDesc(
+            Long projectId, SprintStatus status, Pageable pageable);
     Optional<Sprint> findFirstByProjectIdAndStatus(Long projectId, SprintStatus status);
     /** Active sprints past their end date, for the daily reminder (PMP-41). */
     @Query("select s.id from Sprint s where s.status = team.sprintory_backend.sprint.models.SprintStatus.ACTIVE "

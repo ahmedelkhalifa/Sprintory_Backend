@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,9 +41,12 @@ public final class BurndownCalculator {
 
         Map<LocalDate, SprintTotals> data = new HashMap<>(days);
         if (live != null) data.put(today, live);
+        // A sprint started before its start date begins on the day it started; the ideal line is flat until startDate.
+        LocalDate firstData = data.keySet().stream().min(Comparator.naturalOrder()).orElse(start);
+        LocalDate axisStart = firstData.isBefore(start) ? firstData : start;
 
         // Index 0 is the Start point: ideal = actual = committed (actual set below, once we know there is data).
-        List<LocalDate> dates = new ArrayList<>(List.of(start));
+        List<LocalDate> dates = new ArrayList<>(List.of(axisStart));
         List<Double> ideal = new ArrayList<>();
         ideal.add(committed == null ? null : committed.doubleValue());
         List<Long> actual = new ArrayList<>();
@@ -53,7 +57,7 @@ public final class BurndownCalculator {
         SprintTotals current = null;   // the latest totals on or before the day: a missing day repeats it
         SprintTotals latest = null;    // the totals of the last actual day
         Long previousTotal = committed;
-        for (LocalDate day = start; !day.isAfter(axisEnd); day = day.plusDays(1)) {
+        for (LocalDate day = axisStart; !day.isAfter(axisEnd); day = day.plusDays(1)) {
             dates.add(day);
             ideal.add(idealAt(committed, start, end, day, working));
             if (data.containsKey(day)) current = data.get(day);

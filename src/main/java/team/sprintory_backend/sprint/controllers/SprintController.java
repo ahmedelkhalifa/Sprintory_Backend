@@ -122,6 +122,12 @@ public class SprintController {
         return sprints.burndown(principal.getUser(), sprintId, BurndownUnit.fromQuery(unit), BurndownDays.fromQuery(days));
     }
 
+    @GetMapping("/projects/{projectId}/velocity")
+    public VelocityResponse velocity(@AuthenticationPrincipal AppUserDetails principal, @PathVariable Long projectId,
+            @RequestParam(defaultValue = "6") int limit) {
+        return sprints.velocity(principal.getUser(), projectId, limit);
+    }
+
     @GetMapping("/sprints/{sprintId}/scope-history")
     public PageResponse<SprintScopeChangeResponse> history(@AuthenticationPrincipal AppUserDetails principal,
             @PathVariable Long sprintId, Pageable pageable) {
