@@ -95,6 +95,11 @@ Reading needs `VIEW_WORK`.
 | `ATTACHMENT_REMOVED` | an attachment is deleted, by its uploader or by the Project Manager ([attachments-docs.md §3.6](./attachments-docs.md#36-delete-an-attachment)) | `null` | the file name → `null` | the attachment id |
 | `SPRINT_SCOPE_CHANGED` | a task is added to / removed from an ACTIVE sprint, including delete/restore | `null` | old sprint name → new sprint name; either may be `null` for backlog | the sprint id |
 | `CARRIED_OVER` | an unfinished top-level task leaves a sprint that is closed or cancelled (PMP-41); one entry on the parent, its subtasks move with it | `null` | the ended sprint's name → the destination sprint's name, or `null` for the backlog | the ended (source) sprint's id |
+| `TIME_ENTRY_ADDED` | own work log created | `null` | `null` → duration and work date | time entry id |
+| `TIME_ENTRY_CHANGED` | own work log edited | `null` | old → new duration and work date; suffix ` (note changed)` if applicable | time entry id |
+| `TIME_ENTRY_DELETED` | own work log soft-deleted | `null` | duration and work date → `null` | time entry id |
+
+Time-entry notes are private and never copied into history. See [time-logging-docs.md](./time-logging-docs.md).
 
 `actor` is always the person who did it. `actor.id` can belong to someone who has since left; `actor.name` is the name they had at the time.
 
